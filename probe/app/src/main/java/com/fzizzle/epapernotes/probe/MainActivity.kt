@@ -55,6 +55,15 @@ class MainActivity : AppCompatActivity() {
             surface.clearInk()
             refreshLog()
         }
+        val sideErase = findViewById<Button>(R.id.sideErase)
+        sideErase.setOnClickListener {
+            // Takes effect the next time fast-ink turns on.
+            onyx.sideButtonErase = !onyx.sideButtonErase
+            setFastInk(false)
+            sideErase.text = if (onyx.sideButtonErase) "Side-erase: ON" else "Side-erase: OFF"
+            log.note("sideButtonErase set to ${onyx.sideButtonErase}")
+            refreshLog()
+        }
         findViewById<Button>(R.id.mark).setOnClickListener {
             log.note("---- MARK ----")
             refreshLog()
@@ -75,7 +84,7 @@ class MainActivity : AppCompatActivity() {
                 source = EventSource.KEY,
                 fastInk = onyx.isOn,
                 toolType = -1,
-                action = if (event.action == KeyEvent.ACTION_DOWN) "KEY_DOWN" else "KEY_UP",
+                action = keyAction(event.action, event.scanCode, event.deviceId, event.source, event.repeatCount),
                 buttonState = -1,
                 actionButton = -1,
                 keyCode = event.keyCode,
@@ -85,6 +94,7 @@ class MainActivity : AppCompatActivity() {
             ),
         )
         if (!onyx.isOn) refreshLogSoon()
+        if (shouldSwallowKey(event.source, event.keyCode)) return true
         return super.dispatchKeyEvent(event)
     }
 

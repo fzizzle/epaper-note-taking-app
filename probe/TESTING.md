@@ -10,7 +10,7 @@ This checks whether your Boox Note Air 6 C tells apps which pen side button you'
 4. On the laptop:
 
    ```sh
-   . ~/.local/opt/android-env.sh
+   source ~/.local/opt/android-env.sh
    cd ~/.t3/projects/epaper-note-taking-app/probe
    adb devices              # the tablet should be listed
    ./gradlew :app:installDebug
@@ -26,8 +26,9 @@ Tap **Mark** before each item, so its section is easy to find in the log. Do eve
 - [ ] **M2. Hovering.** Hold the pen just above the screen, without touching it. Press and release **button 1**, then **button 2**.
 - [ ] **M3. Hold, then write.** Hold **button 1**, then touch down and draw a line. Lift the pen, then let go of the button. Do the same with **button 2**.
 - [ ] **M4. Mid-stroke.** Start drawing a line. Press **button 1** partway through, then release it before lifting. Do the same with **button 2**. If your pen has an eraser end, write with that end too.
+  Then tap **Side-erase** so it reads OFF, turn fast-ink back on, and repeat M3 and M4 once more.
 - [ ] **M5. Hand and fingers.** Write normally with your palm resting on the screen. Then scroll with one finger, and pinch with two.
-- [ ] **M6. Anything odd.** Note anything Boox did by itself. For example, a menu popped up when you pressed a button, or ink appeared where your palm was.
+- [ ] **M6. Anything odd.** Note anything Boox did by itself. For example, a menu popped up when you pressed a button, ink appeared where your palm was, or the app closed. If it closes, note which button you'd pressed and reopen it.
 
 Jot a word or two about M5 and M6, because those are things the log can't show.
 

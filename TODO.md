@@ -3,11 +3,10 @@
 ## Next up
 
 - [ ] **Run the pen and touch probe:** [plan](docs/superpowers/plans/2026-11-07-pen-and-touch-probe.md)
-  - Pick an execution method. The recommendation is native, in one session.
-  - Set up the build tools on the laptop. Java and the Android SDK are needed, and installing them needs sudo.
-  - On the tablet, turn on Developer options and USB debugging, then connect it by USB.
-  - Build and install the "Pen Probe" app.
-  - Work through `probe/TESTING.md` on the tablet, then write up `docs/superpowers/probe-results.md`.
+  - [x] Build tools installed in the home folder (`source ~/.local/opt/android-env.sh`)
+  - [x] Pen Probe app built (`probe/`), with 13 unit tests passing and the final review done
+  - [ ] Install it on the tablet and work through [probe/TESTING.md](probe/TESTING.md). This needs you, the tablet, and a USB cable.
+  - [ ] Pull the log, then write up `docs/superpowers/probe-results.md`
   - Decide on any design changes the results call for.
 
 ## After that

@@ -19,15 +19,22 @@ class OnyxInput(private val view: View, private val log: ProbeLog) {
     var isOn = false
         private set
 
+    /**
+     * Whether the SDK should treat a pen side button as "erase". Its default is unknown, so the
+     * probe sets it explicitly and lets the owner run the button tests both ways.
+     */
+    var sideButtonErase = true
+
     fun turnOn() {
         if (isOn) return
         val limit = Rect(0, 0, view.width, view.height)
         val h = TouchHelper.create(view, callback)
         h.setStrokeWidth(3f).setLimitRect(limit, emptyList()).openRawDrawing()
+        h.enableSideBtnErase(sideButtonErase)
         h.setRawDrawingEnabled(true)
         helper = h
         isOn = true
-        log.note("fast-ink ON (limit=$limit)")
+        log.note("fast-ink ON (limit=$limit sideButtonErase=$sideButtonErase)")
     }
 
     fun turnOff() {
@@ -55,15 +62,16 @@ class OnyxInput(private val view: View, private val log: ProbeLog) {
     )
 
     private val callback = object : RawInputCallback() {
-        override fun onBeginRawDrawing(b: Boolean, p: TouchPoint?) = event(EventSource.ONYX_DRAW, "BEGIN", p)
-        override fun onEndRawDrawing(b: Boolean, p: TouchPoint?) = event(EventSource.ONYX_DRAW, "END", p)
+        // The Boolean is Onyx's "shortcut" flag: true when a pen button started the stroke.
+        override fun onBeginRawDrawing(b: Boolean, p: TouchPoint?) = event(EventSource.ONYX_DRAW, onyxAction("BEGIN", b), p)
+        override fun onEndRawDrawing(b: Boolean, p: TouchPoint?) = event(EventSource.ONYX_DRAW, onyxAction("END", b), p)
         override fun onRawDrawingTouchPointMoveReceived(p: TouchPoint?) = Unit
         override fun onRawDrawingTouchPointListReceived(list: TouchPointList?) {
             log.note("ONYX_DRAW list n=${list?.points?.size ?: 0}")
         }
 
-        override fun onBeginRawErasing(b: Boolean, p: TouchPoint?) = event(EventSource.ONYX_ERASE, "BEGIN", p)
-        override fun onEndRawErasing(b: Boolean, p: TouchPoint?) = event(EventSource.ONYX_ERASE, "END", p)
+        override fun onBeginRawErasing(b: Boolean, p: TouchPoint?) = event(EventSource.ONYX_ERASE, onyxAction("BEGIN", b), p)
+        override fun onEndRawErasing(b: Boolean, p: TouchPoint?) = event(EventSource.ONYX_ERASE, onyxAction("END", b), p)
         override fun onRawErasingTouchPointMoveReceived(p: TouchPoint?) = Unit
         override fun onRawErasingTouchPointListReceived(list: TouchPointList?) {
             log.note("ONYX_ERASE list n=${list?.points?.size ?: 0}")
