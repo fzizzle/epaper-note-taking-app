@@ -4,6 +4,9 @@ import android.os.Build
 import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.fzizzle.epapernotes.doc.AddItems
+import com.fzizzle.epapernotes.ink.InkItem
+import com.fzizzle.epapernotes.ink.ItemIds
 import com.fzizzle.epapernotes.ink.Stroke
 import com.fzizzle.epapernotes.ink.StrokeKind
 import com.fzizzle.epapernotes.ink.StrokePoint
@@ -60,14 +63,14 @@ class SpeedCheck {
             report("save with no changes: size ${"%.1f".format(Locale.ROOT, unchanged.length() / 1e6)} MB")
             unchanged.delete()
 
-            val addMs = timed { repeat(STROKES) { n -> it.addStroke(0, wavyStroke(n)) } }.second
+            val addMs = timed { repeat(STROKES) { n -> it.apply(AddItems(0, listOf(InkItem(ItemIds.next(), wavyStroke(n))))) } }.second
             report("add $STROKES strokes of $POINTS points: $addMs ms")
 
             val saveMs = timed { SafeSave.replace(copy) { tmp -> it.saveTo(tmp) } }.second
             report("save (safe replace): $saveMs ms, new size ${"%.1f".format(Locale.ROOT, copy.length() / 1e6)} MB")
         }
 
-        val (back, reopenMs) = timed { PdfFile.open(copy).use { it.strokes(0).size } }
+        val (back, reopenMs) = timed { PdfFile.open(copy).use { it.items(0).size } }
         report("reopen + read strokes: $reopenMs ms, strokes back: $back")
         assertEquals(STROKES, back)
         copy.delete()

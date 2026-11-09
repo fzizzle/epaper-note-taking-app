@@ -3,7 +3,11 @@ package com.fzizzle.epapernotes.pdf
 import android.graphics.Color
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.fzizzle.epapernotes.doc.AddItems
+import com.fzizzle.epapernotes.doc.RemoveItems
 import com.fzizzle.epapernotes.ink.Box
+import com.fzizzle.epapernotes.ink.InkItem
+import com.fzizzle.epapernotes.ink.ItemIds
 import com.fzizzle.epapernotes.ink.Stroke
 import com.fzizzle.epapernotes.ink.StrokeKind
 import com.fzizzle.epapernotes.ink.StrokePoint
@@ -21,15 +25,26 @@ class PdfFileStrokesTest {
     private val dir = InstrumentationRegistry.getInstrumentation().targetContext.cacheDir
     private val line = Stroke(StrokeKind.PEN, (0..50).map { StrokePoint(100f + it * 4, 400f, it / 50f) })
 
+    /** Adds [stroke] as a fresh item and returns its id, the way the session does. */
+    private fun PdfFile.add(page: Int, stroke: Stroke): String {
+        val id = ItemIds.next()
+        apply(AddItems(page, listOf(InkItem(id, stroke))))
+        return id
+    }
+
+    private fun PdfFile.strokes(page: Int) = items(page).filterIsInstance<InkItem>()
+
+    private fun PdfFile.delete(page: Int, id: String) = apply(RemoveItems(page, items(page).filter { it.id == id }))
+
     @Test fun strokeRoundTripsThroughSave() {
         val out = File(dir, "ink.pdf")
-        PdfFile.open(TestPdfs.blank(dir)).use { it.addStroke(0, line); it.saveTo(out) }
+        PdfFile.open(TestPdfs.blank(dir)).use { it.add(0, line); it.saveTo(out) }
         PdfFile.open(out).use { assertEquals(line, it.strokes(0).single().stroke) }
     }
 
     @Test fun strokeRendersWhereDrawn_offsetMediaBox() {
         PdfFile.open(TestPdfs.blank(dir, mediaBox = Box(100f, 100f, 712f, 892f))).use { pdf ->
-            pdf.addStroke(0, Stroke(StrokeKind.PEN, listOf(StrokePoint(406f, 496f, 1f), StrokePoint(406f, 497f, 1f))))
+            pdf.add(0, Stroke(StrokeKind.PEN, listOf(StrokePoint(406f, 496f, 1f), StrokePoint(406f, 497f, 1f))))
             val bmp = pdf.render(0, 612) // 1 px per point
             assertTrue(isDark(bmp.getPixel(306, 396))) // the page centre: x 406-100, y 892-496 (PDF y points up)
             pdf.setRotation(0, 90)
@@ -41,7 +56,7 @@ class PdfFileStrokesTest {
     @Test fun appearanceKeepsPressureAfterSave() {
         val out = File(dir, "ap.pdf")
         val wedge = Stroke(StrokeKind.PEN, listOf(StrokePoint(100f, 400f, 0f), StrokePoint(500f, 400f, 1f)))
-        PdfFile.open(TestPdfs.blank(dir)).use { it.addStroke(0, wedge); it.saveTo(out) }
+        PdfFile.open(TestPdfs.blank(dir)).use { it.add(0, wedge); it.saveTo(out) }
         PdfFile.open(out).use {
             val bmp = it.render(0, 2448) // 4 px per point
             assertTrue(darkHeightAt(bmp, x = 480 * 4) > darkHeightAt(bmp, x = 120 * 4) * 2) // thick end is thicker
@@ -50,16 +65,16 @@ class PdfFileStrokesTest {
 
     @Test fun highlighterIsTranslucent() {
         PdfFile.open(TestPdfs.blank(dir)).use {
-            it.addStroke(0, Stroke(StrokeKind.HIGHLIGHTER, listOf(StrokePoint(100f, 400f, 1f), StrokePoint(300f, 400f, 1f))))
+            it.add(0, Stroke(StrokeKind.HIGHLIGHTER, listOf(StrokePoint(100f, 400f, 1f), StrokePoint(300f, 400f, 1f))))
             val px = it.render(0, 612).getPixel(200, 392)
             assertTrue(Color.red(px) > 150 && Color.blue(px) < Color.red(px)) // yellow tint, the page still shows through
         }
     }
 
     @Test fun deleteRemovesOnlyThatStroke() = PdfFile.open(TestPdfs.blank(dir)).use {
-        val a = it.addStroke(0, line)
-        it.addStroke(0, line)
-        it.deleteStroke(0, a)
+        val a = it.add(0, line)
+        it.add(0, line)
+        it.delete(0, a)
         assertEquals(1, it.strokes(0).size)
     }
 
@@ -70,8 +85,8 @@ class PdfFileStrokesTest {
         PdfFile.open(source).use {
             assertEquals(3, it.foreignAnnotationCount(0))
             assertTrue(it.strokes(0).isEmpty())
-            it.addStroke(0, line)
-            it.deleteStroke(0, it.strokes(0).single().id)
+            it.add(0, line)
+            it.delete(0, it.strokes(0).single().id)
             it.saveTo(out)
         }
         PdfFile.open(out).use { assertEquals(3, it.foreignAnnotationCount(0)) }
@@ -82,7 +97,7 @@ class PdfFileStrokesTest {
     @Test fun safeSaveOverSourceFile() {
         val source = TestPdfs.blank(dir)
         PdfFile.open(source).use { pdf ->
-            pdf.addStroke(0, line)
+            pdf.add(0, line)
             SafeSave.replace(source) { pdf.saveTo(it) }
         }
         PdfFile.open(source).use { assertEquals(1, it.strokes(0).size) }
@@ -97,7 +112,7 @@ class PdfFileStrokesTest {
         PdfFile.open(source).use { it.saveTo(empty) }
         PdfFile.open(source).use { pdf ->
             repeat(50) { n ->
-                pdf.addStroke(0, Stroke(StrokeKind.PEN, (0 until 200).map { i ->
+                pdf.add(0, Stroke(StrokeKind.PEN, (0 until 200).map { i ->
                     StrokePoint(50f + i * 2.5f, 100f + n * 12f + 4f * kotlin.math.sin(i / 5f), 0.3f + 0.5f * ((i % 20) / 20f))
                 }))
             }
@@ -111,7 +126,7 @@ class PdfFileStrokesTest {
     @Test fun strokeTurnsWithPage() {
         PdfFile.open(TestPdfs.blank(dir, mediaBox = Box(100f, 100f, 712f, 892f))).use { pdf ->
             // PDF (150, 842) is 50 pt from the left and 50 pt from the top of this offset page.
-            pdf.addStroke(0, Stroke(StrokeKind.PEN, listOf(StrokePoint(150f, 842f, 1f), StrokePoint(150f, 843f, 1f))))
+            pdf.add(0, Stroke(StrokeKind.PEN, listOf(StrokePoint(150f, 842f, 1f), StrokePoint(150f, 843f, 1f))))
             assertTrue(isDark(pdf.render(0, 612).getPixel(50, 50)))
             pdf.setRotation(0, 90)
             val r = pdf.render(0, 792) // now 792 wide, 612 tall
@@ -124,8 +139,8 @@ class PdfFileStrokesTest {
     @Test fun erasedStrokeIsGoneFromFile() {
         val first = File(dir, "erase1.pdf")
         val second = File(dir, "erase2.pdf")
-        PdfFile.open(TestPdfs.blank(dir)).use { it.addStroke(0, line); it.saveTo(first) }
-        PdfFile.open(first).use { it.deleteStroke(0, it.strokes(0).single().id); it.saveTo(second) }
+        PdfFile.open(TestPdfs.blank(dir)).use { it.add(0, line); it.saveTo(first) }
+        PdfFile.open(first).use { it.delete(0, it.strokes(0).single().id); it.saveTo(second) }
         assertTrue(!String(second.readBytes(), Charsets.ISO_8859_1).contains(com.fzizzle.epapernotes.ink.StrokeCodec.KEY))
     }
 
@@ -133,7 +148,7 @@ class PdfFileStrokesTest {
     @Test fun strokeIdsStayTheSameAcrossSave() {
         val out = File(dir, "ids.pdf")
         val ids = PdfFile.open(TestPdfs.blank(dir)).use { pdf ->
-            val a = pdf.addStroke(0, line); pdf.addStroke(0, line); pdf.deleteStroke(0, a); pdf.addStroke(0, line)
+            val a = pdf.add(0, line); pdf.add(0, line); pdf.delete(0, a); pdf.add(0, line)
             pdf.saveTo(out)
             pdf.strokes(0).map { it.id }.toSet()
         }
@@ -144,8 +159,8 @@ class PdfFileStrokesTest {
     @Test fun repeatedSafeSaveKeepsEverything() {
         val source = TestPdfs.blank(dir, pages = 3)
         PdfFile.open(source).use { pdf ->
-            pdf.addStroke(0, line); SafeSave.replace(source) { pdf.saveTo(it) }
-            pdf.addStroke(2, line); SafeSave.replace(source) { pdf.saveTo(it) }
+            pdf.add(0, line); SafeSave.replace(source) { pdf.saveTo(it) }
+            pdf.add(2, line); SafeSave.replace(source) { pdf.saveTo(it) }
             (0 until pdf.pageCount).forEach { pdf.render(it, 100) }
         }
         PdfFile.open(source).use {

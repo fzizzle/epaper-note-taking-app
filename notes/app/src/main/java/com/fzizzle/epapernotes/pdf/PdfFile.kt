@@ -2,21 +2,21 @@ package com.fzizzle.epapernotes.pdf
 
 import android.graphics.Bitmap
 import android.util.SizeF
-import com.artifex.mupdf.fitz.Buffer
 import com.artifex.mupdf.fitz.Document
-import com.artifex.mupdf.fitz.PDFAnnotation
+import com.artifex.mupdf.fitz.Matrix
 import com.artifex.mupdf.fitz.PDFDocument
 import com.artifex.mupdf.fitz.PDFObject
 import com.artifex.mupdf.fitz.PDFPage
-import com.artifex.mupdf.fitz.Point
-import com.artifex.mupdf.fitz.Rect
 import com.artifex.mupdf.fitz.android.AndroidDrawDevice
+import com.fzizzle.epapernotes.doc.AddItems
+import com.fzizzle.epapernotes.doc.Change
 import com.fzizzle.epapernotes.doc.PdfPages
+import com.fzizzle.epapernotes.doc.RemoveItems
+import com.fzizzle.epapernotes.doc.ReplaceItems
+import com.fzizzle.epapernotes.doc.RotatePages
 import com.fzizzle.epapernotes.geometry.Affine
-import com.fzizzle.epapernotes.ink.Stroke
-import com.fzizzle.epapernotes.ink.StrokeCodec
-import com.fzizzle.epapernotes.ink.StrokeOutline
-import com.fzizzle.epapernotes.ink.StrokeStyle
+import com.fzizzle.epapernotes.ink.Box
+import com.fzizzle.epapernotes.ink.Item
 import java.io.File
 
 /**
@@ -31,6 +31,8 @@ import java.io.File
  * it in safely (see SafeSave).
  */
 class PdfFile private constructor(private val doc: PDFDocument) : PdfPages {
+
+    private val annotations = ItemAnnotations(doc)
 
     override val pageCount: Int get() = doc.countPages()
 
@@ -82,7 +84,7 @@ class PdfFile private constructor(private val doc: PDFDocument) : PdfPages {
      * MuPDF's own lookup does that. In a damaged file whose tree loops back on itself it
      * throws instead of going round forever, and the page is then shown unrotated.
      */
-    fun rotation(page: Int): Int {
+    override fun rotation(page: Int): Int {
         val r = try {
             doc.findPage(page).getInheritable("Rotate")
         } catch (e: RuntimeException) {
@@ -96,75 +98,84 @@ class PdfFile private constructor(private val doc: PDFDocument) : PdfPages {
         doc.findPage(page).put("Rotate", normalise(degrees))
     }
 
-    /** One of the app's own strokes, as found on a page. [id] is its PDF object number, stable across saves. */
-    data class StoredStroke(val id: Int, val stroke: Stroke)
-
-    /** The app's own strokes on a page. Other annotations are left out (see [foreignAnnotationCount]). */
-    fun strokes(page: Int): List<StoredStroke> = annotationDicts(page).mapNotNull { dict ->
-        val text = dict.get(StrokeCodec.KEY)
-        if (!text.isString) return@mapNotNull null
-        val stroke = StrokeCodec.decode(text.asString()) ?: return@mapNotNull null
-        StoredStroke(dict.asIndirect(), stroke)
-    }
+    /** The app's own items on a page, in drawing order. Other annotations are left out (see [foreignAnnotationCount]). */
+    override fun items(page: Int): List<Item> = annotationDicts(page).mapNotNull { annotations.read(it) }
 
     /**
-     * Every annotation on the page that isn't one of the app's strokes: highlights and notes
+     * Every annotation on the page that isn't one of the app's items: highlights and notes
      * from other apps, links, form fields. They're counted from the page's raw /Annots list,
      * because MuPDF's annotation list leaves links out.
      */
-    fun foreignAnnotationCount(page: Int): Int = annotationDicts(page).count { !isOurs(it) }
+    fun foreignAnnotationCount(page: Int): Int = annotationDicts(page).count { !annotations.isOurs(it) }
 
-    /** Adds [stroke] to the page as a standard PDF ink annotation and returns its id. */
-    override fun addStroke(page: Int, stroke: Stroke): Int {
-        val p = doc.loadPage(page) as PDFPage
+    override fun apply(change: Change) {
+        when (change) {
+            is AddItems -> onPage(change.page) { p -> change.items.forEach { annotations.add(p, it) } }
+            is RemoveItems -> onPage(change.page) { p -> remove(p, change.items) }
+            is ReplaceItems -> onPage(change.page) { p ->
+                remove(p, change.before)
+                change.after.forEach { annotations.add(p, it) }
+            }
+            is RotatePages -> change.after.forEach { (page, degrees) -> if (page in 0 until pageCount) setRotation(page, degrees) }
+        }
+    }
+
+    /**
+     * The page as shown (rotation applied, ink included), cut to [displayBox] in display points
+     * (origin top-left, y down), at [pxPerPt] pixels per point. Used for snips.
+     */
+    fun renderRegion(page: Int, displayBox: Box, pxPerPt: Float): Bitmap {
+        val p = doc.loadPage(page)
         try {
-            val style = StrokeStyle.of(stroke.kind)
-            val annot = p.createAnnotation(PDFAnnotation.TYPE_INK)
-
-            // The ink list and colour are for viewers that ignore appearances and redraw ink
-            // themselves. MuPDF's ink-list API works in its page space, not PDF space.
-            val toPageSpace = p.transform
-            annot.setInkList(arrayOf(stroke.points.map { Point(it.x, it.y).transform(toPageSpace) }.toTypedArray()))
-            annot.setColor(style.rgb)
-            annot.setOpacity(style.opacity)
-            annot.setBorderWidth(style.maxWidth)
-            annot.getObject().put(StrokeCodec.KEY, StrokeCodec.encode(stroke))
-            annot.update()
-
-            // Replace MuPDF's fixed-width drawing with the pressure outline. The outline is in
-            // PDF space, and setAppearance expects page space, so the page transform maps it there.
-            val box = StrokeOutline.bounds(stroke)
-            annot.setAppearance(toPageSpace, Rect(box.x0, box.y0, box.x1, box.y1), resources(style.opacity), contents(stroke))
-            p.update()
-            return annot.getObject().asIndirect()
+            val w = Math.round((displayBox.x1 - displayBox.x0) * pxPerPt).coerceAtLeast(1)
+            val h = Math.round((displayBox.y1 - displayBox.y0) * pxPerPt).coerceAtLeast(1)
+            val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            // MuPDF's page space is the page as shown, so scaling it gives display pixels. The
+            // device's origin says which of those pixels lands at the bitmap's top-left.
+            val dev = AndroidDrawDevice(bmp, Math.round(displayBox.x0 * pxPerPt), Math.round(displayBox.y0 * pxPerPt))
+            try {
+                p.run(dev, Matrix.Scale(pxPerPt), null)
+                dev.close()
+            } finally {
+                dev.destroy()
+            }
+            return bmp
         } finally {
             p.destroy()
         }
     }
 
-    /** Removes one of the app's strokes. An id that isn't one of the app's strokes is ignored. */
-    fun deleteStroke(page: Int, id: Int) {
+    /** Runs [edit] on a loaded page, then lets MuPDF catch up. A page that doesn't exist is skipped. */
+    private fun onPage(page: Int, edit: (PDFPage) -> Unit) {
+        if (page !in 0 until pageCount) return
         val p = doc.loadPage(page) as PDFPage
         try {
-            val annot = p.annotations?.firstOrNull { it.getObject().asIndirect() == id && isOurs(it.getObject()) } ?: return
-            p.deleteAnnotation(annot)
+            edit(p)
             p.update()
         } finally {
             p.destroy()
         }
+    }
+
+    /** Deletes the app's annotations with these items' ids. Ids that aren't there are skipped. */
+    private fun remove(p: PDFPage, items: List<Item>) {
+        val ids = items.mapTo(HashSet()) { it.id }
+        p.annotations.orEmpty()
+            .filter { annotations.isOurs(it.getObject()) && annotations.idOf(it.getObject()) in ids }
+            .forEach { p.deleteAnnotation(it) }
     }
 
     /**
      * Writes the whole document, with all changes, to [target].
      *
      * "compress" squeezes any streams that aren't compressed yet, which here means the
-     * strokes' drawings. Without it every stroke adds about 60 KB, which would swell a
+     * items' drawings. Without it every stroke adds about 60 KB, which would swell a
      * well-used lecture file by tens of megabytes. Streams that are already compressed are
      * left as they are.
      *
      * "garbage" drops objects nothing refers to any more. Deleting an annotation only unlinks
      * it, so without this, erased strokes would stay in the file for good. Only level 1:
-     * higher levels renumber objects, which would change the stroke ids.
+     * higher levels renumber objects, which would change the ids of plan-2 strokes (`o<n>`).
      *
      * "objstms" packs small objects into compressed object streams. Each stroke keeps its
      * point list and its private stroke data as text, and that text would otherwise be stored
@@ -180,26 +191,6 @@ class PdfFile private constructor(private val doc: PDFDocument) : PdfPages {
         val annots = doc.findPage(page).get("Annots")
         if (!annots.isArray) return emptyList()
         return (0 until annots.size()).map { annots.get(it) }.filter { it.isDictionary }
-    }
-
-    private fun isOurs(dict: PDFObject) =
-        dict.get("Subtype").asName() == "Ink" && dict.get(StrokeCodec.KEY).isString
-
-    /** An ExtGState that sets fill opacity, so the highlighter stays see-through in any viewer. */
-    private fun resources(opacity: Float): PDFObject {
-        val gs = doc.newDictionary()
-        gs.put("ca", opacity)
-        val ext = doc.newDictionary()
-        ext.put("GS0", gs)
-        val res = doc.newDictionary()
-        res.put("ExtGState", ext)
-        return res
-    }
-
-    private fun contents(stroke: Stroke): Buffer {
-        val buf = Buffer()
-        buf.writeBytes(("/GS0 gs\n" + StrokeOutline.contentStream(stroke)).toByteArray(Charsets.US_ASCII))
-        return buf
     }
 
     /** Rotation in 90° steps, turned into 0..270. Negative values and multiples of 360 are allowed in PDFs. */

@@ -1,6 +1,6 @@
 package com.fzizzle.epapernotes.doc
 
-import com.fzizzle.epapernotes.ink.Stroke
+import com.fzizzle.epapernotes.ink.Item
 import java.io.Closeable
 import java.io.File
 
@@ -11,6 +11,18 @@ import java.io.File
 interface PdfPages : Closeable {
     val pageCount: Int
     val wasRepaired: Boolean
-    fun addStroke(page: Int, stroke: Stroke): Int
+
+    /** The app's own items on the page, in drawing order. Annotations from other apps are left out. */
+    fun items(page: Int): List<Item>
+
+    /**
+     * Writes [change] into the document. An id that isn't found is skipped, which makes a
+     * replay after a half-finished save harmless. Never touches an annotation the app didn't make.
+     */
+    fun apply(change: Change)
+
+    /** The page's rotation: 0, 90, 180 or 270. */
+    fun rotation(page: Int): Int
+
     fun saveTo(target: File)
 }

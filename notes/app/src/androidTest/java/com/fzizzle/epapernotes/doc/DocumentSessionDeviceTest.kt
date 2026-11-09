@@ -39,7 +39,7 @@ class DocumentSessionDeviceTest {
         }
     }
 
-    private fun strokesIn(pdf: File) = PdfFile.open(pdf).use { p -> (0 until p.pageCount).sumOf { p.strokes(it).size } }
+    private fun strokesIn(pdf: File) = PdfFile.open(pdf).use { p -> (0 until p.pageCount).sumOf { p.items(it).size } }
 
     @Test fun strokeSurvivesKillBeforeSave() {
         val pdf = TestPdfs.blank(dir)

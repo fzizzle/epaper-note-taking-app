@@ -5,9 +5,11 @@ import android.graphics.Color
 import com.artifex.mupdf.fitz.PDFAnnotation
 import com.artifex.mupdf.fitz.PDFDocument
 import com.artifex.mupdf.fitz.PDFPage
+import com.artifex.mupdf.fitz.Point
 import com.artifex.mupdf.fitz.Quad
 import com.artifex.mupdf.fitz.Rect
 import com.fzizzle.epapernotes.ink.Box
+import java.io.ByteArrayOutputStream
 import java.io.File
 import kotlin.random.Random
 
@@ -90,10 +92,43 @@ object TestPdfs {
         val doc = PDFDocument.openDocument(file.path).asPDF()
         val annots = doc.findPage(0).get("Annots")
         val out = (0 until annots.size()).map { annots.get(it) }
-            .filter { it.get("PNotesStroke").isNull }
+            .filter { it.get("PNotesStroke").isNull && it.get("PNotesImage").isNull }
             .map { "${it.get("Subtype").asName()} ${it.get("Rect")}" }
         doc.destroy()
         return out
+    }
+
+    /**
+     * A one-page PDF with [count] strokes written the plan-2 way: an ink annotation carrying
+     * only /PNotesStroke, with no /NM id.
+     */
+    fun withPlan2Strokes(dir: File, count: Int): File {
+        val source = blank(dir, pages = 1)
+        val doc = PDFDocument.openDocument(source.path).asPDF()
+        val page = doc.loadPage(0) as PDFPage
+        repeat(count) { n ->
+            val y = 400f + n * 20
+            page.createAnnotation(PDFAnnotation.TYPE_INK).apply {
+                setInkList(arrayOf(arrayOf(Point(100f, 792f - y), Point(300f, 792f - y))))
+                getObject().put("PNotesStroke", "pn1 pen 100.00,$y,0.500 300.00,$y,0.500")
+                getObject().delete("NM")
+                update()
+            }
+        }
+        page.update()
+        val file = File.createTempFile("plan2", ".pdf", dir)
+        doc.save(file.path, "")
+        doc.destroy()
+        return file
+    }
+
+    /** A PNG, red on its left half and blue on its right, to see which way a picture is turned. */
+    fun redBluePng(width: Int, height: Int): ByteArray {
+        val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        for (x in 0 until width) for (y in 0 until height) bmp.setPixel(x, y, if (x < width / 2) Color.RED else Color.BLUE)
+        val out = ByteArrayOutputStream()
+        bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
+        return out.toByteArray()
     }
 
     fun isDark(px: Int) = Color.red(px) < 100 && Color.green(px) < 100 && Color.blue(px) < 100

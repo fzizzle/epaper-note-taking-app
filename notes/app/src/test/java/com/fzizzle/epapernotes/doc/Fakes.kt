@@ -1,12 +1,14 @@
 package com.fzizzle.epapernotes.doc
 
-import com.fzizzle.epapernotes.ink.Stroke
+import com.fzizzle.epapernotes.ink.Item
 import java.io.File
 import java.io.IOException
 
-/** Stands in for a real PDF. Saving writes how many strokes it holds, so tests can read files back. */
+/** Stands in for a real PDF. Saving writes how many items it holds, so tests can read files back. */
 class FakePdfPages(override var wasRepaired: Boolean = false, private val saveDelayMs: Long = 0) : PdfPages {
-    val strokes = mutableListOf<Pair<Int, Stroke>>()
+    /** Each page's items, in drawing order. */
+    val pageItems = mutableMapOf<Int, MutableList<Item>>()
+    val rotations = mutableMapOf<Int, Int>()
     var failNextSave = false
     var saves = 0
     /** Runs in the middle of a save, to imitate the pen writing while the worker saves. */
@@ -15,9 +17,30 @@ class FakePdfPages(override var wasRepaired: Boolean = false, private val saveDe
 
     override val pageCount = 5
 
-    override fun addStroke(page: Int, stroke: Stroke): Int {
-        strokes += page to stroke
-        return strokes.size
+    val itemCount get() = pageItems.values.sumOf { it.size }
+
+    override fun items(page: Int): List<Item> = pageItems[page].orEmpty().toList()
+
+    /** As PdfFile does it: ids that aren't there are skipped. */
+    override fun apply(change: Change) {
+        when (change) {
+            is AddItems -> on(change.page).addAll(change.items)
+            is RemoveItems -> remove(change.page, change.items)
+            is ReplaceItems -> {
+                remove(change.page, change.before)
+                on(change.page).addAll(change.after)
+            }
+            is RotatePages -> rotations.putAll(change.after)
+        }
+    }
+
+    override fun rotation(page: Int) = rotations[page] ?: 0
+
+    private fun on(page: Int) = pageItems.getOrPut(page) { mutableListOf() }
+
+    private fun remove(page: Int, items: List<Item>) {
+        val ids = items.map { it.id }.toSet()
+        on(page).removeAll { it.id in ids }
     }
 
     override fun saveTo(target: File) {
@@ -27,10 +50,10 @@ class FakePdfPages(override var wasRepaired: Boolean = false, private val saveDe
             throw IOException("storage full")
         }
         saves++
-        val count = strokes.size
+        val count = itemCount
         if (saveDelayMs > 0) Thread.sleep(saveDelayMs)
         duringSave?.invoke()
-        target.writeText("strokes=$count")
+        target.writeText("items=$count")
     }
 
     override fun close() {

@@ -124,7 +124,7 @@ class DocumentSession(
         }
         pages = opened
         known = identity
-        replay.forEach { applyTo(opened, it) }
+        replay.forEach { opened.apply(it) }
         applied = replay.size
         checkRepair(opened)
         if (replay.isNotEmpty()) {
@@ -136,23 +136,17 @@ class DocumentSession(
     /** A finished stroke. Safe in the journal when this returns. */
     fun addStroke(page: Int, stroke: Stroke) {
         journalReady.await()
+        val change = AddItems(page, listOf(InkItem(ItemIds.next(), stroke)))
         synchronized(lock) {
-            val change = AddItems(page, listOf(InkItem(ItemIds.next(), stroke)))
             journal.append(change)
             unsaved.add(change)
         }
         scheduler.post {
             val p = pages ?: return@post
-            p.addStroke(page, stroke)
+            p.apply(change)
             applied++
         }
         scheduleAutosave()
-    }
-
-    /** Until PdfPages takes changes (a later task), only added ink reaches the PDF. */
-    // TODO(Task 5): apply every kind of change; the others are ignored here for now.
-    private fun applyTo(p: PdfPages, change: Change) {
-        if (change is AddItems) change.items.filterIsInstance<InkItem>().forEach { p.addStroke(change.page, it.stroke) }
     }
 
     /**

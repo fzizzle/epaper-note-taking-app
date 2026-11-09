@@ -60,7 +60,7 @@ class DocumentSessionTest {
         s.addStroke(0, dot)
         assertEquals(0, fake.saves)
         scheduler.runDelayed()
-        assertEquals("strokes=1", pdf.readText())
+        assertEquals("items=1", pdf.readText())
         assertEquals(0, journalStrokes())
         assertTrue(events.contains(SessionEvent.Saved))
     }
@@ -76,7 +76,7 @@ class DocumentSessionTest {
         val s = session()
         s.addStroke(0, dot)
         s.saveNow()
-        assertEquals("strokes=1", pdf.readText())
+        assertEquals("items=1", pdf.readText())
         assertTrue(scheduler.delayed.isEmpty())
     }
 
@@ -105,7 +105,7 @@ class DocumentSessionTest {
         assertEquals("original", pdf.readText())
         assertEquals(1, journalStrokes())
         s.saveNow()
-        assertEquals("strokes=1", pdf.readText())
+        assertEquals("items=1", pdf.readText())
         assertEquals(0, journalStrokes())
     }
 
@@ -115,7 +115,7 @@ class DocumentSessionTest {
         s.addStroke(0, dot)
         fake.duringSave = { fake.duringSave = null; s.addStroke(1, dot) }
         s.saveNow()
-        assertEquals("strokes=1", pdf.readText()) // the save had only the first stroke
+        assertEquals("items=1", pdf.readText()) // the save had only the first stroke
         assertEquals(1, journalStrokes()) // the second is still protected
     }
 
@@ -123,13 +123,13 @@ class DocumentSessionTest {
         ChangeJournal.forDocument(journals, pdf).apply { start(FileIdentity.of(pdf)); append(AddItems(0, listOf(InkItem("a", dot)))); append(AddItems(2, listOf(InkItem("b", dot)))) }
         session()
         assertTrue(events.contains(SessionEvent.Replayed(2)))
-        assertEquals(2, fake.strokes.size)
+        assertEquals(2, fake.itemCount)
     }
 
     @Test fun mismatchedJournalIsKeptNotReplayed() {
         ChangeJournal.forDocument(journals, pdf).apply { start(FileIdentity(1L, 1L, "ef".repeat(32))); append(AddItems(0, listOf(InkItem("a", dot)))) }
         session()
-        assertEquals(0, fake.strokes.size)
+        assertEquals(0, fake.itemCount)
         val kept = events.filterIsInstance<SessionEvent.EarlierWritingKept>().single().journal
         assertEquals(1, ChangeJournal(kept).read()!!.changes.size)
     }
@@ -142,7 +142,7 @@ class DocumentSessionTest {
         s.saveNow()
         assertEquals(0, fake.saves)
         s.saveIntoRepairedFile()
-        assertEquals("strokes=1", pdf.readText())
+        assertEquals("items=1", pdf.readText())
     }
 
     @Test fun repairedToCopyLeavesOriginalAndContinuesInCopy() {
@@ -152,11 +152,11 @@ class DocumentSessionTest {
         s.saveRepairedToCopy()
         val copy = File(pdf.parentFile, "Lecture (my edits 2026-11-09).pdf")
         assertEquals("original", pdf.readText())
-        assertEquals("strokes=1", copy.readText())
+        assertEquals("items=1", copy.readText())
         assertTrue(events.contains(SessionEvent.SavedToCopy(copy)))
         s.addStroke(0, dot)
         s.saveNow()
-        assertEquals("strokes=2", copy.readText())
+        assertEquals("items=2", copy.readText())
         assertEquals("original", pdf.readText())
         assertEquals(0, journalStrokes(copy))
     }
@@ -165,7 +165,7 @@ class DocumentSessionTest {
         val s = session()
         s.addStroke(0, dot)
         s.close()
-        assertEquals("strokes=1", pdf.readText())
+        assertEquals("items=1", pdf.readText())
         assertTrue(fake.closed)
     }
 
@@ -236,6 +236,6 @@ class DocumentSessionTest {
         fake = FakePdfPages()
         session() // no autosave has run
         assertTrue(events.contains(SessionEvent.Replayed(2)))
-        assertEquals(2, fake.strokes.size)
+        assertEquals(2, fake.itemCount)
     }
 }
