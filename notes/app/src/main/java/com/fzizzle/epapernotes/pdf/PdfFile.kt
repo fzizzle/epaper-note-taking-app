@@ -11,6 +11,7 @@ import com.artifex.mupdf.fitz.PDFPage
 import com.artifex.mupdf.fitz.Point
 import com.artifex.mupdf.fitz.Rect
 import com.artifex.mupdf.fitz.android.AndroidDrawDevice
+import com.fzizzle.epapernotes.geometry.Affine
 import com.fzizzle.epapernotes.ink.Stroke
 import com.fzizzle.epapernotes.ink.StrokeCodec
 import com.fzizzle.epapernotes.ink.StrokeOutline
@@ -32,6 +33,26 @@ import java.io.File
 class PdfFile private constructor(private val doc: PDFDocument) : Closeable {
 
     val pageCount: Int get() = doc.countPages()
+
+    /**
+     * True when MuPDF had to repair the file to open it. Saving would then replace the
+     * original with the repaired version, so the owner is asked first (spec §7.3).
+     */
+    val wasRepaired: Boolean = doc.wasRepaired()
+
+    /**
+     * Maps PDF user space (where strokes are stored) to display points: the page as shown,
+     * rotation applied, origin at the top-left corner, y pointing down.
+     */
+    fun pdfToDisplay(page: Int): Affine {
+        val p = doc.loadPage(page) as PDFPage
+        try {
+            val m = p.transform
+            return Affine(m.a, m.b, m.c, m.d, m.e, m.f)
+        } finally {
+            p.destroy()
+        }
+    }
 
     /** Page size in points as shown, with its rotation applied. */
     fun displaySize(page: Int): SizeF {
