@@ -57,14 +57,25 @@ class PageView(context: Context) : View(context) {
     /** A rendering arrived from the worker. UI thread. */
     fun pageRendered(page: Int, widthPx: Int, bitmap: Bitmap) {
         inFlight.remove(page to widthPx)
+        bitmaps.invalidate(page) // drops any stand-in kept by refreshPage
         bitmaps.put(page, widthPx, bitmap)
         invalidate()
+        onPageShown(page)
     }
 
-    /** The page's ink changed: draw it again. */
-    fun invalidatePage(page: Int) {
+    /** Called after a fresh rendering of [page] is put on screen. */
+    var onPageShown: (page: Int) -> Unit = {}
+
+    /**
+     * The page's ink changed: render it again. The old rendering stays on screen until the
+     * new one arrives, so the page doesn't flash blank.
+     */
+    fun refreshPage(page: Int) {
+        val w = renderWidth()
+        val old = bitmaps.anyFor(page)
         bitmaps.invalidate(page)
-        invalidate()
+        if (old != null) bitmaps.put(page, -1, old) // a stand-in under an impossible width
+        if (inFlight.add(page to w)) requestRender(page, w)
     }
 
     /**
