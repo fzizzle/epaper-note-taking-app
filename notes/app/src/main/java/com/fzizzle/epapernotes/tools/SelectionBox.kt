@@ -34,9 +34,13 @@ class SelectionBox(val bounds: Box) {
             Grip.BOTTOM_LEFT -> -1f to 1f
             Grip.BOTTOM_RIGHT -> 1f to 1f
         }
+        // Nothing to scale about on a flat box.
+        if (w <= 0f || h <= 0f) return Affine.IDENTITY
+        // The floor only stops shrinking; a box already under the minimum is never enlarged.
+        val minRatio = min(1f, MIN_SIDE_PX / min(w, h))
         val anchorX = if (sx > 0) bounds.x0 else bounds.x1
         val anchorY = if (sy > 0) bounds.y0 else bounds.y1
-        val ratio = max(max((w + sx * dx) / w, (h + sy * dy) / h), MIN_SIDE_PX / min(w, h))
+        val ratio = max(max((w + sx * dx) / w, (h + sy * dy) / h), minRatio)
         return Affine(ratio, 0f, 0f, ratio, anchorX * (1 - ratio), anchorY * (1 - ratio))
     }
 

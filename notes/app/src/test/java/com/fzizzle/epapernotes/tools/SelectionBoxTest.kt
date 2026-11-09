@@ -37,4 +37,17 @@ class SelectionBoxTest {
         val t = box.drag(SelectionBox.Grip.MOVE, 5f, -3f)
         assertEquals(Pt(105f, 97f), t.map(Pt(100f, 100f)))
     }
+
+    @Test fun smallBoxIsNeverEnlarged() {
+        val small = SelectionBox(Box(0f, 0f, 10f, 10f))
+        assertEquals(com.fzizzle.epapernotes.geometry.Affine.IDENTITY, small.drag(SelectionBox.Grip.BOTTOM_RIGHT, 0f, 0f))
+        val br = small.drag(SelectionBox.Grip.BOTTOM_RIGHT, -5f, -5f).map(Pt(10f, 10f))
+        assertEquals(10f, br.x, 0.01f); assertEquals(10f, br.y, 0.01f)
+    }
+
+    @Test fun flatBoxCornerDragDoesNothing() {
+        val flat = SelectionBox(Box(5f, 5f, 5f, 80f))
+        assertEquals(com.fzizzle.epapernotes.geometry.Affine.IDENTITY, flat.drag(SelectionBox.Grip.TOP_LEFT, 10f, 10f))
+        assertEquals(Pt(15f, 15f), flat.drag(SelectionBox.Grip.MOVE, 10f, 10f).map(Pt(5f, 5f)))
+    }
 }

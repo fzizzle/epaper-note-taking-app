@@ -40,4 +40,12 @@ class EraserTest {
         assertEquals(1, Eraser.hits(listOf(img), listOf(Pt(25f, 25f))).size)
         assertTrue(Eraser.hits(listOf(img), listOf(Pt(60f, 25f))).isEmpty())
     }
+
+    @Test fun fastSwipeBetweenSamplesStillHits() {
+        val s = line()
+        assertEquals(1, Eraser.hits(listOf(s), listOf(Pt(100f, 80f), Pt(100f, 120f))).size)
+        val img = ImageItem("i", Box(0f, 0f, 50f, 50f), 0, byteArrayOf(1))
+        assertEquals(1, Eraser.hits(listOf(img), listOf(Pt(-20f, 25f), Pt(70f, 25f))).size)
+        assertTrue(Eraser.hits(listOf(img), listOf(Pt(-20f, 60f), Pt(70f, 60f))).isEmpty())
+    }
 }

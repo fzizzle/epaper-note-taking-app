@@ -17,14 +17,14 @@ object Lasso {
 
     /** Even-odd rule: a ray to the right crosses the loop an odd number of times when inside. */
     private fun inside(x: Float, y: Float, loop: List<Pt>): Boolean {
-        var in_ = false
+        var inside = false
         var j = loop.lastIndex
         for (i in loop.indices) {
             val a = loop[i]
             val b = loop[j]
-            if ((a.y > y) != (b.y > y) && x < (b.x - a.x) * (y - a.y) / (b.y - a.y) + a.x) in_ = !in_
+            if ((a.y > y) != (b.y > y) && x < (b.x - a.x) * (y - a.y) / (b.y - a.y) + a.x) inside = !inside
             j = i
         }
-        return in_
+        return inside
     }
 }

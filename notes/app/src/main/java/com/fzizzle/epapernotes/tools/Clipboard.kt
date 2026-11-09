@@ -36,9 +36,10 @@ fun Clipboard.placedOn(displayToPdf: Affine, at: Pt): List<Item> {
 }
 
 /**
- * The page rotation, in clockwise quarter turns, of a PDF-to-display transform. PDF has y up and
- * display y down, so undo that flip first; what is left is the turn (unrotated page: 0, MuPDF's
- * [0 1 1 0 0 0] for /Rotate 90: 1).
+ * The page rotation, in clockwise quarter turns, of a PDF-to-display transform. Read it from where
+ * PDF's +x axis lands on the display: the y-up/y-down flip only affects the y axis, and since
+ * display y points down, the angle atan2(b, a) is already clockwise. Unrotated page: 0; MuPDF's
+ * [0 1 1 0 0 0] for /Rotate 90: 1.
  */
 private fun quarterTurnsOf(pdfToDisplay: Affine): Int =
     Math.floorMod((atan2(pdfToDisplay.b, pdfToDisplay.a) / (PI / 2)).roundToInt(), 4)
