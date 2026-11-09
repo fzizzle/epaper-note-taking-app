@@ -19,7 +19,9 @@
   - [ ] Gentler refresh after zooming: the full flash works but feels a bit weird (owner, 2026-11-09). Try a softer e-ink mode that still clears fast-ink's leftovers.
   - [ ] Screen-recording test of writing (owner asked, 2026-11-09): record the screen while writing fast, to check no stroke ever disappears.
 - [ ] Plan 3: [tools](docs/superpowers/plans/2026-11-09-tools.md): eraser, lasso, snip, paste, undo/redo, page menu, pen buttons, ending in an owner tool session (hard stop).
-  - [ ] Owner approves the plan and its 11 decisions.
+  - [x] Owner approves the plan and its 11 decisions.
+  - [x] Build the tools (Tasks 1–9), with the fixes from the final review.
+  - [ ] Owner tool session (Task 10, hard stop): work through the checklist on the tablet.
 
 ## Later (not in the first version)
 

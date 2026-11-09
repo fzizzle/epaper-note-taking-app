@@ -113,6 +113,23 @@ class PdfFileItemsTest {
         }
     }
 
+    /** Undo holds on to plan-2 ids (`o<n>`), so neither a save nor reopening the saved file may renumber them. */
+    @Test fun plan2IdsStayTheSameAcrossSave() {
+        val out = File(dir, "plan2-ids.pdf")
+        val kept = PdfFile.open(TestPdfs.withPlan2Strokes(dir, count = 3)).use { pdf ->
+            val old = pdf.items(0)
+            assertEquals(3, old.size)
+            assertTrue(old.all { it.id.matches(Regex("o\\d+")) })
+            pdf.apply(RemoveItems(0, listOf(old[1])))
+            val left = pdf.items(0).map { it.id }
+            assertEquals(listOf(old[0].id, old[2].id), left)
+            pdf.saveTo(out)
+            assertEquals(left, pdf.items(0).map { it.id }) // in memory, after the save
+            left
+        }
+        PdfFile.open(out).use { assertEquals(kept, it.items(0).map { i -> i.id }) }
+    }
+
     /** Review: a move of an item that was erased meanwhile adds nothing; the rest of the move still happens. */
     @Test fun replaceOfMissingItemAddsNothing() = PdfFile.open(TestPdfs.blank(dir)).use { pdf ->
         pdf.apply(AddItems(0, listOf(ink("a"), ink("b"))))

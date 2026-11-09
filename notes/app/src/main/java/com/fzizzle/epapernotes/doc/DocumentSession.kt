@@ -32,8 +32,10 @@ import java.util.concurrent.TimeUnit
  * - Undo and redo cover this session's changes. The history is in memory only; an undo is
  *   just one more change, journaled and saved like any other.
  * - Two sessions on the same file take turns: a new one waits until the previous one has
- *   finished saving and closed. Turning the tablet closes the writing screen and opens a new
- *   one on the same file, and without this the two would trip over each other's saves.
+ *   finished saving and closed. Leaving a document and opening it again at once starts a new
+ *   session while the old one may still be saving its last changes, and without this the two
+ *   would trip over each other's saves. (Turning the tablet doesn't: the writing screen
+ *   handles the turn itself, see configChanges in the manifest, so its session carries on.)
  *
  * Threads: [addStroke] runs on the pen's thread, [undo] and [redo] on the screen's, and
  * [record] on any. Everything that touches the PDF runs on the [scheduler]'s single worker
