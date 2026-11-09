@@ -4,13 +4,12 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.graphics.Color
 import android.graphics.Rect
-import android.graphics.Typeface
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.Gravity
-import android.widget.Button
+import android.view.View
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -37,8 +36,8 @@ class WritingActivity : Activity() {
     private lateinit var path: String
     private var pageCount = 0
     private lateinit var pen: PenInput
-    private lateinit var penButton: Button
-    private lateinit var highlighterButton: Button
+    private lateinit var penButton: StripButton
+    private lateinit var highlighterButton: StripButton
     private var tool = Tool.PEN
 
     /** For each page, PDF space to display points, inverted: how a pen point finds its place in the PDF. */
@@ -63,26 +62,37 @@ class WritingActivity : Activity() {
         lastPages = LastPageStore(this)
 
         pages = PageView(this)
-        indicator = TextView(this).apply { textSize = 18f; gravity = Gravity.CENTER_VERTICAL }
+        indicator = TextView(this).apply {
+            textSize = 20f
+            setTextColor(Color.BLACK)
+            gravity = Gravity.CENTER
+            fontFeatureSettings = "tnum" // even-width digits, so the number doesn't jiggle as pages turn
+        }
+        val stripHeight = (resources.displayMetrics.heightPixels * 0.05f).toInt() // about 5% (spec §6.2)
+        val gap = stripHeight / 8
+        fun square() = LinearLayout.LayoutParams(stripHeight - 2 * gap, stripHeight - 2 * gap).apply { marginEnd = gap }
+
+        penButton = StripButton(this, StripButton.Glyph.PEN, "Pen").apply { setOnClickListener { choose(Tool.PEN) } }
+        highlighterButton = StripButton(this, StripButton.Glyph.HIGHLIGHTER, "Highlighter").apply { setOnClickListener { choose(Tool.HIGHLIGHTER) } }
         val strip = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            setPadding(gap, 0, gap, 0)
             setBackgroundColor(Color.WHITE)
-            addView(Button(this@WritingActivity).apply { text = "←"; setOnClickListener { finish() } })
-            penButton = Button(this@WritingActivity).apply { text = "Pen"; setOnClickListener { choose(Tool.PEN) } }
-            highlighterButton = Button(this@WritingActivity).apply { text = "Highlighter"; setOnClickListener { choose(Tool.HIGHLIGHTER) } }
-            addView(penButton)
-            addView(highlighterButton)
-            addView(android.view.View(this@WritingActivity), LinearLayout.LayoutParams(0, 1, 1f)) // pushes the page controls right
-            addView(Button(this@WritingActivity).apply { text = "‹"; setOnClickListener { turn(forward = false) } })
-            addView(indicator, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { marginStart = 16; marginEnd = 16 })
-            addView(Button(this@WritingActivity).apply { text = "›"; setOnClickListener { turn(forward = true) } })
+            addView(StripButton(this@WritingActivity, StripButton.Glyph.BACK, "Back to the list").apply { setOnClickListener { finish() } }, square().apply { marginEnd = gap * 3 })
+            addView(penButton, square())
+            addView(highlighterButton, square())
+            addView(View(this@WritingActivity), LinearLayout.LayoutParams(0, 1, 1f)) // pushes the page controls right
+            addView(StripButton(this@WritingActivity, StripButton.Glyph.PREVIOUS, "Previous page").apply { setOnClickListener { turn(forward = false) } }, square())
+            addView(indicator, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.MATCH_PARENT).apply { marginEnd = gap })
+            addView(StripButton(this@WritingActivity, StripButton.Glyph.NEXT, "Next page").apply { setOnClickListener { turn(forward = true) } }, square().apply { marginEnd = 0 })
         }
-        val stripHeight = (resources.displayMetrics.heightPixels * 0.05f).toInt() // about 5% (spec §6.2)
         setContentView(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.WHITE)
             addView(strip, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, stripHeight))
+            // One hairline between the strip and the page.
+            addView(View(this@WritingActivity).apply { setBackgroundColor(RULE) }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 2))
             addView(pages, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
             // Android 15+ draws apps under the status bar. Keep the strip below it.
             setOnApplyWindowInsetsListener { view, insets ->
@@ -222,10 +232,8 @@ class WritingActivity : Activity() {
 
     private fun choose(newTool: Tool) {
         tool = newTool
-        penButton.setTypeface(null, if (tool == Tool.PEN) Typeface.BOLD else Typeface.NORMAL)
-        highlighterButton.setTypeface(null, if (tool == Tool.HIGHLIGHTER) Typeface.BOLD else Typeface.NORMAL)
-        penButton.text = if (tool == Tool.PEN) "● Pen" else "Pen"
-        highlighterButton.text = if (tool == Tool.HIGHLIGHTER) "● Highlighter" else "Highlighter"
+        penButton.isSelected = tool == Tool.PEN
+        highlighterButton.isSelected = tool == Tool.HIGHLIGHTER
         updatePenWidth()
     }
 
@@ -251,6 +259,7 @@ class WritingActivity : Activity() {
     private fun updateIndicator() {
         val v = pages.viewport ?: return
         indicator.text = "${v.page + 1} / $pageCount"
+        indicator.contentDescription = "Page ${v.page + 1} of $pageCount"
     }
 
     private fun show(event: SessionEvent) {
@@ -285,6 +294,9 @@ class WritingActivity : Activity() {
     companion object {
         const val EXTRA_PATH = "path"
         const val SHOW_PAUSE_MS = 150L
+
+        /** The hairline under the strip. */
+        private val RULE = Color.rgb(200, 200, 200)
 
         /** A full e-ink refresh takes about this long; the pen comes back after it. */
         const val CLEAN_REFRESH_MS = 450L

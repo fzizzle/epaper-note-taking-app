@@ -96,7 +96,7 @@ class PenInput(
             }
             Tool.HIGHLIGHTER -> {
                 h.setStrokeStyle(TouchHelper.STROKE_STYLE_MARKER)
-                h.setStrokeColor(Color.rgb(255, 235, 59))
+                h.setStrokeColor(StripButton.HIGHLIGHTER_YELLOW)
                 h.setStrokeWidth(StrokeStyle.of(StrokeKind.HIGHLIGHTER).maxWidth * pxPerPt)
             }
         }
