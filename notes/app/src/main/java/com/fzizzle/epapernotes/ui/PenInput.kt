@@ -29,6 +29,8 @@ class PenInput(
     private val onPenDown: () -> Unit,
     private val onStroke: (List<FloatArray>) -> Unit,
     private val onEraseTrail: (List<FloatArray>) -> Unit,
+    /** The pen lifted, after drawing or erasing. [isWriting] is already false. */
+    private val onPenUp: () -> Unit = {},
 ) {
 
     private var helper: TouchHelper? = null
@@ -127,6 +129,7 @@ class PenInput(
 
         override fun onEndRawDrawing(shortcut: Boolean, p: TouchPoint?) {
             isWriting = false
+            onPenUp()
         }
         override fun onRawDrawingTouchPointMoveReceived(p: TouchPoint?) = Unit
 
@@ -139,6 +142,7 @@ class PenInput(
 
         override fun onEndRawErasing(shortcut: Boolean, p: TouchPoint?) {
             isWriting = false
+            onPenUp()
         }
         override fun onRawErasingTouchPointMoveReceived(p: TouchPoint?) = Unit
         override fun onRawErasingTouchPointListReceived(list: TouchPointList?) {

@@ -85,6 +85,19 @@ class WritingActivity : Activity() {
      */
     private val redrawWhenChanged = HashSet<Int>()
 
+    /**
+     * A show was skipped because the pen was down: say, an erased page arrived while the owner
+     * was already writing again. It runs once the pen has rested for [SHOW_RETRY_IDLE_MS], so
+     * erased strokes and grey trails don't stay on the panel. The next pen-down cancels the
+     * wait, and the next lift starts it again.
+     */
+    @Volatile private var showPending = false
+    private val retryShow = Runnable {
+        if (!showPending || pen.isWriting) return@Runnable
+        Log.i(TAG, "show retried after idle")
+        showWithoutFastInk()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         path = intent.getStringExtra(EXTRA_PATH) ?: return finish()
@@ -181,9 +194,11 @@ class WritingActivity : Activity() {
             onPenDown = {
                 strokeMapping = penMapping
                 strokeChoice = penChoice
+                handler.removeCallbacks(retryShow)
             },
             onStroke = { points -> onPenStroke(points) },
             onEraseTrail = { points -> onEraseTrail(points) },
+            onPenUp = { if (showPending) retryShowWhenIdle() },
         )
         pages.onStylusHover = { button ->
             if (button != hoverButton) {
@@ -288,8 +303,19 @@ class WritingActivity : Activity() {
         session.erase(page, trail) { hits ->
             Log.i(TAG, "erase page=$page hits=$hits ms=${SystemClock.uptimeMillis() - started}")
             // Posted before the PageChanged that follows a hit, so it's marked in time.
-            runOnUiThread { if (hits > 0) redrawWhenChanged += page else showWithoutFastInk() }
+            runOnUiThread { if (hits > 0) expectRedraw(page) else showWithoutFastInk() }
         }
+    }
+
+    /**
+     * [page] has a change on its way that the page view can't show by itself, so redraw it
+     * when the change reaches the PDF (the [SessionEvent.PageChanged] handler in [show]).
+     * Every change made from the screen must call this: erases now, and in Tasks 8–9 moves,
+     * resizes, deletes, pastes, undo and redo, and rotations. Plain pen strokes must not: the
+     * page view already shows them, and a redraw would pause fast-ink after each one. UI thread.
+     */
+    private fun expectRedraw(page: Int) {
+        redrawWhenChanged += page
     }
 
     /** "Go to page": type a number, which is quicker than tapping › through a long deck. */
@@ -333,14 +359,25 @@ class WritingActivity : Activity() {
     private fun showWithoutFastInk() {
         if (pen.isWriting) {
             Log.i(TAG, "show skipped: pen is down")
+            showPending = true
+            // The pen may have lifted while this was being decided, too late for its lift to see it.
+            if (!pen.isWriting) retryShowWhenIdle()
             return
         }
+        showPending = false
+        handler.removeCallbacks(retryShow)
         Log.i(TAG, "show: pause fast-ink")
         pausePenAndRedraw()
         handler.postDelayed({
             Log.i(TAG, "show: resume fast-ink")
             pen.resume()
         }, SHOW_PAUSE_MS)
+    }
+
+    /** Any thread. Starts (or restarts) the wait before a skipped show runs. */
+    private fun retryShowWhenIdle() {
+        handler.removeCallbacks(retryShow)
+        handler.postDelayed(retryShow, SHOW_RETRY_IDLE_MS)
     }
 
     /**
@@ -428,6 +465,9 @@ class WritingActivity : Activity() {
     companion object {
         const val EXTRA_PATH = "path"
         const val SHOW_PAUSE_MS = 150L
+
+        /** How long the pen must rest before a show skipped while writing is tried again. */
+        const val SHOW_RETRY_IDLE_MS = 500L
 
         /** The hairline under the strip. */
         private val RULE = Color.rgb(200, 200, 200)
