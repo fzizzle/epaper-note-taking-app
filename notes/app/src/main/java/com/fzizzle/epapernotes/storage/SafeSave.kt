@@ -2,8 +2,11 @@ package com.fzizzle.epapernotes.storage
 
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
+import java.nio.channels.FileChannel
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import java.nio.file.StandardOpenOption
 
 /**
  * Replaces a file without ever leaving it half-written.
@@ -12,6 +15,8 @@ import java.nio.file.StandardCopyOption
  * then moved over the original in one step. If anything fails before that move, the original
  * is untouched and the temporary file is removed. A crash can leave a stale temporary file
  * behind, which [cleanStale] removes. It can never leave a broken PDF.
+ *
+ * When [replace] returns, the new version is on disk, as far as the storage allows.
  */
 object SafeSave {
 
@@ -38,6 +43,21 @@ object SafeSave {
         } catch (e: Throwable) {
             temp.delete()
             throw e
+        }
+        syncFolder(target)
+    }
+
+    /**
+     * The rename itself lives in the folder, so flush the folder too. Only then is the new
+     * version sure to survive a power cut, which matters because the crash journal is cleared
+     * once replace() returns. Some storage refuses to sync folders; the file is already
+     * swapped in by then, so that's not treated as a failed save.
+     */
+    private fun syncFolder(target: File) {
+        try {
+            FileChannel.open(target.absoluteFile.parentFile.toPath(), StandardOpenOption.READ).use { it.force(true) }
+        } catch (e: IOException) {
+            // Not supported here. Nothing more can be done.
         }
     }
 

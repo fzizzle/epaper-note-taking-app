@@ -1,6 +1,6 @@
 # MuPDF speed check: results
 
-Run: 2026-11-09 on the Boox Note Air 6 C (Android 16, SDK 36.0), MuPDF 1.28.5, with two of the owner's real lecture PDFs. The check works on a copy in the app's cache folder, so the owner's files were never changed. The code is `notes/app/src/androidTest/java/com/fzizzle/epapernotes/check/SpeedCheck.kt`.
+Run: 2026-11-09 (numbers from the final run, after the review fixes) on the Boox Note Air 6 C (Android 16, SDK 36.0), MuPDF 1.28.5, with two of the owner's real lecture PDFs. The check works on a copy in the app's cache folder, so the owner's files were never changed. The code is `notes/app/src/androidTest/java/com/fzizzle/epapernotes/check/SpeedCheck.kt`.
 
 ## The numbers
 
@@ -11,9 +11,9 @@ Pages are rendered at 1860 px wide, the full screen width. "Strokes" are 50 test
 | Open | under 1 s | **13 ms** | **0 ms** |
 | First page | — | 110 ms | 9 ms |
 | Pages 2–10 (median) | under 300 ms | **78 ms** (slowest 130 ms) | **61 ms** (slowest 99 ms) |
-| Add 50 strokes | — | 2540 ms (about 50 ms per stroke) | 2494 ms (about 50 ms per stroke) |
-| Save (safe replace) | under 2 s | **235 ms** | **240 ms** |
-| Reopen and read the strokes back | — | 275 ms, 50 of 50 back | 214 ms, 50 of 50 back |
+| Add 50 strokes | — | 2619 ms (about 50 ms per stroke) | 2561 ms (about 50 ms per stroke) |
+| Save (safe replace) | under 2 s | **212 ms** | **202 ms** |
+| Reopen and read the strokes back | — | 283 ms, 50 of 50 back | 211 ms, 50 of 50 back |
 | Size after a save with no changes | — | 14.2 MB (+0.2) | 17.4 MB (+0.0) |
 | Size after saving 50 strokes | — | 15.4 MB | 18.5 MB |
 
@@ -24,7 +24,7 @@ Pages are rendered at 1860 px wide, the full screen width. "Strokes" are 50 test
 **Adding a stroke takes about 50 ms.** That happens in the background after the pen lifts. The ink itself is drawn instantly by Onyx's fast-ink, so the pen won't feel it. It would matter if hundreds of strokes were added at once, such as pasting a big selection. Plan 2/3 should batch those.
 
 **File size: one finding, already half-fixed.**
-- The first run showed about **64 KB per stroke**, because each stroke's drawing was saved uncompressed. Saving now compresses it (`saveTo` uses MuPDF's `compress` option). A new test, `savedStrokesAreCompact`, keeps it that way.
+- The first run showed about **64 KB per stroke**, because each stroke's drawing was saved uncompressed. Saving now compresses it, and also drops erased strokes from the file (`saveTo` uses MuPDF's `compress,garbage` options). A new test, `savedStrokesAreCompact`, keeps it that way.
 - With that fix, these long test strokes cost about **23 KB each**. Real handwriting strokes are shorter (roughly 30–80 points), so expect perhaps 5–10 KB per stroke. That's still around 1 MB for a densely written page.
 - Two causes remain:
   - The drawing puts a small circle at *every* point.

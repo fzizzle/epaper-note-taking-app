@@ -32,4 +32,18 @@ class PdfFileOpenRenderRotateTest {
             assertEquals(792f, it.displaySize(1).width, 0.5f) // a rotated portrait page is shown landscape
         }
     }
+
+    @Test fun passwordFileFailsCleanly() {
+        val locked = TestPdfs.blank(dir, saveOptions = "encrypt=aes-256,user-password=secret,owner-password=owner")
+        assertThrows(PdfOpenException::class.java) { PdfFile.open(locked) }
+    }
+
+    /** Either it refuses with a clear error, or it opens fully usable. Never a crash later. */
+    @Test fun truncatedFileFailsCleanlyOrWorks() {
+        val pdf = try { PdfFile.open(TestPdfs.truncated(dir)) } catch (e: PdfOpenException) { return }
+        pdf.use { (0 until it.pageCount).forEach { page -> it.render(page, 100) } }
+    }
+
+    @Test(timeout = 5000) fun pageTreeLoopDoesNotHang() =
+        PdfFile.open(TestPdfs.blank(dir, parentLoop = true)).use { assertEquals(0, it.rotation(0)) }
 }

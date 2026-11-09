@@ -57,15 +57,16 @@ class PdfFile private constructor(private val doc: PDFDocument) : Closeable {
     /**
      * The page's rotation: 0, 90, 180 or 270. Many PDFs set /Rotate once on the page tree
      * rather than on each page, so a missing value is looked up through the /Parent links.
+     * MuPDF's own lookup does that. In a damaged file whose tree loops back on itself it
+     * throws instead of going round forever, and the page is then shown unrotated.
      */
     fun rotation(page: Int): Int {
-        var node: PDFObject? = doc.findPage(page)
-        while (node != null && !node.isNull) {
-            val r = node.get("Rotate")
-            if (r.isNumber) return normalise(r.asInteger())
-            node = node.get("Parent")
+        val r = try {
+            doc.findPage(page).getInheritable("Rotate")
+        } catch (e: RuntimeException) {
+            return 0
         }
-        return 0
+        return if (r.isNumber) normalise(r.asInteger()) else 0
     }
 
     /** Rotates the page. It's written on the page itself, which overrides any inherited value. */
@@ -138,9 +139,13 @@ class PdfFile private constructor(private val doc: PDFDocument) : Closeable {
      * strokes' drawings. Without it every stroke adds about 60 KB, which would swell a
      * well-used lecture file by tens of megabytes. Streams that are already compressed are
      * left as they are.
+     *
+     * "garbage" drops objects nothing refers to any more. Deleting an annotation only unlinks
+     * it, so without this, erased strokes would stay in the file for good. Only level 1:
+     * higher levels renumber objects, which would change the stroke ids.
      */
     fun saveTo(target: File) {
-        doc.save(target.path, "compress")
+        doc.save(target.path, "compress,garbage")
     }
 
     override fun close() = doc.destroy()
@@ -192,6 +197,13 @@ class PdfFile private constructor(private val doc: PDFDocument) : Closeable {
             if (pdf == null) {
                 opened.destroy()
                 throw PdfOpenException("${file.name} is not a PDF.")
+            }
+            // MuPDF repairs damaged files as it opens them. One with no usable pages left is
+            // refused here, rather than failing later in the middle of drawing.
+            val pages = try { pdf.countPages() } catch (e: RuntimeException) { 0 }
+            if (pages == 0) {
+                pdf.destroy()
+                throw PdfOpenException("${file.name} has no readable pages: it may be damaged.")
             }
             return PdfFile(pdf)
         }

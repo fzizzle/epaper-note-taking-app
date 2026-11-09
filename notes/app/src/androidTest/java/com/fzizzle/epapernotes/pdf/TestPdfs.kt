@@ -18,7 +18,14 @@ object TestPdfs {
      * A PDF of plain white, empty pages. [mediaBox] can be offset from 0,0, as some exports
      * are. [parentRotate] puts /Rotate on the page tree instead of on each page.
      */
-    fun blank(dir: File, pages: Int = 2, mediaBox: Box = Box(0f, 0f, 612f, 792f), parentRotate: Int? = null): File {
+    fun blank(
+        dir: File,
+        pages: Int = 2,
+        mediaBox: Box = Box(0f, 0f, 612f, 792f),
+        parentRotate: Int? = null,
+        parentLoop: Boolean = false,
+        saveOptions: String = "",
+    ): File {
         val doc = PDFDocument()
         repeat(pages) {
             val page = doc.addPage(Rect(0f, 0f, 612f, 792f), 0, doc.newDictionary(), "")
@@ -30,13 +37,20 @@ object TestPdfs {
             page.delete("Rotate")
             doc.insertPage(-1, page)
         }
-        if (parentRotate != null) {
-            doc.trailer.get("Root").get("Pages").put("Rotate", parentRotate)
-        }
+        val tree = doc.trailer.get("Root").get("Pages")
+        if (parentRotate != null) tree.put("Rotate", parentRotate)
+        // A malformed file whose page tree points back at itself.
+        if (parentLoop) tree.put("Parent", tree)
         val file = File.createTempFile("blank", ".pdf", dir)
-        doc.save(file.path, "")
+        doc.save(file.path, saveOptions)
         doc.destroy()
         return file
+    }
+
+    /** A valid 3-page PDF cut off partway, like an interrupted download. */
+    fun truncated(dir: File): File {
+        val whole = blank(dir, pages = 3).readBytes()
+        return File(dir, "cut.pdf").apply { writeBytes(whole.copyOf(whole.size * 6 / 10)) }
     }
 
     /** 1 KB of random bytes with a .pdf name, like a damaged download. */
