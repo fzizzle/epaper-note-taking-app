@@ -164,4 +164,12 @@ class DocumentSessionTest {
         assertEquals("strokes=1", pdf.readText())
         assertTrue(fake.closed)
     }
+
+    /** The screen draws pages through the session, so MuPDF is only ever used on the worker thread. */
+    @Test fun runOnDocumentGetsTheOpenPdf() {
+        val s = session()
+        var seen: PdfPages? = null
+        s.runOnDocument { seen = it }
+        assertTrue(seen === fake)
+    }
 }

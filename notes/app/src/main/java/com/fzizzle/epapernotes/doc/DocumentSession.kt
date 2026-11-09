@@ -108,6 +108,14 @@ class DocumentSession(
         scheduleAutosave()
     }
 
+    /**
+     * Runs [task] with the open PDF, on the worker thread, for drawing pages or reading their
+     * sizes. Nothing happens if the PDF failed to open.
+     */
+    fun runOnDocument(task: (PdfPages) -> Unit) {
+        scheduler.post { pages?.let(task) }
+    }
+
     /** Leaving the document or going to the background: save now rather than in a few seconds. */
     fun saveNow() {
         scheduler.cancel(AUTOSAVE)

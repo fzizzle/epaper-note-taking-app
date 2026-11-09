@@ -62,6 +62,9 @@ class Viewport(private val layout: PageLayout, private val viewHeightPx: Int) {
     /** The page under the middle of the screen, for the "4 / 32" indicator. */
     fun currentPage(): Int = layout.pageAt((scrollY + viewHeightPx / 2f) / zoom)
 
+    /** The page at the top of the screen: what's saved as "last page", since [scrollToPage] puts it back at the top. */
+    fun topPage(): Int = layout.pageAt(scrollY / zoom)
+
     /** The pages at least partly on screen. */
     fun visiblePages(): IntRange = layout.visiblePages(scrollY / zoom, (scrollY + viewHeightPx) / zoom)
 

@@ -65,4 +65,15 @@ class ViewportTest {
         assertEquals(150f, back.x, 0.5f)
         assertEquals(842f, back.y, 0.5f)
     }
+
+    /** Reopening a document restores the page at the top of the screen, so the same view comes back. */
+    @Test fun topPageRoundTripsThroughScrollToPage() {
+        val v = viewport()
+        v.scrollBy(0f, layout.pageTop(1) + 50)
+        val saved = v.topPage()
+        val reopened = viewport()
+        reopened.scrollToPage(saved)
+        assertEquals(v.currentPage(), reopened.currentPage())
+        assertEquals(1, saved)
+    }
 }
