@@ -131,9 +131,16 @@ class PdfFile private constructor(private val doc: PDFDocument) : Closeable {
         }
     }
 
-    /** Writes the whole document, with all changes, to [target]. */
+    /**
+     * Writes the whole document, with all changes, to [target].
+     *
+     * "compress" squeezes any streams that aren't compressed yet, which here means the
+     * strokes' drawings. Without it every stroke adds about 60 KB, which would swell a
+     * well-used lecture file by tens of megabytes. Streams that are already compressed are
+     * left as they are.
+     */
     fun saveTo(target: File) {
-        doc.save(target.path, "")
+        doc.save(target.path, "compress")
     }
 
     override fun close() = doc.destroy()

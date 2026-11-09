@@ -88,4 +88,18 @@ class PdfFileStrokesTest {
         PdfFile.open(source).use { assertEquals(1, it.strokes(0).size) }
         assertTrue(!SafeSave.tempFileFor(source).exists())
     }
+
+    /** A page of handwriting must not bloat the file: the speed check measured ~64 KB per stroke before compression. */
+    @Test fun savedStrokesAreCompact() {
+        val empty = File(dir, "empty.pdf")
+        val written = File(dir, "written.pdf")
+        val source = TestPdfs.blank(dir, pages = 1)
+        PdfFile.open(source).use { it.saveTo(empty) }
+        PdfFile.open(source).use { pdf ->
+            repeat(50) { n -> pdf.addStroke(0, Stroke(StrokeKind.PEN, (0 until 200).map { StrokePoint(50f + it * 2.5f, 100f + n * 12f, 0.5f) })) }
+            pdf.saveTo(written)
+        }
+        val perStroke = (written.length() - empty.length()) / 50
+        assertTrue("$perStroke bytes per stroke", perStroke < 20_000)
+    }
 }
