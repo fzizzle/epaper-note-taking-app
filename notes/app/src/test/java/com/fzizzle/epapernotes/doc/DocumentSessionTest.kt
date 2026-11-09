@@ -1,6 +1,8 @@
 package com.fzizzle.epapernotes.doc
 
+import com.fzizzle.epapernotes.geometry.Pt
 import com.fzizzle.epapernotes.ink.InkItem
+import com.fzizzle.epapernotes.ink.Item
 import com.fzizzle.epapernotes.ink.Stroke
 import com.fzizzle.epapernotes.ink.StrokeKind
 import com.fzizzle.epapernotes.ink.StrokePoint
@@ -9,6 +11,7 @@ import java.io.File
 import java.time.LocalDateTime
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -23,6 +26,10 @@ class DocumentSessionTest {
     private val events = mutableListOf<SessionEvent>()
     private var fake = FakePdfPages()
     private val dot = Stroke(StrokeKind.PEN, listOf(StrokePoint(1f, 2f, 0.5f)))
+    /** A line across y=100, from x=10 to x=50, far from [dot]. */
+    private val line = Stroke(StrokeKind.PEN, (0..8).map { StrokePoint(10f + it * 5, 100f, 0.5f) })
+    /** An eraser swipe down across [line]. */
+    private val acrossLine = listOf(Pt(30f, 90f), Pt(30f, 110f))
 
     @Before fun setUp() {
         pdf = tmp.newFile("Lecture.pdf").apply { writeText("original") }
@@ -36,9 +43,24 @@ class DocumentSessionTest {
         scheduler = scheduler,
         events = { events += it },
         clock = { LocalDateTime.of(2026, 11, 9, 14, 5) },
+        // These tests "kill" a session by just starting another; don't wait out the dead one's turn.
+        previousSessionWaitMs = 0,
     ).also { it.start() }
 
-    private fun journalStrokes(file: File = pdf) = ChangeJournal.forDocument(journals, file).read()!!.changes.size
+    private fun journalStrokes(file: File = pdf) = journalChanges(file).size
+
+    private fun journalChanges(file: File = pdf) = ChangeJournal.forDocument(journals, file).read()!!.changes
+
+    private fun strokesOn(page: Int) = fake.items(page).map { (it as InkItem).stroke }
+
+    private fun lastHistory() = events.filterIsInstance<SessionEvent.HistoryChanged>().last()
+
+    /** The app is killed before the autosave: a new session on the same files, with a fresh PDF fake. */
+    private fun reopenAfterKill(): DocumentSession {
+        events.clear()
+        fake = FakePdfPages()
+        return session()
+    }
 
     @Test fun strokeIsJournaledBeforeAddStrokeReturns() {
         val s = session()
@@ -237,5 +259,218 @@ class DocumentSessionTest {
         session() // no autosave has run
         assertTrue(events.contains(SessionEvent.Replayed(2)))
         assertEquals(2, fake.itemCount)
+    }
+
+    @Test fun eraseRemovesTouchedStrokeAndIsJournaled() {
+        val s = session()
+        s.addStroke(0, line)
+        s.addStroke(0, dot)
+        s.erase(0, acrossLine)
+        assertEquals(listOf(dot), strokesOn(0))
+        val removed = journalChanges().last() as RemoveItems
+        assertEquals(listOf(line), removed.items.map { (it as InkItem).stroke })
+        assertTrue(events.contains(SessionEvent.PageChanged(setOf(0), rotated = false)))
+    }
+
+    @Test fun eraseThatTouchesNothingRecordsNothing() {
+        val s = session()
+        s.addStroke(0, dot)
+        s.erase(0, acrossLine)
+        assertEquals(1, journalStrokes())
+    }
+
+    /** The pen writes while the worker is working out an erase. Both reach the save, in order. */
+    @Test fun strokeDuringEraseIsSavedWithIt() {
+        val s = session()
+        s.addStroke(0, line)
+        fake.duringItems = { fake.duringItems = null; s.addStroke(0, dot) }
+        s.erase(0, acrossLine)
+        scheduler.runDelayed()
+        assertEquals(listOf(dot), strokesOn(0))
+        assertEquals("items=1", pdf.readText())
+        assertEquals(0, journalStrokes())
+    }
+
+    /** A second erase queued behind the first must see the first's result, not remove the stroke again. */
+    @Test fun twoErasesInARowRemoveOnce() {
+        val s = session()
+        s.addStroke(0, line)
+        fake.duringItems = { fake.duringItems = null; s.erase(0, acrossLine) }
+        s.erase(0, acrossLine)
+        assertEquals(2, journalStrokes()) // the stroke and one erase
+        s.undo() // the erase: the stroke is back
+        s.undo() // the stroke itself
+        assertEquals(0, fake.itemCount)
+    }
+
+    @Test fun eraseSurvivesKillBeforeSave() {
+        val s = session()
+        s.addStroke(0, line)
+        s.addStroke(0, dot)
+        s.erase(0, acrossLine)
+        val before = fake.items(0)
+        reopenAfterKill()
+        assertEquals(before, fake.items(0))
+    }
+
+    @Test fun moveSurvivesKillBeforeSave() {
+        val s = session()
+        s.addStroke(0, line)
+        val item = fake.items(0).single() as InkItem
+        val moved = item.copy(stroke = item.stroke.copy(points = item.stroke.points.map { it.copy(y = it.y + 50) }))
+        s.record(ReplaceItems(0, listOf(item), listOf(moved)))
+        assertEquals(listOf<Item>(moved), fake.items(0))
+        reopenAfterKill()
+        assertEquals(listOf<Item>(moved), fake.items(0))
+    }
+
+    @Test fun undoRemovesTheLastStroke() {
+        val s = session()
+        s.addStroke(0, dot)
+        s.addStroke(0, line)
+        s.undo()
+        assertEquals(listOf(dot), strokesOn(0))
+        assertEquals(3, journalStrokes()) // the undo is a change too
+    }
+
+    @Test fun redoPutsItBack() {
+        val s = session()
+        s.addStroke(0, dot)
+        s.undo()
+        s.redo()
+        assertEquals(listOf(dot), strokesOn(0))
+    }
+
+    @Test fun newChangeClearsRedo() {
+        val s = session()
+        s.addStroke(0, dot)
+        s.addStroke(0, line)
+        s.undo()
+        s.addStroke(1, dot)
+        s.redo()
+        assertEquals(listOf(dot), strokesOn(0))
+        assertEquals(listOf(dot), strokesOn(1))
+        assertFalse(lastHistory().canRedo)
+    }
+
+    @Test fun undoAfterSaveIsSavedToo() {
+        val s = session()
+        s.addStroke(0, dot)
+        s.saveNow()
+        assertEquals("items=1", pdf.readText())
+        s.undo()
+        s.saveNow()
+        assertEquals("items=0", pdf.readText())
+        assertEquals(0, journalStrokes())
+    }
+
+    @Test fun undoSurvivesKillBeforeSave() {
+        val s = session()
+        s.addStroke(0, dot)
+        s.addStroke(0, line)
+        s.undo()
+        reopenAfterKill()
+        assertEquals(listOf(dot), strokesOn(0))
+    }
+
+    @Test fun historyStopsAt200() {
+        val s = session()
+        repeat(DocumentSession.HISTORY_LIMIT + 1) { s.addStroke(0, dot) }
+        repeat(DocumentSession.HISTORY_LIMIT + 1) { s.undo() }
+        assertEquals(1, fake.itemCount) // the oldest stroke is beyond undo
+        assertEquals(SessionEvent.HistoryChanged(canUndo = false, canRedo = true), lastHistory())
+    }
+
+    @Test fun rotateTurnsEachPageBy90() {
+        val s = session()
+        fake.rotations[1] = 90
+        fake.rotations[2] = 270
+        s.rotate(listOf(0, 1, 2))
+        assertEquals(mapOf(0 to 90, 1 to 180, 2 to 0), fake.rotations)
+        assertEquals(RotatePages(mapOf(0 to 0, 1 to 90, 2 to 270), mapOf(0 to 90, 1 to 180, 2 to 0)), journalChanges().single())
+        assertTrue(events.contains(SessionEvent.PageChanged(setOf(0, 1, 2), rotated = true)))
+    }
+
+    @Test fun rotateAllIsOneUndoStep() {
+        val s = session()
+        s.rotate((0 until fake.pageCount).toList())
+        s.undo()
+        assertTrue((0 until fake.pageCount).all { fake.rotation(it) == 0 })
+        assertEquals(SessionEvent.HistoryChanged(canUndo = false, canRedo = true), lastHistory())
+    }
+
+    @Test fun emptyChangeDoesNothing() {
+        val s = session()
+        s.record(AddItems(0, emptyList()))
+        s.record(RotatePages(mapOf(0 to 90), mapOf(0 to 90)))
+        assertEquals(0, journalStrokes())
+        assertTrue(events.none { it is SessionEvent.HistoryChanged })
+    }
+
+    @Test fun historyChangedTellsTheStrip() {
+        val s = session()
+        s.addStroke(0, dot)
+        assertEquals(SessionEvent.HistoryChanged(canUndo = true, canRedo = false), lastHistory())
+        s.undo()
+        assertEquals(SessionEvent.HistoryChanged(canUndo = false, canRedo = true), lastHistory())
+        s.redo()
+        assertEquals(SessionEvent.HistoryChanged(canUndo = true, canRedo = false), lastHistory())
+    }
+
+    /** A plan-2 stroke goes by its object number in this file only; moved, it needs an id of its own. */
+    @Test fun oldIdsGetFreshOnesOnMove() {
+        val s = session()
+        val old = InkItem("o7", line)
+        fake.pageItems[0] = mutableListOf(old)
+        s.record(ReplaceItems(0, listOf(old), listOf(old.copy(stroke = dot))))
+        val journaled = journalChanges().single() as ReplaceItems
+        assertEquals("o7", journaled.before.single().id)
+        val fresh = journaled.after.single().id
+        assertTrue(fresh, fresh.matches(Regex("[0-9a-f]{12}")))
+        assertEquals(listOf(fresh), fake.items(0).map { it.id })
+        s.undo() // the undo refers to the id now in the file
+        assertEquals(listOf<Item>(old), fake.items(0))
+    }
+
+    @Test fun replaysAPlan2Journal() {
+        val journalFile = ChangeJournal.forDocument(journals, pdf).file
+        journalFile.writeText("pnj1 ${FileIdentity.of(pdf).encode()}\nadd 0 pn1 pen 1.00,2.00,0.500\n")
+        val s = session()
+        assertTrue(events.contains(SessionEvent.Replayed(1)))
+        assertEquals(1, fake.itemCount)
+        s.undo() // a replayed change belongs to an earlier session: nothing to undo
+        assertEquals(1, fake.itemCount)
+    }
+
+    @Test fun selectAnswersWithTheLoopedItems() {
+        val s = session()
+        s.addStroke(0, line)
+        s.addStroke(0, dot)
+        var picked: List<Item>? = null
+        s.select(0, listOf(Pt(0f, 80f), Pt(60f, 80f), Pt(60f, 120f), Pt(0f, 120f))) { picked = it }
+        assertEquals(listOf(line), picked!!.map { (it as InkItem).stroke })
+        var all: List<Item>? = null
+        s.items(0) { all = it }
+        assertEquals(2, all!!.size)
+        assertNotEquals(all!![0].id, all!![1].id)
+    }
+
+    /**
+     * The ordering rule on real threads: the pen writes, another thread draws and erases lines,
+     * and saves run in between. Every save must contain exactly the changes it counts.
+     */
+    @Test fun strokesErasesAndSavesAtOnceLoseNothing() {
+        val worker = WorkerScheduler("busy")
+        val pdfFake = FakePdfPages(saveDelayMs = 1)
+        val s = DocumentSession(pdf, journals, { pdfFake }, worker, {})
+        s.start()
+        val pen = Thread { repeat(300) { s.addStroke(0, dot); if (it % 25 == 0) s.saveNow() } }
+        val other = Thread { repeat(50) { s.addStroke(0, line); s.erase(0, acrossLine); if (it % 10 == 0) s.saveNow() } }
+        pen.start(); other.start(); pen.join(); other.join()
+        s.close()
+        assertTrue(worker.awaitTermination(10_000))
+        assertEquals(List(300) { dot }, pdfFake.items(0).map { (it as InkItem).stroke })
+        assertEquals("items=300", pdf.readText())
+        assertEquals(0, journalStrokes())
     }
 }

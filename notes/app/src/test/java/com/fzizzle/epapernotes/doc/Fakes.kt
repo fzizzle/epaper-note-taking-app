@@ -13,13 +13,19 @@ class FakePdfPages(override var wasRepaired: Boolean = false, private val saveDe
     var saves = 0
     /** Runs in the middle of a save, to imitate the pen writing while the worker saves. */
     var duringSave: (() -> Unit)? = null
+    /** Runs while items are read, to imitate the pen writing while the worker works out an erase. */
+    var duringItems: (() -> Unit)? = null
     var closed = false
 
     override val pageCount = 5
 
     val itemCount get() = pageItems.values.sumOf { it.size }
 
-    override fun items(page: Int): List<Item> = pageItems[page].orEmpty().toList()
+    override fun items(page: Int): List<Item> {
+        val now = pageItems[page].orEmpty().toList()
+        duringItems?.invoke()
+        return now
+    }
 
     /** As PdfFile does it: ids that aren't there are skipped. */
     override fun apply(change: Change) {

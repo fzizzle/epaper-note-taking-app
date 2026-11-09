@@ -307,7 +307,9 @@ class WritingActivity : Activity() {
             is SessionEvent.SaveFailed -> toast("Couldn't save: ${event.message}. Your writing is kept safe and will be saved again.")
             SessionEvent.ChangedOnDisk -> toast("This file was changed elsewhere, so it isn't being saved into. Your writing is kept safe.")
             SessionEvent.NeedsRepairDecision -> askAboutRepair()
-            is SessionEvent.Replayed -> toast("Recovered ${event.count} stroke(s) that hadn't been saved.")
+            is SessionEvent.Replayed -> toast("Recovered ${event.count} change(s) that hadn't been saved.")
+            // The undo and redo buttons and redrawing after erases and moves come with their tools.
+            is SessionEvent.PageChanged, is SessionEvent.HistoryChanged -> Unit
             is SessionEvent.EarlierWritingKept -> toast("Unsaved writing from before this file changed was kept safe.")
             is SessionEvent.SavedToCopy -> toast("Saved to ${event.copy.name}.")
             is SessionEvent.OpenFailed -> {

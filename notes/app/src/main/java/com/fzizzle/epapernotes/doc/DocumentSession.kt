@@ -1,11 +1,16 @@
 package com.fzizzle.epapernotes.doc
 
+import com.fzizzle.epapernotes.geometry.Pt
+import com.fzizzle.epapernotes.ink.ImageItem
 import com.fzizzle.epapernotes.ink.InkItem
+import com.fzizzle.epapernotes.ink.Item
 import com.fzizzle.epapernotes.ink.ItemIds
 import com.fzizzle.epapernotes.ink.Stroke
 import com.fzizzle.epapernotes.storage.CopyNames
 import com.fzizzle.epapernotes.storage.FileIdentity
 import com.fzizzle.epapernotes.storage.SafeSave
+import com.fzizzle.epapernotes.tools.Eraser
+import com.fzizzle.epapernotes.tools.Lasso
 import java.io.File
 import java.time.LocalDateTime
 import java.util.concurrent.CompletableFuture
@@ -16,20 +21,24 @@ import java.util.concurrent.TimeUnit
 /**
  * One open document, and the rules that keep its writing safe (spec §7.2, §7.3):
  *
- * - Every stroke goes into the journal before [addStroke] returns, so it survives a crash
- *   from the moment the pen lifts.
+ * - Every change (a stroke, an erase, a move, an undo...) goes into the journal before
+ *   [record] returns, so it survives a crash from the moment the pen lifts.
  * - The PDF is saved in the background a few seconds after the pen stops, and at once when
  *   the owner leaves the document or the app goes to the background.
  * - A save never writes over a file that something else has changed, or over a damaged file
  *   the owner hasn't decided about. The writing stays in the journal instead.
- * - The journal is only emptied after a save has succeeded, and strokes that arrived during
+ * - The journal is only emptied after a save has succeeded, and changes that arrived during
  *   that save are written back into it.
+ * - Undo and redo cover this session's changes. The history is in memory only; an undo is
+ *   just one more change, journaled and saved like any other.
  * - Two sessions on the same file take turns: a new one waits until the previous one has
  *   finished saving and closed. Turning the tablet closes the writing screen and opens a new
  *   one on the same file, and without this the two would trip over each other's saves.
  *
- * Threads: [addStroke] runs on the pen's thread. Everything that touches the PDF runs on the
- * [scheduler]'s single worker thread. The journal is shared, so it's guarded by [lock].
+ * Threads: [addStroke] runs on the pen's thread, [undo] and [redo] on the screen's, and
+ * [record] on any. Everything that touches the PDF runs on the [scheduler]'s single worker
+ * thread. The journal, the unsaved changes and the history are shared, so they're guarded by
+ * [lock]. Events arrive on the worker thread.
  */
 class DocumentSession(
     pdf: File,
@@ -38,6 +47,8 @@ class DocumentSession(
     private val scheduler: Scheduler,
     private val events: (SessionEvent) -> Unit,
     private val clock: () -> LocalDateTime = LocalDateTime::now,
+    /** How long to wait for an earlier session on this file to close. Tests shorten it. */
+    private val previousSessionWaitMs: Long = PREVIOUS_SESSION_WAIT_MS,
 ) {
     /** The file being written into. It becomes the copy after a "save to a copy". */
     @Volatile var file: File = pdf
@@ -45,9 +56,12 @@ class DocumentSession(
 
     private val lock = Any()
 
-    // Guarded by lock: the journal, and the strokes it holds that aren't in a saved PDF yet.
+    // Guarded by lock: the journal, the changes it holds that aren't in a saved PDF yet, and
+    // this session's history: changes to undo (newest last) and undone ones to redo.
     private var journal = ChangeJournal.forDocument(journalDir, pdf)
     private val unsaved = ArrayList<Change>()
+    private val undoable = ArrayDeque<Change>()
+    private val redoable = ArrayDeque<Change>()
 
     /** Opened once the journal is ready, so no stroke can be written before its header. */
     private val journalReady = CountDownLatch(1)
@@ -58,7 +72,8 @@ class DocumentSession(
 
     // Worker thread only.
     private var pages: PdfPages? = null
-    private var applied = 0 // how many of `unsaved` have been added to `pages`
+    private var applied = 0 // how many of `unsaved` are in `pages`: always the first ones, in order
+    private var applyFailed = false // the PDF no longer matches the journal, so it's never saved
     private var known: FileIdentity? = null // the file as it was when opened or last saved
     private var repairDecided = false
     private var waitingForRepairDecision = false
@@ -70,7 +85,7 @@ class DocumentSession(
         scheduler.post {
             try {
                 // Wait for an earlier session on this file to finish its last save.
-                previous?.let { runCatching { it.get(PREVIOUS_SESSION_WAIT_S, TimeUnit.SECONDS) } }
+                previous?.let { runCatching { it.get(previousSessionWaitMs, TimeUnit.MILLISECONDS) } }
                 openOnWorker()
             } finally {
                 journalReady.countDown()
@@ -124,8 +139,8 @@ class DocumentSession(
         }
         pages = opened
         known = identity
-        replay.forEach { opened.apply(it) }
-        applied = replay.size
+        // The replayed changes, and any the pen has added since the journal opened.
+        applyPending()
         checkRepair(opened)
         if (replay.isNotEmpty()) {
             events(SessionEvent.Replayed(replay.size))
@@ -133,20 +148,142 @@ class DocumentSession(
         }
     }
 
-    /** A finished stroke. Safe in the journal when this returns. */
+    /** A finished stroke, from the pen's thread. Safe in the journal when this returns. */
     fun addStroke(page: Int, stroke: Stroke) {
+        record(AddItems(page, listOf(InkItem(ItemIds.next(), stroke))))
+    }
+
+    /**
+     * A new change, from any thread. Safe in the journal when this returns; it reaches the PDF
+     * when the worker gets to it. It can be undone, and it clears what could be redone.
+     *
+     * The ordering rule: a change is journaled, appended to `unsaved`, and posted to the worker
+     * inside one `synchronized(lock)` block (see [commit]). So the order in the journal, in
+     * `unsaved` and on the worker is always the same, even with the pen, the screen and the
+     * worker recording at once, and `applied` says exactly which changes a save contains.
+     * [erase] and [rotate] work out their change on the worker and then come through here like
+     * anyone else: their change is applied after everything recorded before it.
+     */
+    fun record(change: Change) {
         journalReady.await()
-        val change = AddItems(page, listOf(InkItem(ItemIds.next(), stroke)))
+        val fresh = withFreshIds(change)
+        if (isEmpty(fresh)) return
         synchronized(lock) {
-            journal.append(change)
-            unsaved.add(change)
-        }
-        scheduler.post {
-            val p = pages ?: return@post
-            p.apply(change)
-            applied++
+            commit(fresh) {
+                undoable.addLast(fresh)
+                if (undoable.size > HISTORY_LIMIT) undoable.removeFirst()
+                redoable.clear()
+            }
         }
         scheduleAutosave()
+    }
+
+    /** Takes back this session's last change, by recording its inverse. */
+    fun undo() {
+        // No wait for the journal: a change to undo means it was ready long ago.
+        synchronized(lock) {
+            val last = undoable.lastOrNull() ?: return
+            commit(last.inverse()) {
+                undoable.removeLast()
+                redoable.addLast(last)
+            }
+        }
+        scheduleAutosave()
+    }
+
+    /** Puts back the last change [undo] took back. */
+    fun redo() {
+        synchronized(lock) {
+            val next = redoable.lastOrNull() ?: return
+            commit(next) {
+                redoable.removeLast()
+                undoable.addLast(next)
+            }
+        }
+        scheduleAutosave()
+    }
+
+    /**
+     * Called with [lock] held: the ordering rule. The journal comes first, so if writing it
+     * fails nothing else changes; [updateHistory] runs only once the change is safe.
+     */
+    private fun commit(change: Change, updateHistory: () -> Unit) {
+        journal.append(change)
+        unsaved.add(change)
+        updateHistory()
+        val history = SessionEvent.HistoryChanged(canUndo = undoable.isNotEmpty(), canRedo = redoable.isNotEmpty())
+        scheduler.post {
+            applyPending()
+            events(history)
+        }
+    }
+
+    /** Removes the items an eraser [trail] (PDF space) touches on [page]. */
+    fun erase(page: Int, trail: List<Pt>) {
+        scheduler.post {
+            val p = pages ?: return@post
+            applyPending()
+            val hits = Eraser.hits(p.items(page), trail) // items() once: it's costly for snips
+            if (hits.isNotEmpty()) record(RemoveItems(page, hits))
+        }
+    }
+
+    /** The items a lasso [loop] (PDF space) picks up on [page], given to [answer] on the worker. */
+    fun select(page: Int, loop: List<Pt>, answer: (List<Item>) -> Unit) {
+        scheduler.post {
+            val p = pages ?: return@post answer(emptyList())
+            applyPending()
+            answer(Lasso.selects(p.items(page), loop))
+        }
+    }
+
+    /** All of the app's items on [page], given to [answer] on the worker. */
+    fun items(page: Int, answer: (List<Item>) -> Unit) {
+        scheduler.post {
+            val p = pages ?: return@post answer(emptyList())
+            applyPending()
+            answer(p.items(page))
+        }
+    }
+
+    /** Turns each of [pages] by 90° clockwise, as one undo step. */
+    fun rotate(pages: List<Int>) {
+        scheduler.post {
+            val p = this.pages ?: return@post
+            applyPending()
+            val before = pages.associateWith { p.rotation(it) }
+            record(RotatePages(before, before.mapValues { (_, degrees) -> (degrees + 90) % 360 }))
+        }
+    }
+
+    /**
+     * Worker thread only. Brings the PDF up to date with everything recorded so far, in order.
+     * Every change posts this, so usually it applies just that one. A task that works out a
+     * change from the PDF ([erase], [rotate]) calls it first, so it sees every change recorded
+     * before it, even one whose own task is still queued behind it: two quick erases can't
+     * both remove the same stroke.
+     */
+    private fun applyPending() {
+        val p = pages ?: return
+        if (applyFailed) return
+        val touched = HashSet<Int>()
+        var rotated = false
+        while (true) {
+            val next = synchronized(lock) { unsaved.getOrNull(applied) } ?: break
+            try {
+                p.apply(next)
+            } catch (e: Exception) {
+                // The PDF may now hold part of this change, so saving it could lose or double
+                // something. Stop saving; the journal keeps everything for the next open.
+                applyFailed = true
+                events(SessionEvent.SaveFailed(e.message ?: "A change couldn't be written into the file."))
+                break
+            }
+            applied++
+            touched += next.pages
+            rotated = rotated || next is RotatePages
+        }
+        if (touched.isNotEmpty()) events(SessionEvent.PageChanged(touched, rotated))
     }
 
     /**
@@ -225,13 +362,13 @@ class DocumentSession(
         val p = pages ?: return
         val inThisSave = applied
         if (inThisSave == 0) return
-        if (stoppedBecauseChanged || checkRepair(p)) return
+        if (applyFailed || stoppedBecauseChanged || checkRepair(p)) return
 
         try {
             val now = try { FileIdentity.of(file) } catch (e: Exception) { null }
             if (now != known) {
                 // A laptop or sync app changed, moved or deleted the file. Writing over it
-                // would lose their change, so stop saving into it. The strokes stay in the
+                // would lose their change, so stop saving into it. The changes stay in the
                 // journal (plan 5 adds the copy).
                 stoppedBecauseChanged = true
                 events(SessionEvent.ChangedOnDisk)
@@ -249,7 +386,7 @@ class DocumentSession(
         }
     }
 
-    /** After a successful save: a fresh journal holding only the strokes the save didn't include. */
+    /** After a successful save: a fresh journal holding only the changes the save didn't include. */
     private fun restartJournal(base: FileIdentity, saved: Int) {
         synchronized(lock) {
             val remaining = unsaved.drop(saved)
@@ -287,13 +424,37 @@ class DocumentSession(
         events(SessionEvent.EarlierWritingKept(kept))
     }
 
+    /** A change with nothing in it isn't worth a journal line or an undo step. */
+    private fun isEmpty(change: Change) = when (change) {
+        is AddItems -> change.items.isEmpty()
+        is RemoveItems -> change.items.isEmpty()
+        is ReplaceItems -> change.before.isEmpty() && change.after.isEmpty()
+        is RotatePages -> change.before == change.after
+    }
+
+    /**
+     * A plan-2 stroke's id (`o<object number>`) only names the annotation it was read from. A
+     * moved one is a new annotation, so it gets an id of its own before it's journaled; the
+     * undo history then holds the id that is really in the file.
+     */
+    private fun withFreshIds(change: Change): Change {
+        if (change !is ReplaceItems || change.after.none { it.id.startsWith("o") }) return change
+        return change.copy(after = change.after.map { if (it.id.startsWith("o")) it.withId(ItemIds.next()) else it })
+    }
+
+    private fun Item.withId(id: String): Item = when (this) {
+        is InkItem -> copy(id = id)
+        is ImageItem -> copy(id = id)
+    }
+
     companion object {
         const val AUTOSAVE_DELAY_MS = 3000L
+        const val HISTORY_LIMIT = 200
         const val RETRY_DELAY_MS = 30_000L
         private const val AUTOSAVE = "autosave"
 
         /** How long a new session waits for the previous one on the same file to close. */
-        private const val PREVIOUS_SESSION_WAIT_S = 15L
+        private const val PREVIOUS_SESSION_WAIT_MS = 15_000L
 
         /** Open sessions by file, so a new one can wait for the previous one to close. */
         private val openSessions = ConcurrentHashMap<String, CompletableFuture<Unit>>()

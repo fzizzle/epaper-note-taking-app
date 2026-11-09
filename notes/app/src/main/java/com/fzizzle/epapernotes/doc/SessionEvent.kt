@@ -15,8 +15,17 @@ sealed interface SessionEvent {
     /** MuPDF repaired the file to open it. Nothing is written until the owner chooses. */
     data object NeedsRepairDecision : SessionEvent
 
-    /** Strokes that never reached the PDF last time were found in the journal and put back. */
+    /** [count] changes that never reached the PDF last time were found in the journal and put back. */
     data class Replayed(val count: Int) : SessionEvent
+
+    /**
+     * Changes have reached the PDF on these [pages]: draw them again. When [rotated], a page
+     * turned, so its size on screen has changed too.
+     */
+    data class PageChanged(val pages: Set<Int>, val rotated: Boolean) : SessionEvent
+
+    /** For the undo and redo buttons. */
+    data class HistoryChanged(val canUndo: Boolean, val canRedo: Boolean) : SessionEvent
 
     /**
      * The journal held writing from an earlier session, but the file has changed since. That
