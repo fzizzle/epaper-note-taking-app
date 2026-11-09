@@ -1,5 +1,8 @@
 package com.fzizzle.epapernotes.geometry
 
+import kotlin.math.abs
+import kotlin.math.sqrt
+
 /** A point. Which space it's in (PDF points, display points, screen pixels) depends on where it comes from. */
 data class Pt(val x: Float, val y: Float)
 
@@ -39,6 +42,9 @@ data class Affine(val a: Float, val b: Float, val c: Float, val d: Float, val e:
         e = e * next.a + f * next.c + next.e,
         f = e * next.b + f * next.d + next.f,
     )
+
+    /** How much this transform enlarges lengths (1 for a move or turn): sqrt of the area factor. */
+    fun uniformScale(): Float = sqrt(abs(a * d - b * c))
 
     companion object {
         val IDENTITY = Affine(1f, 0f, 0f, 1f, 0f, 0f)
