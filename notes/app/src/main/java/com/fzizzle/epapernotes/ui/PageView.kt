@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.RectF
 import android.view.GestureDetector
 import android.view.MotionEvent
@@ -107,8 +108,9 @@ class PageView(context: Context) : View(context) {
      * scaled up: a full page at 4x would need about 285 MB.
      */
     private fun renderWidth(v: Viewport, page: Int): Int {
-        val fitted = sizes[page].w * v.pxPerPt() / v.zoom
-        return (if (v.zoom > 1.05f) fitted * 1.5f else fitted).toInt()
+        // Rounded from the fitted width, so floating-point noise never asks for 2789 then 2790.
+        val fitted = Math.round(sizes[page].w * v.pxPerPt() / v.zoom)
+        return if (v.zoom > 1.05f) Math.round(fitted * 1.5f) else fitted
     }
 
     private fun ensureRendered(page: Int, widthPx: Int) {
@@ -148,12 +150,24 @@ class PageView(context: Context) : View(context) {
         }
     }
 
-    /** A rough version of the saved ink, good enough to stand in until the page re-renders. */
+    /** A close version of the saved ink, standing in until the page re-renders. */
     private fun drawStroke(canvas: Canvas, stroke: Stroke, pdfToScreen: Affine, pxPerPt: Float) {
         val style = StrokeStyle.of(stroke.kind)
         inkPaint.color = Color.rgb((style.rgb[0] * 255).toInt(), (style.rgb[1] * 255).toInt(), (style.rgb[2] * 255).toInt())
         inkPaint.alpha = (style.opacity * 255).toInt()
         val pts = stroke.points.map { pdfToScreen.map(Pt(it.x, it.y)) }
+        if (style.opacity < 1f) {
+            // See-through ink is drawn as one path, once: overlapping pieces would show darker.
+            val path = Path()
+            path.moveTo(pts[0].x, pts[0].y)
+            pts.drop(1).forEach { path.lineTo(it.x, it.y) }
+            if (pts.size == 1) path.lineTo(pts[0].x + 0.01f, pts[0].y)
+            inkPaint.strokeWidth = style.maxWidth * pxPerPt
+            inkPaint.style = Paint.Style.STROKE
+            inkPaint.strokeJoin = Paint.Join.ROUND
+            canvas.drawPath(path, inkPaint)
+            return
+        }
         for (i in pts.indices) {
             val a = pts[if (i == 0) 0 else i - 1]
             val b = pts[i]
@@ -192,6 +206,24 @@ class PageView(context: Context) : View(context) {
             invalidate() // now render at the new width
         }
     })
+
+    // Diagnostics for the owner's "have to wait 2 seconds to zoom after a stroke": when does the
+    // pen leave the screen's range, and how late do finger touches arrive?
+    override fun onHoverEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_HOVER_ENTER || event.actionMasked == MotionEvent.ACTION_HOVER_EXIT) {
+            android.util.Log.i("Notes", "pen ${MotionEvent.actionToString(event.actionMasked)} tool=${event.getToolType(0)}")
+        }
+        return super.onHoverEvent(event)
+    }
+
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        val m = event.actionMasked
+        if (m == MotionEvent.ACTION_DOWN || m == MotionEvent.ACTION_POINTER_DOWN) {
+            val lag = android.os.SystemClock.uptimeMillis() - event.eventTime
+            android.util.Log.i("Notes", "touch ${MotionEvent.actionToString(m)} tool=${event.getToolType(event.actionIndex)} pointers=${event.pointerCount} deliveredLateMs=$lag")
+        }
+        return super.dispatchTouchEvent(event)
+    }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         // Fingers only. The pen never moves the page (spec §6.2).

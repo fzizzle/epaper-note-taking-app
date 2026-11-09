@@ -63,4 +63,11 @@ class StrokeOutlineTest {
         val length = StrokeOutline.contentStream(wavy).length
         assertTrue("$length characters", length < 6000)
     }
+
+    /** A see-through highlighter must be filled once: overlapping fills would show darker blotches. */
+    @Test fun strokeIsFilledInOneGo() {
+        val zigzag = Stroke(StrokeKind.HIGHLIGHTER, (0 until 30).map { StrokePoint(10f + it * 3, if (it % 2 == 0) 0f else 20f, 1f) })
+        val fills = Regex("(^|\\s)f(\\s|$)").findAll(StrokeOutline.contentStream(zigzag)).count()
+        assertEquals(1, fills)
+    }
 }
