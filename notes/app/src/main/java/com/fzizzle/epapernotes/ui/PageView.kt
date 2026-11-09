@@ -21,7 +21,8 @@ import kotlin.math.abs
 /**
  * Shows one page at a time (spec §6.2) and moves it with fingers: two fingers pinch-zoom;
  * zoomed in, one finger moves around the page, and pushing on past the top or bottom edge
- * turns the page. The pen is ignored here: while fast-ink is on, Onyx handles the pen.
+ * turns the page. While fast-ink is on, Onyx handles the pen and it's ignored here; while it's
+ * paused for a selection, a snip or a paste, the pen goes to [penHandler].
  *
  * New strokes are drawn here too, on top of any page rendering that doesn't contain them yet
  * (see InkOverlay). That keeps them on screen whenever the view redraws, at any zoom, without
@@ -43,7 +44,19 @@ class PageView(context: Context) : View(context) {
     var onStylusDown: (PenButton) -> Unit = {}
     var onStylusHover: (PenButton) -> Unit = {}
 
-    /** Called after a page rendering is put on screen. */
+    /**
+     * While set, pen events go here instead of being ignored. Set only while fast-ink is off
+     * for a tool (ToolState.fastInkOn is false): with fast-ink on, Onyx has the pen.
+     */
+    var penHandler: ((MotionEvent) -> Boolean)? = null
+
+    /** A one-finger tap, in view pixels. */
+    var onFingerTap: (x: Float, y: Float) -> Unit = { _, _ -> }
+
+    /** The selection box, snip rectangle and so on, drawn on top of the page. */
+    var selectionLayer: SelectionLayer? = null
+
+    /** Called after a fresh page rendering is put on screen. */
     var onPageShown: (page: Int) -> Unit = {}
 
     /** Asks for [page] to be drawn [widthPx] wide. The answer comes back through [pageRendered]. */
@@ -59,18 +72,10 @@ class PageView(context: Context) : View(context) {
 
     private val bitmaps = PageBitmaps<Rendered>(200L * 1024 * 1024) { it.bitmap.byteCount.toLong() }
 
-    /**
-     * The rendering a [pageChanged] page had, shown until its fresh one arrives: on e-ink the
-     * old page for a moment is calmer than a grey placeholder. Only for the page on show.
-     */
-    private val stale = mutableMapOf<Int, Rendered>()
-
-    // Renders on their way, and the ink version each will contain.
+    // Renders on their way, and the ink version each will contain. A render that was on its
+    // way when its page changed arrives stale (InkOverlay.isStale): it's kept for showing,
+    // and asked for again.
     private val inFlight = mutableMapOf<Pair<Int, Int>, Int>()
-
-    // Renders that were on their way when their page changed: they may not have the change,
-    // so they're thrown away on arrival and asked for again. At most one per page and width.
-    private val outdated = mutableSetOf<Pair<Int, Int>>()
 
     private val ink = InkOverlay()
 
@@ -102,7 +107,6 @@ class PageView(context: Context) : View(context) {
         val leaving = v.page
         val moved = if (forward) v.next() else v.previous()
         if (!moved) return false
-        stale.remove(leaving)
         // Next time this page is visited, render it afresh so its new strokes come from the PDF.
         if (ink.version(leaving) > 0) bitmaps.invalidate(leaving)
         invalidate()
@@ -116,7 +120,6 @@ class PageView(context: Context) : View(context) {
         val leaving = v.page
         if (page == leaving) return
         v.goTo(page)
-        stale.remove(leaving)
         if (ink.version(leaving) > 0) bitmaps.invalidate(leaving)
         invalidate()
         onViewportChanged()
@@ -129,20 +132,25 @@ class PageView(context: Context) : View(context) {
     }
 
     /**
-     * [page]'s ink changed in a way the overlay can't show, like an erase: render it afresh.
-     * Task 8 replaces this with InkOverlay's stale-rendering rule. UI thread.
+     * [page]'s ink changed in a way the overlay can't show, like an erase or a move, and the
+     * change has reached the PDF: render it afresh. The old rendering stays on screen until
+     * the fresh one arrives, so nothing is redrawn now. UI thread.
      */
     fun pageChanged(page: Int) {
-        if (page == viewport?.page) bitmaps.anyFor(page)?.let { stale[page] = it }
-        bitmaps.invalidate(page)
-        inFlight.keys.filter { it.first == page }.forEach { outdated += it }
-        invalidate()
+        ink.changed(page)
+        val v = viewport ?: return
+        if (page == v.page && !pinching) ensureRendered(page, renderWidth(v, page))
     }
 
     /** Rendering failed (a damaged page, say). Forget it, so it's asked for again next time. UI thread. */
     fun renderFailed(page: Int, widthPx: Int) {
         inFlight.remove(page to widthPx)
-        outdated.remove(page to widthPx)
+    }
+
+    /** Where the page on show is, for the selection layer. Null until the pages are laid out. */
+    fun frame(): PageFrame? {
+        val v = viewport ?: return null
+        return PageFrame(toDisplay[v.page], v.pageToScreen(), sizes[v.page])
     }
 
     /** The view changed size, for instance the tablet turned: refit the same page. */
@@ -157,17 +165,13 @@ class PageView(context: Context) : View(context) {
 
     /** A rendering arrived from the worker. UI thread. */
     fun pageRendered(page: Int, widthPx: Int, bitmap: Bitmap) {
-        if (outdated.remove(page to widthPx)) {
-            inFlight.remove(page to widthPx)
-            invalidate() // asks for it again
-            return
-        }
         val version = inFlight.remove(page to widthPx) ?: 0
-        android.util.Log.i("Notes", "rendered page=$page width=$widthPx version=$version of ${ink.version(page)}")
+        val stale = ink.isStale(page, version)
+        android.util.Log.i("Notes", "rendered page=$page width=$widthPx version=$version of ${ink.version(page)}${if (stale) " (stale, asking again)" else ""}")
+        // Even a stale one is kept: it's closer to the page than what's showing. Drawing asks again.
         bitmaps.put(page, widthPx, Rendered(bitmap, version))
-        stale.remove(page)
         invalidate()
-        onPageShown(page)
+        if (!stale) onPageShown(page)
     }
 
     /**
@@ -181,7 +185,8 @@ class PageView(context: Context) : View(context) {
     }
 
     private fun ensureRendered(page: Int, widthPx: Int) {
-        if (bitmaps.get(page, widthPx) != null || inFlight.containsKey(page to widthPx)) return
+        val have = bitmaps.get(page, widthPx)
+        if ((have != null && !ink.isStale(page, have.version)) || inFlight.containsKey(page to widthPx)) return
         // Strokes counted now were all sent to the PDF before this request, and the worker
         // handles things in order, so this rendering will contain them.
         inFlight[page to widthPx] = ink.version(page)
@@ -199,12 +204,15 @@ class PageView(context: Context) : View(context) {
         val dst = RectF(topLeft.x, topLeft.y, bottomRight.x, bottomRight.y)
 
         val w = renderWidth(v, page)
-        val shown = bitmaps.get(page, w) ?: bitmaps.anyFor(page) ?: stale[page]
+        // A stale rendering is still drawn: an old page for a moment is calmer than a blank one.
+        val shown = bitmaps.get(page, w) ?: bitmaps.anyFor(page)
         if (shown != null) canvas.drawBitmap(shown.bitmap, null, dst, pagePaint) else canvas.drawRect(dst, placeholder)
 
         // Whatever this rendering is missing, whenever it was made.
         val missing = ink.newerThan(page, shown?.version ?: 0)
         missing.forEach { drawStroke(canvas, it, toDisplay[page].then(toScreen), v.pxPerPt()) }
+
+        selectionLayer?.draw(canvas, PageFrame(toDisplay[page], toScreen, sizes[page]))
 
         // Don't render mid-pinch: the width keeps changing. It's asked for once the pinch ends.
         if (!pinching) {
@@ -244,6 +252,11 @@ class PageView(context: Context) : View(context) {
     }
 
     private val scroller = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
+        override fun onSingleTapUp(e: MotionEvent): Boolean {
+            onFingerTap(e.x, e.y)
+            return true
+        }
+
         override fun onScroll(e1: MotionEvent?, e2: MotionEvent, dx: Float, dy: Float): Boolean {
             val v = viewport ?: return true
             // At normal size the whole page is showing: a swipe does nothing (spec §6.2).
@@ -284,13 +297,13 @@ class PageView(context: Context) : View(context) {
         }
         // Not on exit: the pen leaves hover just as it lands, and a missing button there must
         // not turn a grey lasso line back into ink.
-        if (isPen(event) && event.actionMasked != MotionEvent.ACTION_HOVER_EXIT) onStylusHover(buttonOf(event))
+        if (isPen(event) && event.actionMasked != MotionEvent.ACTION_HOVER_EXIT) onStylusHover(penButtonOf(event))
         return super.onHoverEvent(event)
     }
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
         val m = event.actionMasked
-        if (m == MotionEvent.ACTION_DOWN && isPen(event)) onStylusDown(buttonOf(event))
+        if (m == MotionEvent.ACTION_DOWN && isPen(event)) onStylusDown(penButtonOf(event))
         if (m == MotionEvent.ACTION_DOWN || m == MotionEvent.ACTION_POINTER_DOWN) {
             val lag = android.os.SystemClock.uptimeMillis() - event.eventTime
             android.util.Log.i("Notes", "touch ${MotionEvent.actionToString(m)} tool=${event.getToolType(event.actionIndex)} pointers=${event.pointerCount} deliveredLateMs=$lag")
@@ -299,7 +312,8 @@ class PageView(context: Context) : View(context) {
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        // Fingers only. The pen never moves the page (spec §6.2).
+        // The pen never moves the page (spec §6.2). While fast-ink is off for a tool, it works the tool.
+        if (isPen(event)) return penHandler?.invoke(event) ?: false
         if (event.getToolType(0) != MotionEvent.TOOL_TYPE_FINGER) return false
 
         when (event.actionMasked) {
@@ -331,17 +345,17 @@ class PageView(context: Context) : View(context) {
         else -> false
     }
 
-    /**
-     * Button 2 makes the pen report as an eraser; button 1 is an ordinary button flag
-     * (probe results §1). Button 1's flag is ignored on the eraser, which wins.
-     */
-    private fun buttonOf(event: MotionEvent): PenButton = when {
-        event.getToolType(0) == MotionEvent.TOOL_TYPE_ERASER -> PenButton.ERASER_END
-        event.isButtonPressed(MotionEvent.BUTTON_STYLUS_PRIMARY) -> PenButton.LASSO_BUTTON
-        else -> PenButton.NONE
-    }
-
     companion object {
+        /**
+         * Button 2 makes the pen report as an eraser; button 1 is an ordinary button flag
+         * (probe results §1). Button 1's flag is ignored on the eraser, which wins.
+         */
+        fun penButtonOf(event: MotionEvent): PenButton = when {
+            event.getToolType(0) == MotionEvent.TOOL_TYPE_ERASER -> PenButton.ERASER_END
+            event.isButtonPressed(MotionEvent.BUTTON_STYLUS_PRIMARY) -> PenButton.LASSO_BUTTON
+            else -> PenButton.NONE
+        }
+
         /** How far past the edge a zoomed page must be pushed to turn, as a share of the screen height. */
         const val TURN_PUSH_FRACTION = 0.15f
     }
