@@ -60,3 +60,18 @@ Each stroke is now drawn as one outline with rounded ends, rather than a circle 
 | Reopen and read the strokes back | 329 ms, 50 of 50 | 238 ms, 50 of 50 |
 
 These 200-point test strokes are long, and real handwriting strokes are shorter. A densely written page should now add well under 0.5 MB.
+
+## Rerun: end of plan 3 (tools), 2026-11-09
+
+Same check, run on a copy of the test copy PDF (PWT test copy.pdf, 14.3 MB, 125 pages). It already held 45 strokes of the owner's test ink, so "strokes back" reads 95 (45 + 50) and the check's own "50 of 50" assertion reports a failure; the 50 new strokes were all read back.
+
+| | PWT test copy (14.3 MB) |
+|---|---|
+| Open | 12 ms |
+| Render page 1 (cold) | 149 ms |
+| Render pages 2-10 (median) | 79 ms, slowest 130 ms |
+| Add 50 strokes | 642 ms (about 13 ms per stroke) |
+| Save (safe replace) | 214 ms (the file already had 45 strokes) |
+| Reopen and read the strokes back | 579 ms, 95 of 95 |
+
+Adding a stroke is still about 12-13 ms. Unit tests: 166 pass. Tablet tests: 41 run, 0 failed, 1 skipped (the speed check, which needs the manual steps above).
