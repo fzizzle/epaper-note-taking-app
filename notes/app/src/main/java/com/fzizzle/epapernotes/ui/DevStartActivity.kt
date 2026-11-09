@@ -3,10 +3,14 @@ package com.fzizzle.epapernotes.ui
 import android.app.Activity
 import android.content.Intent
 import android.net.Uri
+import android.graphics.Color
 import android.os.Bundle
 import android.os.Environment
 import android.provider.Settings
+import android.view.View
+import android.view.WindowInsets
 import android.widget.ArrayAdapter
+import android.widget.FrameLayout
 import android.widget.Button
 import android.widget.ListView
 import com.fzizzle.epapernotes.storage.SafeSave
@@ -21,7 +25,7 @@ class DevStartActivity : Activity() {
     override fun onResume() {
         super.onResume()
         if (!Environment.isExternalStorageManager()) {
-            setContentView(Button(this).apply {
+            setContentViewInsideBars(Button(this).apply {
                 text = "Allow access to your files"
                 textSize = 24f
                 setOnClickListener {
@@ -51,7 +55,20 @@ class DevStartActivity : Activity() {
         val list = ListView(this)
         list.adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, labels)
         list.setOnItemClickListener { _, _, position, _ -> open(rows[position]) }
-        setContentView(list)
+        setContentViewInsideBars(list)
+    }
+
+    /** Android 15+ draws apps under the status bar. Keep everything below it, so the top row can be tapped. */
+    private fun setContentViewInsideBars(view: View) {
+        setContentView(FrameLayout(this).apply {
+            setBackgroundColor(Color.WHITE)
+            addView(view)
+            setOnApplyWindowInsetsListener { v, insets ->
+                val bars = insets.getInsets(WindowInsets.Type.systemBars())
+                v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+                insets
+            }
+        })
     }
 
     private fun open(pdf: File) {
