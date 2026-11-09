@@ -1,5 +1,6 @@
 package com.fzizzle.epapernotes.doc
 
+import com.fzizzle.epapernotes.ink.InkItem
 import com.fzizzle.epapernotes.ink.Stroke
 import com.fzizzle.epapernotes.ink.StrokeKind
 import com.fzizzle.epapernotes.ink.StrokePoint
@@ -37,7 +38,7 @@ class DocumentSessionTest {
         clock = { LocalDateTime.of(2026, 11, 9, 14, 5) },
     ).also { it.start() }
 
-    private fun journalStrokes(file: File = pdf) = StrokeJournal.forDocument(journals, file).read()!!.strokes.size
+    private fun journalStrokes(file: File = pdf) = ChangeJournal.forDocument(journals, file).read()!!.changes.size
 
     @Test fun strokeIsJournaledBeforeAddStrokeReturns() {
         val s = session()
@@ -119,18 +120,18 @@ class DocumentSessionTest {
     }
 
     @Test fun matchingJournalIsReplayedOnStart() {
-        StrokeJournal.forDocument(journals, pdf).apply { start(FileIdentity.of(pdf)); append(0, dot); append(2, dot) }
+        ChangeJournal.forDocument(journals, pdf).apply { start(FileIdentity.of(pdf)); append(AddItems(0, listOf(InkItem("a", dot)))); append(AddItems(2, listOf(InkItem("b", dot)))) }
         session()
         assertTrue(events.contains(SessionEvent.Replayed(2)))
         assertEquals(2, fake.strokes.size)
     }
 
     @Test fun mismatchedJournalIsKeptNotReplayed() {
-        StrokeJournal.forDocument(journals, pdf).apply { start(FileIdentity(1L, 1L, "ef".repeat(32))); append(0, dot) }
+        ChangeJournal.forDocument(journals, pdf).apply { start(FileIdentity(1L, 1L, "ef".repeat(32))); append(AddItems(0, listOf(InkItem("a", dot)))) }
         session()
         assertEquals(0, fake.strokes.size)
         val kept = events.filterIsInstance<SessionEvent.EarlierWritingKept>().single().journal
-        assertEquals(1, StrokeJournal(kept).read()!!.strokes.size)
+        assertEquals(1, ChangeJournal(kept).read()!!.changes.size)
     }
 
     @Test fun repairedFileHoldsSavesUntilDecision() {

@@ -69,7 +69,7 @@ class DocumentSessionDeviceTest {
         run.session.close()
         Thread.sleep(200)
         assertEquals(1, strokesIn(pdf))
-        assertEquals(0, StrokeJournal.forDocument(journals, pdf).read()!!.strokes.size)
+        assertEquals(0, ChangeJournal.forDocument(journals, pdf).read()!!.changes.size)
     }
 
     @Test fun repairedFileIsNotWrittenWithoutDecision() {

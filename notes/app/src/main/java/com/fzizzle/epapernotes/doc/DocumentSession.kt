@@ -1,5 +1,7 @@
 package com.fzizzle.epapernotes.doc
 
+import com.fzizzle.epapernotes.ink.InkItem
+import com.fzizzle.epapernotes.ink.ItemIds
 import com.fzizzle.epapernotes.ink.Stroke
 import com.fzizzle.epapernotes.storage.CopyNames
 import com.fzizzle.epapernotes.storage.FileIdentity
@@ -44,8 +46,8 @@ class DocumentSession(
     private val lock = Any()
 
     // Guarded by lock: the journal, and the strokes it holds that aren't in a saved PDF yet.
-    private var journal = StrokeJournal.forDocument(journalDir, pdf)
-    private val unsaved = ArrayList<PendingStroke>()
+    private var journal = ChangeJournal.forDocument(journalDir, pdf)
+    private val unsaved = ArrayList<Change>()
 
     /** Opened once the journal is ready, so no stroke can be written before its header. */
     private val journalReady = CountDownLatch(1)
@@ -88,14 +90,14 @@ class DocumentSession(
             return
         }
 
-        val replay: List<PendingStroke>
+        val replay: List<Change>
         synchronized(lock) {
             val old = journal.read()
             replay = when {
                 // The journal already holds exactly this: keep it as it is.
-                old != null && old.base == identity -> old.strokes
+                old != null && old.base == identity -> old.changes
                 else -> {
-                    if (old != null && old.strokes.isNotEmpty()) {
+                    if (old != null && old.changes.isNotEmpty()) {
                         // Writing from an earlier session, drawn on a version of the file that
                         // has changed since. Never replay it onto the new version, and never
                         // throw it away (spec §7.4): set it aside for plan 5 to make a copy.
@@ -117,7 +119,7 @@ class DocumentSession(
         }
         pages = opened
         known = identity
-        replay.forEach { opened.addStroke(it.page, it.stroke) }
+        replay.forEach { applyTo(opened, it) }
         applied = replay.size
         checkRepair(opened)
         if (replay.isNotEmpty()) {
@@ -130,8 +132,9 @@ class DocumentSession(
     fun addStroke(page: Int, stroke: Stroke) {
         journalReady.await()
         synchronized(lock) {
-            journal.append(page, stroke)
-            unsaved.add(PendingStroke(page, stroke))
+            val change = AddItems(page, listOf(InkItem(ItemIds.next(), stroke)))
+            journal.append(change)
+            unsaved.add(change)
         }
         scheduler.post {
             val p = pages ?: return@post
@@ -139,6 +142,11 @@ class DocumentSession(
             applied++
         }
         scheduleAutosave()
+    }
+
+    /** Until PdfPages takes changes (a later task), only added ink reaches the PDF. */
+    private fun applyTo(p: PdfPages, change: Change) {
+        if (change is AddItems) change.items.filterIsInstance<InkItem>().forEach { p.addStroke(change.page, it.stroke) }
     }
 
     /**
@@ -258,7 +266,7 @@ class DocumentSession(
         synchronized(lock) {
             val remaining = unsaved.drop(applied)
             val oldJournal = journal
-            journal = StrokeJournal.forDocument(journalDir, copy)
+            journal = ChangeJournal.forDocument(journalDir, copy)
             journal.rewrite(base, remaining)
             file = copy
             known = base
