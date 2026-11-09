@@ -4,6 +4,7 @@ import com.fzizzle.epapernotes.geometry.Affine
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ItemCodecTest {
@@ -35,6 +36,15 @@ class ItemCodecTest {
     @Test fun imageBoxStaysSortedWhenFlipped() {
         val flipped = image.transformed(Affine(-1f, 0f, 0f, -1f, 0f, 0f), 1f) as ImageItem
         assertEquals(Box(-110.5f, -220f, -10f, -20f), flipped.box)
+    }
+
+    /** An id with a space or a `|` would split its journal line wrongly, so it's refused. */
+    @Test fun encodeRefusesOddIds() {
+        for (odd in listOf("", "a b", "a|b", "Abc", "x-1")) {
+            val thrown = runCatching { ItemCodec.encode(ink.copy(id = odd)) }.exceptionOrNull()
+            assertTrue("'$odd'", thrown is IllegalArgumentException)
+        }
+        assertEquals("o12", (ItemCodec.decode(ItemCodec.encode(ink.copy(id = "o12"))) as InkItem).id)
     }
 
     @Test fun idsAreTwelveHexChars() {

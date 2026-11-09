@@ -108,13 +108,22 @@ class PdfFile private constructor(private val doc: PDFDocument) : PdfPages {
      */
     fun foreignAnnotationCount(page: Int): Int = annotationDicts(page).count { !annotations.isOurs(it) }
 
+    /**
+     * An add skips ids already on the page, so a replay can't double an item, and a move only
+     * moves items still on the page ([ReplaceItems.stillThere]), so it can't bring back an
+     * erased one.
+     */
     override fun apply(change: Change) {
         when (change) {
-            is AddItems -> onPage(change.page) { p -> change.items.forEach { annotations.add(p, it) } }
+            is AddItems -> onPage(change.page) { p ->
+                val there = idsOn(change.page)
+                change.items.filter { it.id !in there }.forEach { annotations.add(p, it) }
+            }
             is RemoveItems -> onPage(change.page) { p -> remove(p, change.items) }
             is ReplaceItems -> onPage(change.page) { p ->
-                remove(p, change.before)
-                change.after.forEach { annotations.add(p, it) }
+                val move = change.stillThere(idsOn(change.page))
+                remove(p, move.before)
+                move.after.forEach { annotations.add(p, it) }
             }
             is RotatePages -> change.after.forEach { (page, degrees) -> if (page in 0 until pageCount) setRotation(page, degrees) }
         }
@@ -186,6 +195,11 @@ class PdfFile private constructor(private val doc: PDFDocument) : PdfPages {
     }
 
     override fun close() = doc.destroy()
+
+    /** The ids of the app's items on [page], read without decoding any of them. */
+    private fun idsOn(page: Int): Set<String> = annotationDicts(page).mapNotNullTo(HashSet()) { d ->
+        if (annotations.isOurs(d)) annotations.idOf(d) else null
+    }
 
     private fun annotationDicts(page: Int): List<PDFObject> {
         val annots = doc.findPage(page).get("Annots")

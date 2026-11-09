@@ -12,6 +12,7 @@ import com.fzizzle.epapernotes.ink.Box
 import com.fzizzle.epapernotes.ink.ImageItem
 import com.fzizzle.epapernotes.ink.InkItem
 import com.fzizzle.epapernotes.ink.Item
+import com.fzizzle.epapernotes.ink.ItemIds
 import com.fzizzle.epapernotes.ink.StrokeCodec
 import com.fzizzle.epapernotes.ink.StrokeOutline
 import com.fzizzle.epapernotes.ink.StrokeStyle
@@ -31,22 +32,37 @@ import kotlin.math.min
  */
 internal class ItemAnnotations(private val doc: PDFDocument) {
 
-    fun isOurs(dict: PDFObject): Boolean = when (dict.get("Subtype").asName()) {
+    /**
+     * True for an annotation the app made and can edit: shaped like one of ours, with an id.
+     * Anything else, including one of ours without a usable id (see [idOf]), counts as another
+     * app's and is never touched.
+     */
+    fun isOurs(dict: PDFObject): Boolean = looksOurs(dict) && idOf(dict) != null
+
+    private fun looksOurs(dict: PDFObject): Boolean = when (dict.get("Subtype").asName()) {
         "Ink" -> dict.get(StrokeCodec.KEY).isString
         "Stamp" -> dict.get(IMAGE_KEY).isString
         else -> false
     }
 
-    /** The item's id. Only meaningful for one of ours. */
-    fun idOf(dict: PDFObject): String {
+    /**
+     * The item's id: its `/NM`, if that is a plain id the journal can carry ([ItemIds.isPlain]).
+     * Otherwise (a plan-2 stroke, or a name another app wrote over ours) it goes by its object
+     * number, `o<n>`. An annotation written straight into /Annots, not as an object of its own,
+     * has no object number, and "o0" would name nothing: it gets no id, so it isn't ours to
+     * edit and is left out of [PdfFile.items]. The app always writes its own as objects.
+     */
+    fun idOf(dict: PDFObject): String? {
         val name = dict.get("NM")
-        return if (name.isString && name.asString().isNotEmpty()) name.asString() else "o${dict.asIndirect()}"
+        if (name.isString && ItemIds.isPlain(name.asString())) return name.asString()
+        val number = dict.asIndirect()
+        return if (number > 0) "o$number" else null
     }
 
     /** The item an annotation holds, or null if it isn't one of ours or can't be read. */
     fun read(dict: PDFObject): Item? {
-        if (!isOurs(dict)) return null
-        val id = idOf(dict)
+        if (!looksOurs(dict)) return null
+        val id = idOf(dict) ?: return null
         return when (dict.get("Subtype").asName()) {
             "Ink" -> StrokeCodec.decode(dict.get(StrokeCodec.KEY).asString())?.let { InkItem(id, it) }
             else -> readImage(id, dict)

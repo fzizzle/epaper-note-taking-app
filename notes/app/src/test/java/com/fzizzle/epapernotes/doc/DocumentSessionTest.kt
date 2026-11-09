@@ -335,6 +335,31 @@ class DocumentSessionTest {
         assertEquals(listOf<Item>(moved), fake.items(0))
     }
 
+    /** Review: a stale selection moved after its stroke was erased must not bring the stroke back. */
+    @Test fun moveOfErasedItemDoesNotBringItBack() {
+        val s = session()
+        s.addStroke(0, line)
+        val item = fake.items(0).single() as InkItem
+        s.erase(0, acrossLine)
+        assertEquals(0, fake.itemCount)
+        val moved = item.copy(stroke = dot)
+        s.record(ReplaceItems(0, listOf(item), listOf(moved)))
+        assertEquals(0, fake.itemCount)
+        s.undo() // the move again, backwards: still nothing to move
+        assertEquals(0, fake.itemCount)
+        s.undo() // the erase: the stroke is back where it was erased
+        assertEquals(listOf(line), strokesOn(0))
+    }
+
+    /** An add of an id that is already on the page (a replay, say) can't double the item. */
+    @Test fun addOfExistingIdIsSkipped() {
+        val s = session()
+        s.addStroke(0, line)
+        val item = fake.items(0).single()
+        s.record(AddItems(0, listOf(item, InkItem("new1", dot))))
+        assertEquals(listOf(line, dot), strokesOn(0))
+    }
+
     @Test fun undoRemovesTheLastStroke() {
         val s = session()
         s.addStroke(0, dot)

@@ -52,6 +52,15 @@ object ItemIds {
     fun next(): String = buildString {
         repeat(12) { append("0123456789abcdef"[random.nextInt(16)]) }
     }
+
+    /**
+     * Whether [id] is a plain id: lower-case letters and digits only. Every id the app makes is
+     * ([next], and `o<n>` for a plan-2 stroke), and a plain id can't break the journal's one
+     * line per change, its spaces or its ` | ` between items.
+     */
+    fun isPlain(id: String): Boolean = PLAIN.matches(id)
+
+    private val PLAIN = Regex("[0-9a-z]+")
 }
 
 /**

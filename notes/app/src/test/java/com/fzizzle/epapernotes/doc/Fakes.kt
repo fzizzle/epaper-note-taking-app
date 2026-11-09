@@ -30,7 +30,10 @@ class FakePdfPages(override var wasRepaired: Boolean = false, private val saveDe
         return now
     }
 
-    /** As PdfFile does it: ids that aren't there are skipped. */
+    /**
+     * As PdfFile does it: ids that aren't there are skipped, an add skips ids already there, and
+     * a move only moves items still on the page.
+     */
     override fun apply(change: Change) {
         if (failNextApply && change is ReplaceItems) {
             failNextApply = false
@@ -42,11 +45,15 @@ class FakePdfPages(override var wasRepaired: Boolean = false, private val saveDe
             throw IllegalStateException("mupdf error")
         }
         when (change) {
-            is AddItems -> on(change.page).addAll(change.items)
+            is AddItems -> {
+                val there = ids(change.page)
+                on(change.page).addAll(change.items.filter { it.id !in there })
+            }
             is RemoveItems -> remove(change.page, change.items)
             is ReplaceItems -> {
-                remove(change.page, change.before)
-                on(change.page).addAll(change.after)
+                val move = change.stillThere(ids(change.page))
+                remove(change.page, move.before)
+                on(change.page).addAll(move.after)
             }
             is RotatePages -> rotations.putAll(change.after)
         }
@@ -63,6 +70,8 @@ class FakePdfPages(override var wasRepaired: Boolean = false, private val saveDe
     }
 
     private fun on(page: Int) = pageItems.getOrPut(page) { mutableListOf() }
+
+    private fun ids(page: Int) = on(page).map { it.id }.toSet()
 
     private fun remove(page: Int, items: List<Item>) {
         val ids = items.map { it.id }.toSet()

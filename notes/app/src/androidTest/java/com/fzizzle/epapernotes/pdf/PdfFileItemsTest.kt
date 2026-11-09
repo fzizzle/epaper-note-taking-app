@@ -4,6 +4,7 @@ import android.graphics.BitmapFactory
 import android.graphics.Color
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.artifex.mupdf.fitz.PDFDocument
 import com.fzizzle.epapernotes.doc.AddItems
 import com.fzizzle.epapernotes.doc.RemoveItems
 import com.fzizzle.epapernotes.doc.ReplaceItems
@@ -12,6 +13,7 @@ import com.fzizzle.epapernotes.geometry.Pt
 import com.fzizzle.epapernotes.ink.Box
 import com.fzizzle.epapernotes.ink.ImageItem
 import com.fzizzle.epapernotes.ink.InkItem
+import com.fzizzle.epapernotes.ink.ItemCodec
 import com.fzizzle.epapernotes.ink.Stroke
 import com.fzizzle.epapernotes.ink.StrokeKind
 import com.fzizzle.epapernotes.ink.StrokePoint
@@ -108,6 +110,39 @@ class PdfFileItemsTest {
             val moved = InkItem("fresh", (old[1] as InkItem).stroke.copy(points = line.points))
             pdf.apply(ReplaceItems(0, listOf(old[1]), listOf(moved)))
             assertEquals(listOf(moved), pdf.items(0))
+        }
+    }
+
+    /** Review: a move of an item that was erased meanwhile adds nothing; the rest of the move still happens. */
+    @Test fun replaceOfMissingItemAddsNothing() = PdfFile.open(TestPdfs.blank(dir)).use { pdf ->
+        pdf.apply(AddItems(0, listOf(ink("a"), ink("b"))))
+        pdf.apply(RemoveItems(0, listOf(ink("a"))))
+        pdf.apply(ReplaceItems(0, listOf(ink("a"), ink("b")), listOf(ink("a", dot(50f, 50f)), ink("c", dot(60f, 60f)))))
+        assertEquals(listOf(ink("c", dot(60f, 60f))), pdf.items(0))
+    }
+
+    @Test fun addOfExistingIdIsSkipped() = PdfFile.open(TestPdfs.blank(dir)).use { pdf ->
+        pdf.apply(AddItems(0, listOf(ink("a"))))
+        pdf.apply(AddItems(0, listOf(ink("a"), picture("p"))))
+        assertEquals(listOf("a", "p"), pdf.items(0).map { it.id })
+    }
+
+    /** An /NM that isn't a plain id (another app's, say) is ignored: the item goes by its object number. */
+    @Test fun oddNamesFallBackToObjectNumbers() {
+        val named = File(dir, "odd-names.pdf")
+        val doc = PDFDocument.openDocument(TestPdfs.withPlan2Strokes(dir, count = 2).path).asPDF()
+        val annots = doc.findPage(0).get("Annots")
+        annots.get(0).put("NM", "Not plain | id")
+        annots.get(1).put("NM", "abc123")
+        doc.save(named.path, "")
+        doc.destroy()
+        PdfFile.open(named).use { pdf ->
+            val ids = pdf.items(0).map { it.id }
+            assertTrue(ids[0], ids[0].matches(Regex("o[1-9]\\d*")))
+            assertEquals("abc123", ids[1])
+            ids.forEach { ItemCodec.encode(InkItem(it, line)) } // both can go in the journal
+            pdf.apply(RemoveItems(0, pdf.items(0).take(1)))
+            assertEquals(listOf("abc123"), pdf.items(0).map { it.id })
         }
     }
 

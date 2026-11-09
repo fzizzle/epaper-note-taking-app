@@ -10,7 +10,13 @@ import java.util.Locale
  * Formats: `ink <id> <StrokeCodec text>` and `img <id> <x0>,<y0>,<x1>,<y1> <turns> <base64 png>`.
  */
 object ItemCodec {
-    fun encode(item: Item): String = when (item) {
+    fun encode(item: Item): String {
+        // An odd id (a space, a `|`) would split the line wrongly when it's read back.
+        require(ItemIds.isPlain(item.id)) { "item id must be lower-case letters and digits: '${item.id}'" }
+        return encodeChecked(item)
+    }
+
+    private fun encodeChecked(item: Item): String = when (item) {
         is InkItem -> "ink ${item.id} ${StrokeCodec.encode(item.stroke)}"
         is ImageItem -> {
             val b = item.box
