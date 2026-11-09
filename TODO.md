@@ -16,6 +16,7 @@
 - [x] Carry out plan 1, then review the speed check results (merged as PR #1).
 - [x] Owner decisions: go ahead with plan 2, shrink strokes first, warn before saving into a repaired file.
 - [ ] Carry out plan 2: [writing screen](docs/superpowers/plans/2026-11-09-writing-screen.md), ending in an owner writing session (hard stop).
+  - [ ] Screen-recording test of writing (owner asked, 2026-11-09): record the screen while writing fast, to check no stroke ever disappears.
 
 ## Later (not in the first version)
 

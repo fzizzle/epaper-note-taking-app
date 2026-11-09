@@ -95,6 +95,7 @@ class PageView(context: Context) : View(context) {
     fun pageRendered(page: Int, widthPx: Int, bitmap: Bitmap) {
         val included = inFlight.remove(page to widthPx) ?: 0
         unrendered[page]?.let { list -> repeat(minOf(included, list.size)) { list.removeAt(0) } }
+        android.util.Log.i("Notes", "rendered page=$page width=$widthPx included=$included stillUnrendered=${unrendered[page]?.size ?: 0}")
         bitmaps.put(page, widthPx, bitmap)
         invalidate()
         onPageShown(page)
@@ -114,6 +115,7 @@ class PageView(context: Context) : View(context) {
         // Strokes counted now were all sent to the PDF before this request, and the worker
         // handles things in order, so this rendering will include them.
         inFlight[page to widthPx] = unrendered[page]?.size ?: 0
+        android.util.Log.i("Notes", "render requested page=$page width=$widthPx includes=${inFlight[page to widthPx]}")
         requestRender(page, widthPx)
     }
 

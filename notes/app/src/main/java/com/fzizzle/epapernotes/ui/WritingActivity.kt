@@ -8,6 +8,7 @@ import android.graphics.Typeface
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.view.Gravity
 import android.widget.Button
 import android.widget.LinearLayout
@@ -109,8 +110,14 @@ class WritingActivity : Activity() {
         }
 
         pen = PenInput(pages) { points -> onPenStroke(points) }
-        pages.onFingerGestureStart = { pen.pause() }
-        pages.onFingerGestureEnd = { pen.resume() }
+        pages.onFingerGestureStart = {
+            Log.i(TAG, "fingers down: pause fast-ink")
+            pausePenAndRedraw()
+        }
+        pages.onFingerGestureEnd = {
+            Log.i(TAG, "fingers up: resume fast-ink")
+            pen.resume()
+        }
         pages.onPageShown = { page -> if (page == pages.viewport?.page) showWithoutFastInk() }
         choose(Tool.PEN)
     }
@@ -136,10 +143,12 @@ class WritingActivity : Activity() {
             page to displayToPdf[page].map(viewport.screenToPage(x, y))
         } ?: return
         session.addStroke(page, stroke)
+        Log.i(TAG, "stroke page=$page points=${stroke.points.size} kind=$kind")
         runOnUiThread { pages.addStroke(page, stroke) }
     }
 
     private fun turn(forward: Boolean) {
+        Log.i(TAG, "turn forward=$forward")
         if (pages.turn(forward)) showWithoutFastInk()
     }
 
@@ -148,9 +157,26 @@ class WritingActivity : Activity() {
      * paused for a moment to appear. Never while the pen is down: that would cut the stroke.
      */
     private fun showWithoutFastInk() {
-        if (pen.isWriting) return
+        if (pen.isWriting) {
+            Log.i(TAG, "show skipped: pen is down")
+            return
+        }
+        Log.i(TAG, "show: pause fast-ink")
+        pausePenAndRedraw()
+        handler.postDelayed({
+            Log.i(TAG, "show: resume fast-ink")
+            pen.resume()
+        }, SHOW_PAUSE_MS)
+    }
+
+    /**
+     * Pausing fast-ink hands the screen back to normal drawing, which shows the page view's
+     * last picture. That picture may be from before the latest strokes, because the screen
+     * ignores normal drawing while fast-ink is on. So draw it again right away, with the strokes.
+     */
+    private fun pausePenAndRedraw() {
         pen.pause()
-        handler.postDelayed({ pen.resume() }, SHOW_PAUSE_MS)
+        pages.invalidate()
     }
 
     private fun choose(newTool: Tool) {
@@ -218,5 +244,6 @@ class WritingActivity : Activity() {
     companion object {
         const val EXTRA_PATH = "path"
         const val SHOW_PAUSE_MS = 150L
+        private const val TAG = "Notes"
     }
 }
