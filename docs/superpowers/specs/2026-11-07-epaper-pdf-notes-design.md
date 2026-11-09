@@ -135,6 +135,7 @@ Typical use is once per document: a deck of landscape slides gets rotated so it 
 
 - **Every stroke must survive a crash, kill, or power loss from the moment the pen lifts**, even before the PDF has been rewritten. The expected approach: append each change to a small journal in the app's private storage immediately, and replay it on next open if the PDF save didn't complete. Clear the journal once the PDF save is confirmed.
 - **The PDF on disk must never be left half-written.** Write the new version to a temporary file in the same folder, flush it to disk, then atomically replace the original. Temporary files must not show up in the library grid, and stale ones from a crash must be cleaned up.
+- **Damaged files: warn first** (owner-approved 2026-11-09). MuPDF quietly repairs a damaged PDF when it opens it, and a save would then replace the original with the repaired version, losing anything it couldn't recover. So when a file needed repair, the app tells the owner before anything is written to it. It offers two choices: **save into this file anyway**, or **keep the original and save my writing to a copy**. The copy is named like a conflict copy (section 7.4). Until the owner chooses, strokes are still kept safe in the journal.
 
 ### 7.4 Conflicts (file changed on disk while open)
 

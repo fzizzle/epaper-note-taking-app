@@ -13,7 +13,9 @@
 
 - [x] Choose a PDF library: MuPDF, so the app is AGPL-3.0 (approved 2026-11-09).
 - [x] Write the plan for the main app: split into 5 plans. Plan 1 is the [PDF foundation](docs/superpowers/plans/2026-11-09-pdf-foundation.md), ending in a speed check.
-- [ ] Carry out plan 1, then review the speed check results (hard stop).
+- [x] Carry out plan 1, then review the speed check results (merged as PR #1).
+- [x] Owner decisions: go ahead with plan 2, shrink strokes first, warn before saving into a repaired file.
+- [ ] Carry out plan 2: [writing screen](docs/superpowers/plans/2026-11-09-writing-screen.md), ending in an owner writing session (hard stop).
 
 ## Later (not in the first version)
 
