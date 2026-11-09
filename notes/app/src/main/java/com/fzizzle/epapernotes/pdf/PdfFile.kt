@@ -171,7 +171,10 @@ class PdfFile private constructor(private val doc: PDFDocument) : PdfPages {
         val ids = items.mapTo(HashSet()) { it.id }
         p.annotations.orEmpty()
             .filter { annotations.isOurs(it.getObject()) && annotations.idOf(it.getObject()) in ids }
-            .forEach { p.deleteAnnotation(it) }
+            .forEach {
+                annotations.forget(it.getObject())
+                p.deleteAnnotation(it)
+            }
     }
 
     /**

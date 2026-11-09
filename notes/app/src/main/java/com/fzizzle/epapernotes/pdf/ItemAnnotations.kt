@@ -33,6 +33,14 @@ import kotlin.math.min
 internal class ItemAnnotations(private val doc: PDFDocument) {
 
     /**
+     * Each picture's PNG, by its image's object number. Re-encoding a snip takes a while, and
+     * the eraser and lasso read every item on the page each time, so each picture is encoded
+     * once. A picture's image object is never changed, only dropped with its annotation
+     * ([forget]); a pasted or moved picture gets a new image object.
+     */
+    private val pngs = HashMap<Int, ByteArray>()
+
+    /**
      * True for an annotation the app made and can edit: shaped like one of ours, with an id.
      * Anything else, including one of ours without a usable id (see [idOf]), counts as another
      * app's and is never touched.
@@ -138,7 +146,17 @@ internal class ItemAnnotations(private val doc: PDFDocument) {
         listOf(b.x0, b.y0, b.x1, b.y1).forEach { push(it) }
     }
 
-    /** The picture back as a PNG, re-encoded by MuPDF from the image its appearance draws. */
+    /** [dict]'s annotation is about to be deleted: let go of its picture's cached PNG. */
+    fun forget(dict: PDFObject) {
+        if (dict.get("Subtype").asName() != "Stamp") return
+        val number = try { imageObject(dict).asIndirect() } catch (e: RuntimeException) { return }
+        pngs.remove(number)
+    }
+
+    private fun imageObject(dict: PDFObject): PDFObject =
+        dict.get("AP").get("N").get("Resources").get("XObject").get(IMAGE_NAME)
+
+    /** The picture back as a PNG, re-encoded by MuPDF from the image its appearance draws (once: see [pngs]). */
     private fun readImage(id: String, dict: PDFObject): ImageItem? {
         val parts = dict.get(IMAGE_KEY).asString().trim().split(' ')
         if (parts.size != 2 || parts[0] != IMAGE_VERSION) return null
@@ -148,14 +166,25 @@ internal class ItemAnnotations(private val doc: PDFDocument) {
         val n = (0 until 4).map { r.get(it).asFloat() }
         val box = Box(min(n[0], n[2]), min(n[1], n[3]), max(n[0], n[2]), max(n[1], n[3]))
         val png = try {
-            val obj = dict.get("AP").get("N").get("Resources").get("XObject").get(IMAGE_NAME)
+            val obj = imageObject(dict)
             if (obj.isNull) return null
-            val pixmap = doc.loadImage(obj).toPixmap()
-            try { pixmap.asPNG().asByteArray() } finally { pixmap.destroy() }
+            // Images are always objects of their own; 0 would mean one written inline, not cached.
+            val number = obj.asIndirect()
+            pngs[number] ?: encode(obj).also { if (number > 0) pngs[number] = it }
         } catch (e: RuntimeException) {
             return null
         }
         return ImageItem(id, box, turns, png)
+    }
+
+    private fun encode(image: PDFObject): ByteArray {
+        val loaded = doc.loadImage(image)
+        try {
+            val pixmap = loaded.toPixmap()
+            return try { pixmap.asPNG().asByteArray() } finally { pixmap.destroy() }
+        } finally {
+            loaded.destroy()
+        }
     }
 
     /**

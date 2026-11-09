@@ -146,6 +146,19 @@ class PdfFileItemsTest {
         }
     }
 
+    /** Erase and lasso read every item each time; a picture is encoded once and comes back the same. */
+    @Test fun picturesReadTheSameEachTime() = PdfFile.open(TestPdfs.blank(dir)).use { pdf ->
+        pdf.apply(AddItems(0, listOf(picture("p"))))
+        val first = pdf.items(0).single() as ImageItem
+        assertEquals(first, pdf.items(0).single())
+        val moved = first.copy(box = Box(10f, 10f, 110f, 110f))
+        pdf.apply(ReplaceItems(0, listOf(first), listOf(moved)))
+        val after = pdf.items(0).single() as ImageItem
+        assertEquals(moved.box, after.box)
+        val back = BitmapFactory.decodeByteArray(after.png, 0, after.png.size)
+        assertEquals(40, back.width)
+    }
+
     @Test fun foreignAnnotationsAreNeverTouched() {
         val source = TestPdfs.withForeignAnnotations(dir)
         val before = TestPdfs.foreignSignature(source)
