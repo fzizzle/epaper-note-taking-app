@@ -57,8 +57,25 @@ class InkOverlayTest {
         assertTrue(ink.isStale(0, 1))
         assertFalse(ink.isStale(0, 2))
         assertEquals(listOf(stroke(2)), ink.newerThan(0, 2))
-        // A stale rendering is still drawn, with only the strokes since the change on top.
+        // A stale rendering made after A has A, so only B goes on top.
         assertEquals(listOf(stroke(2)), ink.newerThan(0, 1))
         assertFalse(ink.isStale(1, 0))
+    }
+
+    /**
+     * A change must not make this session's writing vanish: a stale rendering still gets every
+     * stroke it lacks drawn on top, until the page is left (owner's vanishing-strokes report).
+     */
+    @Test fun strokesSurviveAChange() {
+        val ink = InkOverlay()
+        ink.add(0, stroke(1))
+        ink.changed(0)
+        ink.add(0, stroke(2))
+        assertEquals(listOf(stroke(1), stroke(2)), ink.newerThan(0, 0))
+        assertEquals(listOf(stroke(2)), ink.newerThan(0, 2))
+        // Leaving the page drops what no rendering asked for from now on can lack.
+        ink.left(0)
+        assertEquals(3, ink.version(0))
+        assertEquals(listOf(stroke(2)), ink.newerThan(0, 0))
     }
 }

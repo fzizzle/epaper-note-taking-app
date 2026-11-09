@@ -56,8 +56,8 @@ class PageView(context: Context) : View(context) {
     /** The selection box, snip rectangle and so on, drawn on top of the page. */
     var selectionLayer: SelectionLayer? = null
 
-    /** Called after a fresh page rendering is put on screen. */
-    var onPageShown: (page: Int) -> Unit = {}
+    /** Called after a fresh page rendering, made at the page's ink [version], is put on screen. */
+    var onPageShown: (page: Int, version: Int) -> Unit = { _, _ -> }
 
     /** Asks for [page] to be drawn [widthPx] wide. The answer comes back through [pageRendered]. */
     var requestRender: (page: Int, widthPx: Int) -> Unit = { _, _ -> }
@@ -107,8 +107,7 @@ class PageView(context: Context) : View(context) {
         val leaving = v.page
         val moved = if (forward) v.next() else v.previous()
         if (!moved) return false
-        // Next time this page is visited, render it afresh so its new strokes come from the PDF.
-        if (ink.version(leaving) > 0) bitmaps.invalidate(leaving)
+        forget(leaving)
         invalidate()
         onViewportChanged()
         return true
@@ -120,10 +119,20 @@ class PageView(context: Context) : View(context) {
         val leaving = v.page
         if (page == leaving) return
         v.goTo(page)
-        if (ink.version(leaving) > 0) bitmaps.invalidate(leaving)
+        forget(leaving)
         invalidate()
         onViewportChanged()
     }
+
+    /** Next time [page] is visited, render it afresh so its new ink comes from the PDF. */
+    private fun forget(page: Int) {
+        if (ink.version(page) == 0) return
+        bitmaps.invalidate(page)
+        ink.left(page)
+    }
+
+    /** The page's ink version now (see InkOverlay): a rendering asked for from now on contains everything up to it. */
+    fun inkVersion(page: Int): Int = ink.version(page)
 
     /** A stroke just written on [page]: show it until the page's rendering includes it. UI thread. */
     fun addStroke(page: Int, stroke: Stroke) {
@@ -150,7 +159,7 @@ class PageView(context: Context) : View(context) {
     /** Where the page on show is, for the selection layer. Null until the pages are laid out. */
     fun frame(): PageFrame? {
         val v = viewport ?: return null
-        return PageFrame(toDisplay[v.page], v.pageToScreen(), sizes[v.page])
+        return PageFrame(toDisplay[v.page], v.pageToScreen(), sizes[v.page], width, height)
     }
 
     /** The view changed size, for instance the tablet turned: refit the same page. */
@@ -168,10 +177,12 @@ class PageView(context: Context) : View(context) {
         val version = inFlight.remove(page to widthPx) ?: 0
         val stale = ink.isStale(page, version)
         android.util.Log.i("Notes", "rendered page=$page width=$widthPx version=$version of ${ink.version(page)}${if (stale) " (stale, asking again)" else ""}")
-        // Even a stale one is kept: it's closer to the page than what's showing. Drawing asks again.
+        // A stale one for a page that was left may lack strokes InkOverlay.left dropped: not kept.
+        if (stale && page != viewport?.page) return
+        // Otherwise even a stale one is kept: it's closer to the page than what's showing. Drawing asks again.
         bitmaps.put(page, widthPx, Rendered(bitmap, version))
         invalidate()
-        if (!stale) onPageShown(page)
+        if (!stale) onPageShown(page, version)
     }
 
     /**
@@ -212,7 +223,7 @@ class PageView(context: Context) : View(context) {
         val missing = ink.newerThan(page, shown?.version ?: 0)
         missing.forEach { drawStroke(canvas, it, toDisplay[page].then(toScreen), v.pxPerPt()) }
 
-        selectionLayer?.draw(canvas, PageFrame(toDisplay[page], toScreen, sizes[page]))
+        selectionLayer?.draw(canvas, PageFrame(toDisplay[page], toScreen, sizes[page], width, height))
 
         // Don't render mid-pinch: the width keeps changing. It's asked for once the pinch ends.
         if (!pinching) {

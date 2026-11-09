@@ -18,8 +18,8 @@ import com.fzizzle.epapernotes.tools.SelectionBox
 import kotlin.math.max
 import kotlin.math.min
 
-/** Where the page on show is: PDF space to display points to screen pixels, and its size. */
-class PageFrame(val pdfToDisplay: Affine, val displayToScreen: Affine, val size: SizePt) {
+/** Where the page on show is: PDF space to display points to screen pixels, its size, and the view's. */
+class PageFrame(val pdfToDisplay: Affine, val displayToScreen: Affine, val size: SizePt, val viewWidth: Int, val viewHeight: Int) {
     val pdfToScreen: Affine get() = pdfToDisplay.then(displayToScreen)
 }
 
@@ -108,11 +108,11 @@ class SelectionLayer(private val handlePx: Float, private val listener: Listener
      * A pen event while fast-ink is paused. [button] is the one held at touch-down. Events from a
      * stroke that started before this layer took over (no down seen) are ignored.
      */
-    fun onPen(event: MotionEvent, button: PenButton, frame: PageFrame, viewWidth: Int): Boolean {
+    fun onPen(event: MotionEvent, button: PenButton, frame: PageFrame): Boolean {
         val here = Pt(event.x, event.y)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                gesture = startGesture(here, button, frame, viewWidth)
+                gesture = startGesture(here, button, frame)
                 redraw()
             }
             MotionEvent.ACTION_MOVE -> when (val g = gesture) {
@@ -141,12 +141,12 @@ class SelectionLayer(private val handlePx: Float, private val listener: Listener
     }
 
     /** A finger tap: only the Copy and Delete bar answers fingers. */
-    fun onFingerTap(x: Float, y: Float, frame: PageFrame, viewWidth: Int): Boolean {
+    fun onFingerTap(x: Float, y: Float, frame: PageFrame): Boolean {
         if (!hasSelection || gesture != null) return false
-        return pressBar(x, y, frame, viewWidth)
+        return pressBar(x, y, frame)
     }
 
-    private fun startGesture(at: Pt, button: PenButton, frame: PageFrame, viewWidth: Int): Gesture {
+    private fun startGesture(at: Pt, button: PenButton, frame: PageFrame): Gesture {
         // A side button always does its own thing: button 2 erases, button 1 lassos afresh.
         if (button != PenButton.NONE) {
             if (hasSelection) listener.cleared()
@@ -155,7 +155,7 @@ class SelectionLayer(private val handlePx: Float, private val listener: Listener
         if (pasteArmed) return Paste(at)
         if (snipping) return Snip(at)
         val b = bounds ?: return Swallow
-        if (pressBar(at.x, at.y, frame, viewWidth)) return Swallow
+        if (pressBar(at.x, at.y, frame)) return Swallow
         val box = SelectionBox(screenBox(b, frame.pdfToScreen))
         val grip = box.gripAt(at.x, at.y, handlePx)
         if (grip == SelectionBox.Grip.NONE) {
@@ -191,9 +191,9 @@ class SelectionLayer(private val handlePx: Float, private val listener: Listener
     }
 
     /** Copy or Delete, if [x],[y] is on one of them. */
-    private fun pressBar(x: Float, y: Float, frame: PageFrame, viewWidth: Int): Boolean {
+    private fun pressBar(x: Float, y: Float, frame: PageFrame): Boolean {
         val b = bounds ?: return false
-        val (copy, delete) = barRects(screenBox(b, frame.pdfToScreen), viewWidth)
+        val (copy, delete) = barRects(screenBox(b, frame.pdfToScreen), frame)
         when {
             copy.contains(x, y) -> listener.copy()
             delete.contains(x, y) -> listener.delete()
@@ -204,14 +204,16 @@ class SelectionLayer(private val handlePx: Float, private val listener: Listener
 
     /**
      * The bar's two buttons: above the box, or below it if there's no room above. Kept a grip's
-     * width clear of the box so a corner drag never lands on them.
+     * width clear of the box so a corner drag never lands on them. Always inside the view, even
+     * if that means on top of the box (a selection as tall as the page).
      */
-    private fun barRects(box: Box, viewWidth: Int): Pair<RectF, RectF> {
+    private fun barRects(box: Box, frame: PageFrame): Pair<RectF, RectF> {
         val h = handlePx * 1.8f
         val w = h * 2.6f
         val gap = handlePx
-        val top = if (box.y0 - gap - h >= 0f) box.y0 - gap - h else box.y1 + gap
-        val left = box.x0.coerceIn(0f, max(0f, viewWidth - 2 * w - gap / 2))
+        val wanted = if (box.y0 - gap - h >= 0f) box.y0 - gap - h else box.y1 + gap
+        val top = wanted.coerceIn(0f, max(0f, frame.viewHeight - h))
+        val left = box.x0.coerceIn(0f, max(0f, frame.viewWidth - 2 * w - gap / 2))
         return RectF(left, top, left + w, top + h) to RectF(left + w + gap / 2, top, left + 2 * w + gap / 2, top + h)
     }
 
@@ -225,7 +227,7 @@ class SelectionLayer(private val handlePx: Float, private val listener: Listener
             canvas.drawRect(box.x0, box.y0, box.x1, box.y1, dashed)
             val s = handlePx / 2
             for (x in floatArrayOf(box.x0, box.x1)) for (y in floatArrayOf(box.y0, box.y1)) canvas.drawRect(x - s, y - s, x + s, y + s, filled)
-            if (drag == null) drawBar(canvas, box, canvas.width)
+            if (drag == null) drawBar(canvas, box, frame)
         }
         when (val g = gesture) {
             is Snip -> canvas.drawRect(min(g.start.x, g.end.x), min(g.start.y, g.end.y), max(g.start.x, g.end.x), max(g.start.y, g.end.y), dashed)
@@ -239,8 +241,8 @@ class SelectionLayer(private val handlePx: Float, private val listener: Listener
         }
     }
 
-    private fun drawBar(canvas: Canvas, box: Box, viewWidth: Int) {
-        val (copy, delete) = barRects(box, viewWidth)
+    private fun drawBar(canvas: Canvas, box: Box, frame: PageFrame) {
+        val (copy, delete) = barRects(box, frame)
         label.textSize = copy.height() * 0.45f
         for ((r, text) in listOf(copy to "Copy", delete to "Delete")) {
             canvas.drawRect(r, white)

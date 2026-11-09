@@ -12,17 +12,18 @@ import com.fzizzle.epapernotes.ink.Stroke
  * is drawn on top. This holds for any rendering, including an older one kept from before some
  * strokes, at another zoom.
  *
- * Any other change (an erase, a move, a paste) may have removed or moved strokes this overlay
- * holds, so it can't be drawn on top of an older rendering. Renderings from before it are
- * [isStale]: still drawn, since an old page is better than a blank one on e-ink, while a fresh
- * one is asked for. Only the strokes written after the change go on top of them.
+ * Any other change (an erase, a move, a paste) makes renderings from before it [isStale]: a
+ * fresh one is asked for. A stale one is still drawn meanwhile, since an old page is better than
+ * a blank one on e-ink, and it still gets every stroke it lacks on top, in the place it had
+ * before the change, just like the stale picture's own ink. Dropping them would make this
+ * session's writing vanish until the fresh rendering arrives (the owner's plan-2 report).
  */
 class InkOverlay {
     private class PageInk {
         var version = 0
         var changedAt = 0
 
-        /** Each stroke since the last change, with the version it brought. */
+        /** Each stroke with the version it brought. */
         val strokes = mutableListOf<Pair<Int, Stroke>>()
     }
 
@@ -42,8 +43,15 @@ class InkOverlay {
         val p = pages.getOrPut(page) { PageInk() }
         p.version++
         p.changedAt = p.version
-        // A rendering asked for from now on contains them, and a stale one mustn't draw them.
-        p.strokes.clear()
+    }
+
+    /**
+     * The page view left [page] and threw its renderings away, so the next one is asked for
+     * at the version now: strokes from before the last [changed] can no longer be missing.
+     */
+    fun left(page: Int) {
+        val p = pages[page] ?: return
+        p.strokes.removeAll { it.first < p.changedAt }
     }
 
     /** The page's version now: what a rendering asked for now will contain. */
@@ -52,7 +60,7 @@ class InkOverlay {
     /** True when a rendering made at [version] is from before the page's last [changed]. */
     fun isStale(page: Int, version: Int): Boolean = version < (pages[page]?.changedAt ?: 0)
 
-    /** The strokes since the last [changed] that a rendering made at [version] doesn't have. */
+    /** The strokes a rendering made at [version] doesn't have. */
     fun newerThan(page: Int, version: Int): List<Stroke> =
         pages[page]?.strokes?.filter { it.first > version }?.map { it.second }.orEmpty()
 }

@@ -123,6 +123,13 @@ class WritingActivity : Activity() {
     private var selected: List<Item> = emptyList()
     private var selectedPage = -1
 
+    /**
+     * A moved or pasted selection is previewed grey until a rendering asked for after its
+     * change was recorded is on screen: one at this ink version or later. The worker handles
+     * things in order, so any rendering asked for after `record` contains the change.
+     */
+    private var previewShownFrom = 0
+
     /** The page last on show: turning it lets go of the selection and an armed paste. */
     private var shownPage = -1
     private var dialogOpen = false
@@ -176,7 +183,7 @@ class WritingActivity : Activity() {
         val stripHeight = (resources.displayMetrics.heightPixels * 0.05f).toInt() // about 5% (spec §6.2)
         layer = SelectionLayer(handlePx = stripHeight / 3f, listener = selectionListener) { pages.invalidate() }
         pages.selectionLayer = layer
-        pages.onFingerTap = { x, y -> pages.frame()?.let { layer.onFingerTap(x, y, it, pages.width) } }
+        pages.onFingerTap = { x, y -> pages.frame()?.let { layer.onFingerTap(x, y, it) } }
         val gap = stripHeight / 8
         fun square() = LinearLayout.LayoutParams(stripHeight - 2 * gap, stripHeight - 2 * gap).apply { marginEnd = gap }
 
@@ -301,9 +308,9 @@ class WritingActivity : Activity() {
                 resumeFastInk.run()
             }
         }
-        pages.onPageShown = { page ->
+        pages.onPageShown = { page, version ->
             if (page == pages.viewport?.page) {
-                layer.pageRedrawn()
+                if (version >= previewShownFrom) layer.pageRedrawn()
                 showWithoutFastInk()
             }
         }
@@ -408,6 +415,8 @@ class WritingActivity : Activity() {
         selected = items
         selectedPage = page
         toolState.hasSelection = true
+        // Asked for after the change was recorded means a version above today's (see previewShownFrom).
+        if (notShownYet) previewShownFrom = pages.inkVersion(page) + 1
         layer.select(items, notShownYet)
         toolStateChanged()
     }
@@ -456,7 +465,7 @@ class WritingActivity : Activity() {
         override fun copy() {
             toolState.clipboard = Clipboard(selected, pdfToDisplay[selectedPage])
             Log.i(TAG, "copied page=$selectedPage items=${selected.size}")
-            // Task 9: the strip shows Paste once toolState.showPaste is true.
+            // Task 9 hooks in here: refresh the strip, which shows Paste once toolState.showPaste is true.
         }
 
         override fun delete() {
@@ -581,7 +590,7 @@ class WritingActivity : Activity() {
         }
         if (m == MotionEvent.ACTION_UP || m == MotionEvent.ACTION_CANCEL) screenPenDown = false
         val frame = pages.frame()
-        val used = frame != null && layer.onPen(e, hoverButton, frame, pages.width)
+        val used = frame != null && layer.onPen(e, hoverButton, frame)
         if (m == MotionEvent.ACTION_UP || m == MotionEvent.ACTION_CANCEL) {
             if (showPending) retryShowWhenIdle()
             // The stroke may have let go of the tool (a tap outside, a snip, a paste).
