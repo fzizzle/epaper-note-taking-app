@@ -50,7 +50,8 @@ It should be lightweight and fast, and it should do a small set of core things v
 
 - **Kotlin**, native Android.
 - **Boox's Onyx pen SDK** for drawing. It gives the fast-ink (raw drawing) mode the stock app uses. Plain Android canvas drawing is too laggy on e-ink.
-- **An open-source PDF library** for rendering pages and for reading and writing annotations (the choice is left to the builder, see section 10).
+- **MuPDF** (Artifex's official Android library) for rendering pages and for reading and writing annotations. Owner-approved 2026-11-09, see section 10.
+- **Licence: AGPL-3.0** for the whole app, as MuPDF requires. The owner plans to open-source the app anyway (owner-approved 2026-11-09).
 - **Readable code.** The owner will read the code but not write it. Small files, plain names, comments that explain *why*, and no cleverness where something boring works.
 - **Process rule:** any architectural or feature change from this document must be explained to the owner in plain words and approved before it's made. Only the owner gives these approvals. Treat them as hard stop points in the plan, especially the PDF library choice and the side-button test result (section 9).
 
@@ -164,7 +165,7 @@ A similar early check is worthwhile for palm rejection and finger-vs-pen separat
 
 These are yours to decide. Report the main choices to the owner in plain words, and get approval for anything that's architectural.
 
-- **PDF library.** It must render fast on this hardware, read and write annotations and page rotation, and preserve foreign annotations. Licence matters: some strong options (for example MuPDF) are AGPL. That's fine for a personal app, but tell the owner if you pick one, because it would constrain ever publishing the app closed-source.
+- **PDF library: decided, MuPDF** (owner-approved 2026-11-09). It must render fast on this hardware, read and write annotations and page rotation, and preserve foreign annotations. MuPDF does all of this in one library. PDFium was the alternative, but it has no maintained Android wrapper that writes annotations. Android's own PdfRenderer only gains annotation editing in API 36.1, and the tablet runs 36.0. MuPDF is AGPL, so the app is AGPL-3.0 and its source is published. A quick speed check on the tablet comes first in the main build.
 - **File access method** (All files access vs the Storage Access Framework), as long as in-place editing, atomic replace, and change detection all work.
 - The exact format for stroke data stored inside annotations.
 - The journal format and how often background saves run.

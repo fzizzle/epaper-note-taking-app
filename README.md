@@ -44,4 +44,8 @@ Blank notebooks, the partial eraser, copy and paste between documents, extra pen
 
 - Kotlin, native Android.
 - Boox's Onyx pen SDK for low-latency e-ink drawing.
-- An open-source PDF library, not chosen yet.
+- MuPDF for rendering PDFs and writing annotations.
+
+## Licence
+
+AGPL-3.0 (see [LICENSE](LICENSE)), because the app uses MuPDF.

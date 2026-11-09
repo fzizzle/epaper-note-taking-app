@@ -11,7 +11,7 @@
 
 ## After that
 
-- [ ] Choose a PDF library (needs the owner's approval, see design §10).
+- [x] Choose a PDF library: MuPDF, so the app is AGPL-3.0 (approved 2026-11-09).
 - [ ] Write the plan for the main app, based on the probe results and the library choice.
 
 ## Later (not in the first version)
