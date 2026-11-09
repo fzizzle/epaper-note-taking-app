@@ -15,17 +15,18 @@
 
         <activity
             android:name=".ui.DevStartActivity"
-            android:exported="true"
-            android:screenOrientation="portrait">
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
 
+        <!-- Turning the tablet must not restart the writing screen: the open document and its
+             saving carry on, and the page just refits (spec §6.2: the screen follows the tablet). -->
         <activity
             android:name=".ui.WritingActivity"
-            android:exported="false"
-            android:screenOrientation="portrait" />
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout"
+            android:exported="false" />
     </application>
 </manifest>

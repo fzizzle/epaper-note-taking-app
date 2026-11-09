@@ -5,6 +5,8 @@ import com.fzizzle.epapernotes.ink.StrokeCodec
 import com.fzizzle.epapernotes.storage.FileIdentity
 import java.io.File
 import java.io.FileOutputStream
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 
 /** A stroke written down in the journal but maybe not yet saved into the PDF. */
@@ -29,9 +31,25 @@ data class JournalContents(val base: FileIdentity, val strokes: List<PendingStro
 class StrokeJournal(val file: File) {
 
     /** Starts afresh for [base], dropping anything written before. */
-    fun start(base: FileIdentity) {
+    fun start(base: FileIdentity) = rewrite(base, emptyList())
+
+    /**
+     * Replaces the journal with [base] and [strokes], all at once: written to a temporary file,
+     * synced, then moved over the old one. A crash midway leaves the old journal whole, never
+     * a half-written one that has lost strokes.
+     */
+    fun rewrite(base: FileIdentity, strokes: List<PendingStroke>) {
         file.parentFile?.mkdirs()
-        write("$HEADER ${base.encode()}\n", append = false)
+        val text = buildString {
+            append("$HEADER ${base.encode()}\n")
+            strokes.forEach { append("add ${it.page} ${StrokeCodec.encode(it.stroke)}\n") }
+        }
+        val temp = File(file.parentFile, file.name + ".new")
+        FileOutputStream(temp).use { out ->
+            out.write(text.toByteArray(Charsets.UTF_8))
+            out.fd.sync()
+        }
+        Files.move(temp.toPath(), file.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
     }
 
     /** Adds one stroke, and returns only once it's on the storage chip. */

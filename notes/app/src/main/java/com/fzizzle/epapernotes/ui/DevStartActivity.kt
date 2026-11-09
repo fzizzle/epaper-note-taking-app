@@ -22,8 +22,12 @@ import java.io.File
  */
 class DevStartActivity : Activity() {
 
+    /** A double tap (easy on e-ink) must not open the same file twice. Reset when this screen returns. */
+    private var opening = false
+
     override fun onResume() {
         super.onResume()
+        opening = false
         if (!Environment.isExternalStorageManager()) {
             setContentViewInsideBars(Button(this).apply {
                 text = "Allow access to your files"
@@ -72,6 +76,8 @@ class DevStartActivity : Activity() {
     }
 
     private fun open(pdf: File) {
+        if (opening) return
+        opening = true
         getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(LAST_OPENED, pdf.path).apply()
         startActivity(Intent(this, WritingActivity::class.java).putExtra(WritingActivity.EXTRA_PATH, pdf.path))
     }

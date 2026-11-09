@@ -24,7 +24,11 @@ enum class Tool { PEN, HIGHLIGHTER }
  * While fast-ink is on, the screen ignores normal drawing. So it's paused while fingers
  * move the page, and while a page is redrawn with saved ink.
  */
-class PenInput(private val view: View, private val onStroke: (List<FloatArray>) -> Unit) {
+class PenInput(
+    private val view: View,
+    private val onPenDown: () -> Unit,
+    private val onStroke: (List<FloatArray>) -> Unit,
+) {
 
     private var helper: TouchHelper? = null
 
@@ -106,6 +110,7 @@ class PenInput(private val view: View, private val onStroke: (List<FloatArray>) 
 
         override fun onBeginRawDrawing(shortcut: Boolean, p: TouchPoint?) {
             isWriting = true
+            onPenDown()
         }
 
         override fun onEndRawDrawing(shortcut: Boolean, p: TouchPoint?) {

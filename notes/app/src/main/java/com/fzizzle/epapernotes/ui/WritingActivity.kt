@@ -18,6 +18,7 @@ import com.fzizzle.epapernotes.doc.DocumentSession
 import com.fzizzle.epapernotes.doc.SessionEvent
 import com.fzizzle.epapernotes.doc.WorkerScheduler
 import com.fzizzle.epapernotes.geometry.Affine
+import com.fzizzle.epapernotes.geometry.Pt
 import com.fzizzle.epapernotes.ink.StrokeKind
 import com.fzizzle.epapernotes.pdf.PdfFile
 import java.io.File
@@ -43,6 +44,18 @@ class WritingActivity : Activity() {
     /** For each page, PDF space to display points, inverted: how a pen point finds its place in the PDF. */
     private var displayToPdf: List<Affine> = emptyList()
     private val handler = Handler(Looper.getMainLooper())
+
+    /** True once the pages are laid out. The pen stays off until then: a stroke would have nowhere to go. */
+    private var documentShown = false
+
+    /**
+     * Screen pixels to PDF space for the page on show, published by the UI thread whenever the
+     * view changes, and copied by the pen thread when the pen touches down. Each stroke is
+     * placed with the view as it was when it started, even if the owner zooms or turns the
+     * page before Onyx hands the stroke over.
+     */
+    @Volatile private var penMapping: Pair<Int, Affine>? = null
+    @Volatile private var strokeMapping: Pair<Int, Affine>? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -90,13 +103,20 @@ class WritingActivity : Activity() {
 
         pages.requestRender = { page, width ->
             session.runOnDocument { pdf ->
-                val bitmap = (pdf as PdfFile).render(page, width)
-                runOnUiThread { pages.pageRendered(page, width, bitmap) }
+                try {
+                    val bitmap = (pdf as PdfFile).render(page, width)
+                    runOnUiThread { pages.pageRendered(page, width, bitmap) }
+                } catch (e: Exception) {
+                    Log.w(TAG, "render failed page=$page", e)
+                    runOnUiThread { pages.renderFailed(page, width) }
+                }
             }
         }
         pages.onViewportChanged = {
             updateIndicator()
             updatePenWidth()
+            publishPenMapping()
+            if (documentShown) pen.setLimit(Rect(0, 0, pages.width, pages.height))
         }
         session.runOnDocument { pdf ->
             val file = pdf as PdfFile
@@ -106,10 +126,15 @@ class WritingActivity : Activity() {
                 pageCount = sizes.size
                 displayToPdf = transforms.map { it.inverse() }
                 pages.setPages(sizes, transforms, lastPages.get(path))
+                pages.post {
+                    documentShown = true
+                    publishPenMapping()
+                    penOn()
+                }
             }
         }
 
-        pen = PenInput(pages) { points -> onPenStroke(points) }
+        pen = PenInput(pages, onPenDown = { strokeMapping = penMapping }) { points -> onPenStroke(points) }
         pages.onFingerGestureStart = {
             Log.i(TAG, "fingers down: pause fast-ink")
             pausePenAndRedraw()
@@ -134,8 +159,18 @@ class WritingActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
-        // The view needs its size first: the pen is limited to the page area, below the strip.
-        pages.post { pen.on(Rect(0, 0, pages.width, pages.height)) }
+        if (documentShown) pages.post { penOn() }
+    }
+
+    /** The pen is limited to the page area, below the strip. */
+    private fun penOn() {
+        pen.on(Rect(0, 0, pages.width, pages.height))
+    }
+
+    private fun publishPenMapping() {
+        val v = pages.viewport ?: return
+        if (displayToPdf.isEmpty()) return
+        penMapping = v.page to v.pageToScreen().inverse().then(displayToPdf[v.page])
     }
 
     /**
@@ -145,13 +180,9 @@ class WritingActivity : Activity() {
      * the next stroke (owner's first writing session).
      */
     private fun onPenStroke(points: List<FloatArray>) {
-        val viewport = pages.viewport ?: return
-        if (displayToPdf.isEmpty()) return
-        val page = viewport.page
+        val (page, screenToPdf) = strokeMapping ?: penMapping ?: return
         val kind = if (tool == Tool.HIGHLIGHTER) StrokeKind.HIGHLIGHTER else StrokeKind.PEN
-        val (_, stroke) = PenPoints.toStroke(kind, points) { x, y ->
-            page to displayToPdf[page].map(viewport.screenToPage(x, y))
-        } ?: return
+        val (_, stroke) = PenPoints.toStroke(kind, points) { x, y -> page to screenToPdf.map(Pt(x, y)) } ?: return
         session.addStroke(page, stroke)
         Log.i(TAG, "stroke page=$page points=${stroke.points.size} kind=$kind")
         runOnUiThread { pages.addStroke(page, stroke) }

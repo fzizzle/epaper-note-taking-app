@@ -96,6 +96,21 @@ class PageView(context: Context) : View(context) {
         invalidate()
     }
 
+    /** Rendering failed (a damaged page, say). Forget it, so it's asked for again next time. UI thread. */
+    fun renderFailed(page: Int, widthPx: Int) {
+        inFlight.remove(page to widthPx)
+    }
+
+    /** The view changed size, for instance the tablet turned: refit the same page. */
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        val old = viewport ?: return
+        if (w == 0 || h == 0) return
+        viewport = Viewport(sizes, w, h).also { it.goTo(old.page) }
+        invalidate()
+        onViewportChanged()
+    }
+
     /** A rendering arrived from the worker. UI thread. */
     fun pageRendered(page: Int, widthPx: Int, bitmap: Bitmap) {
         val version = inFlight.remove(page to widthPx) ?: 0

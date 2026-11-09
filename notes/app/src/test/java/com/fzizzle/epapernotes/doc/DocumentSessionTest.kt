@@ -45,10 +45,13 @@ class DocumentSessionTest {
         assertEquals(1, journalStrokes())
     }
 
-    @Test fun staleTempFilesAreCleanedOnStart() {
-        val stale = File(pdf.parentFile, ".Old.pdf.pnotes-tmp").apply { writeText("x") }
+    /** Review C1: only this file's own leftover temp is removed; another file's may be mid-save. */
+    @Test fun startOnlyCleansItsOwnTempFile() {
+        val mine = File(pdf.parentFile, ".Lecture.pdf.pnotes-tmp").apply { writeText("x") }
+        val other = File(pdf.parentFile, ".Other.pdf.pnotes-tmp").apply { writeText("x") }
         session()
-        assertFalse(stale.exists())
+        assertFalse(mine.exists())
+        assertTrue(other.exists())
     }
 
     @Test fun autosaveRunsAfterDelayAndClearsJournal() {
@@ -171,5 +174,52 @@ class DocumentSessionTest {
         var seen: PdfPages? = null
         s.runOnDocument { seen = it }
         assertTrue(seen === fake)
+    }
+
+    /** Review I2: a file a sync app deleted must be reported, not crash the worker silently. */
+    @Test fun deletedFileIsReportedNotThrown() {
+        val s = session()
+        pdf.delete()
+        s.addStroke(0, dot)
+        s.saveNow()
+        assertTrue(events.contains(SessionEvent.ChangedOnDisk))
+        assertEquals(1, journalStrokes())
+    }
+
+    /** Review I5: MuPDF can repair a file later, while reading it. Ask before saving even then. */
+    @Test fun repairFoundLaterStillAsksFirst() {
+        val s = session()
+        s.addStroke(0, dot)
+        fake.wasRepaired = true
+        s.saveNow()
+        assertTrue(events.contains(SessionEvent.NeedsRepairDecision))
+        assertEquals("original", pdf.readText())
+    }
+
+    /**
+     * Review C2: turning the tablet closes the writing screen and opens a new one on the same
+     * file. The new session must wait until the old one has finished saving, or it sees its own
+     * save as "changed elsewhere" and stops saving.
+     */
+    @Test fun secondSessionWaitsForFirstToFinishSaving() {
+        val firstWorker = WorkerScheduler("first")
+        val first = DocumentSession(pdf, journals, { FakePdfPages(saveDelayMs = 400) }, firstWorker, {})
+        first.start()
+        first.addStroke(0, dot)
+        first.close()
+
+        val secondEvents = java.util.Collections.synchronizedList(mutableListOf<SessionEvent>())
+        val secondWorker = WorkerScheduler("second")
+        val second = DocumentSession(pdf, journals, { FakePdfPages() }, secondWorker, { secondEvents += it })
+        second.start()
+        assertTrue(firstWorker.awaitTermination(5000)) // the old screen's save lands after the new one opened
+        second.addStroke(0, dot)
+        second.saveNow()
+        second.close()
+        assertTrue(secondWorker.awaitTermination(5000))
+
+        assertFalse("events: $secondEvents", secondEvents.contains(SessionEvent.ChangedOnDisk))
+        assertTrue(secondEvents.contains(SessionEvent.Saved))
+        assertEquals(0, journalStrokes())
     }
 }

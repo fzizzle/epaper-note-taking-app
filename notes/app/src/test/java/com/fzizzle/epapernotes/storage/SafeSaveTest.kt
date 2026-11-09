@@ -48,4 +48,17 @@ class SafeSaveTest {
         SafeSave.replace(f) { it.writeText("x") }
         assertEquals("x", f.readText())
     }
+
+    /** Review C1: if the temp file is missing or empty when it's time to swap, the original must survive. */
+    @Test fun writeThatLeavesNoTempFailsAndKeepsOriginal() {
+        val f = tmp.newFile("a.pdf").apply { writeText("old") }
+        assertThrows(IOException::class.java) { SafeSave.replace(f) { /* wrote nothing */ } }
+        assertEquals("old", f.readText())
+    }
+
+    @Test fun writeThatLeavesEmptyTempFailsAndKeepsOriginal() {
+        val f = tmp.newFile("a.pdf").apply { writeText("old") }
+        assertThrows(IOException::class.java) { SafeSave.replace(f) { it.writeText("") } }
+        assertEquals("old", f.readText())
+    }
 }

@@ -52,7 +52,8 @@ class DocumentSessionDeviceTest {
         assertEquals(0, strokesIn(pdf))
 
         val second = Run(pdf, journals).apply { session.start() }
-        second.waitFor { second.events.contains(SessionEvent.Replayed(1)) }
+        // The killed session never closed, so the new one first waits out its turn (15 s).
+        second.waitFor(timeoutMs = 25_000) { second.events.contains(SessionEvent.Replayed(1)) }
         second.session.saveNow()
         second.waitFor { second.events.contains(SessionEvent.Saved) }
         second.session.close()

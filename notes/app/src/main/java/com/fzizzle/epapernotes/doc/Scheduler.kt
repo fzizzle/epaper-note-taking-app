@@ -1,5 +1,6 @@
 package com.fzizzle.epapernotes.doc
 
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.TimeUnit
@@ -25,14 +26,24 @@ class WorkerScheduler(name: String = "document") : Scheduler {
     private val executor = ScheduledThreadPoolExecutor(1) { r -> Thread(r, name) }
     private val pending = mutableMapOf<String, ScheduledFuture<*>>()
 
+    // Work posted after the document has closed (a late pen callback, say) is dropped rather
+    // than crashing the app. Anything that matters is already in the journal by then.
     override fun post(task: () -> Unit) {
-        executor.execute(task)
+        try {
+            executor.execute(task)
+        } catch (e: RejectedExecutionException) {
+            // closed
+        }
     }
 
     @Synchronized
     override fun postDelayed(key: String, delayMs: Long, task: () -> Unit) {
         pending.remove(key)?.cancel(false)
-        pending[key] = executor.schedule(task, delayMs, TimeUnit.MILLISECONDS)
+        try {
+            pending[key] = executor.schedule(task, delayMs, TimeUnit.MILLISECONDS)
+        } catch (e: RejectedExecutionException) {
+            // closed
+        }
     }
 
     @Synchronized
@@ -43,6 +54,9 @@ class WorkerScheduler(name: String = "document") : Scheduler {
     override fun shutdown() {
         executor.shutdown()
     }
+
+    /** Waits for the worker to finish after [shutdown]. Returns false if it didn't within [timeoutMs]. */
+    fun awaitTermination(timeoutMs: Long): Boolean = executor.awaitTermination(timeoutMs, TimeUnit.MILLISECONDS)
 
     /** For tests that imitate the app being killed: stop at once, dropping queued work. */
     fun killNow() {

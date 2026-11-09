@@ -5,7 +5,7 @@ import java.io.File
 import java.io.IOException
 
 /** Stands in for a real PDF. Saving writes how many strokes it holds, so tests can read files back. */
-class FakePdfPages(override val wasRepaired: Boolean = false) : PdfPages {
+class FakePdfPages(override var wasRepaired: Boolean = false, private val saveDelayMs: Long = 0) : PdfPages {
     val strokes = mutableListOf<Pair<Int, Stroke>>()
     var failNextSave = false
     var saves = 0
@@ -28,6 +28,7 @@ class FakePdfPages(override val wasRepaired: Boolean = false) : PdfPages {
         }
         saves++
         val count = strokes.size
+        if (saveDelayMs > 0) Thread.sleep(saveDelayMs)
         duringSave?.invoke()
         target.writeText("strokes=$count")
     }

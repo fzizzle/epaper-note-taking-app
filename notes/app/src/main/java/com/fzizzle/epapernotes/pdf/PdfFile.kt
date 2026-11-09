@@ -35,10 +35,11 @@ class PdfFile private constructor(private val doc: PDFDocument) : PdfPages {
     override val pageCount: Int get() = doc.countPages()
 
     /**
-     * True when MuPDF had to repair the file to open it. Saving would then replace the
-     * original with the repaired version, so the owner is asked first (spec §7.3).
+     * True when MuPDF had to repair the file, while opening it or later while reading it.
+     * Saving would then replace the original with the repaired version, so the owner is asked
+     * first (spec §7.3). Asked fresh each time, because the repair can happen late.
      */
-    override val wasRepaired: Boolean = doc.wasRepaired()
+    override val wasRepaired: Boolean get() = doc.wasRepaired()
 
     /**
      * Maps PDF user space (where strokes are stored) to display points: the page as shown,
