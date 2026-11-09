@@ -21,9 +21,9 @@ import kotlin.math.abs
  * zoomed in, one finger moves around the page, and pushing on past the top or bottom edge
  * turns the page. The pen is ignored here: while fast-ink is on, Onyx handles the pen.
  *
- * New strokes are drawn here too, on top of the page, until the page has been rendered again
- * from the PDF with them in it. That keeps them on screen whenever the view redraws, without
- * having to re-render while the owner is writing.
+ * New strokes are drawn here too, on top of any page rendering that doesn't contain them yet
+ * (see InkOverlay). That keeps them on screen whenever the view redraws, at any zoom, without
+ * re-rendering while the owner is writing.
  */
 class PageView(context: Context) : View(context) {
 
@@ -43,13 +43,15 @@ class PageView(context: Context) : View(context) {
     private var sizes: List<SizePt> = emptyList()
     private var toDisplay: List<Affine> = emptyList()
 
-    private val bitmaps = PageBitmaps<Bitmap>(200L * 1024 * 1024) { it.byteCount.toLong() }
+    /** A page rendering, and the page's ink version it contains. */
+    private class Rendered(val bitmap: Bitmap, val version: Int)
 
-    // Renders on their way, and how many of the page's new strokes each will already include.
+    private val bitmaps = PageBitmaps<Rendered>(200L * 1024 * 1024) { it.bitmap.byteCount.toLong() }
+
+    // Renders on their way, and the ink version each will contain.
     private val inFlight = mutableMapOf<Pair<Int, Int>, Int>()
 
-    // Strokes written since the page was last rendered, per page, oldest first.
-    private val unrendered = mutableMapOf<Int, MutableList<Stroke>>()
+    private val ink = InkOverlay()
 
     private var pinching = false
     private var fingersDown = false
@@ -79,7 +81,7 @@ class PageView(context: Context) : View(context) {
         val moved = if (forward) v.next() else v.previous()
         if (!moved) return false
         // Next time this page is visited, render it afresh so its new strokes come from the PDF.
-        if (unrendered[leaving].orEmpty().isNotEmpty()) bitmaps.invalidate(leaving)
+        if (ink.version(leaving) > 0) bitmaps.invalidate(leaving)
         invalidate()
         onViewportChanged()
         return true
@@ -87,16 +89,15 @@ class PageView(context: Context) : View(context) {
 
     /** A stroke just written on [page]: show it until the page's rendering includes it. UI thread. */
     fun addStroke(page: Int, stroke: Stroke) {
-        unrendered.getOrPut(page) { mutableListOf() }.add(stroke)
+        ink.add(page, stroke)
         invalidate()
     }
 
     /** A rendering arrived from the worker. UI thread. */
     fun pageRendered(page: Int, widthPx: Int, bitmap: Bitmap) {
-        val included = inFlight.remove(page to widthPx) ?: 0
-        unrendered[page]?.let { list -> repeat(minOf(included, list.size)) { list.removeAt(0) } }
-        android.util.Log.i("Notes", "rendered page=$page width=$widthPx included=$included stillUnrendered=${unrendered[page]?.size ?: 0}")
-        bitmaps.put(page, widthPx, bitmap)
+        val version = inFlight.remove(page to widthPx) ?: 0
+        android.util.Log.i("Notes", "rendered page=$page width=$widthPx version=$version of ${ink.version(page)}")
+        bitmaps.put(page, widthPx, Rendered(bitmap, version))
         invalidate()
         onPageShown(page)
     }
@@ -113,9 +114,9 @@ class PageView(context: Context) : View(context) {
     private fun ensureRendered(page: Int, widthPx: Int) {
         if (bitmaps.get(page, widthPx) != null || inFlight.containsKey(page to widthPx)) return
         // Strokes counted now were all sent to the PDF before this request, and the worker
-        // handles things in order, so this rendering will include them.
-        inFlight[page to widthPx] = unrendered[page]?.size ?: 0
-        android.util.Log.i("Notes", "render requested page=$page width=$widthPx includes=${inFlight[page to widthPx]}")
+        // handles things in order, so this rendering will contain them.
+        inFlight[page to widthPx] = ink.version(page)
+        android.util.Log.i("Notes", "render requested page=$page width=$widthPx version=${ink.version(page)}")
         requestRender(page, widthPx)
     }
 
@@ -130,9 +131,11 @@ class PageView(context: Context) : View(context) {
 
         val w = renderWidth(v, page)
         val shown = bitmaps.get(page, w) ?: bitmaps.anyFor(page)
-        if (shown != null) canvas.drawBitmap(shown, null, dst, pagePaint) else canvas.drawRect(dst, placeholder)
+        if (shown != null) canvas.drawBitmap(shown.bitmap, null, dst, pagePaint) else canvas.drawRect(dst, placeholder)
 
-        unrendered[page]?.forEach { drawStroke(canvas, it, toDisplay[page].then(toScreen), v.pxPerPt()) }
+        // Whatever this rendering is missing, whenever it was made.
+        val missing = ink.newerThan(page, shown?.version ?: 0)
+        missing.forEach { drawStroke(canvas, it, toDisplay[page].then(toScreen), v.pxPerPt()) }
 
         // Don't render mid-pinch: the width keeps changing. It's asked for once the pinch ends.
         if (!pinching) {
