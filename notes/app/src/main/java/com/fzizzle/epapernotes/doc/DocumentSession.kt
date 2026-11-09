@@ -94,8 +94,13 @@ class DocumentSession(
         synchronized(lock) {
             val old = journal.read()
             replay = when {
-                // The journal already holds exactly this: keep it as it is.
-                old != null && old.base == identity -> old.changes
+                // The journal already holds exactly this. Rewrite it anyway: a plan-2 (pnj1)
+                // journal becomes pnj2 with fixed item ids before anything new is appended,
+                // or the new lines would be read back as plan-2 lines and dropped.
+                old != null && old.base == identity -> {
+                    journal.rewrite(identity, old.changes)
+                    old.changes
+                }
                 else -> {
                     if (old != null && old.changes.isNotEmpty()) {
                         // Writing from an earlier session, drawn on a version of the file that
@@ -145,6 +150,7 @@ class DocumentSession(
     }
 
     /** Until PdfPages takes changes (a later task), only added ink reaches the PDF. */
+    // TODO(Task 5): apply every kind of change; the others are ignored here for now.
     private fun applyTo(p: PdfPages, change: Change) {
         if (change is AddItems) change.items.filterIsInstance<InkItem>().forEach { p.addStroke(change.page, it.stroke) }
     }

@@ -223,4 +223,19 @@ class DocumentSessionTest {
         assertTrue(secondEvents.contains(SessionEvent.Saved))
         assertEquals(0, journalStrokes())
     }
+
+    /** A plan-2 journal is replayed, and strokes added after that must not be lost on the next open. */
+    @Test fun plan2JournalIsUpgradedSoNewStrokesSurvive() {
+        val journalFile = ChangeJournal.forDocument(journals, pdf).file
+        journalFile.writeText("pnj1 ${FileIdentity.of(pdf).encode()}\nadd 0 pn1 pen 1.00,2.00,0.500\n")
+        val first = session()
+        assertTrue(events.contains(SessionEvent.Replayed(1)))
+        first.addStroke(1, dot)
+
+        events.clear()
+        fake = FakePdfPages()
+        session() // no autosave has run
+        assertTrue(events.contains(SessionEvent.Replayed(2)))
+        assertEquals(2, fake.strokes.size)
+    }
 }
