@@ -24,7 +24,7 @@ It should be lightweight and fast, and it should do a small set of core things v
 1. A pen that feels as immediate as the stock app (Boox fast-ink drawing).
 2. PDFs live in the owner's folder tree, and the app reflects that tree exactly, including changes made outside the app.
 3. Handwriting is stored as a separate layer in the PDF file itself (standard PDF annotations). It is visible in other PDF viewers, and the original page content is never modified.
-4. Both pen side buttons are mappable: one for **lasso select**, one for **stroke eraser**, each active **only while the button is held**.
+4. Both pen side buttons are used: button 1 for **lasso select**, button 2 for **stroke eraser**, each active **only while the button is held**.
 5. Minimal UI: one thin toolbar strip, nothing else permanently on screen.
 6. Writing is never lost: autosave, crash safety, and conflict handling that keeps both versions.
 
@@ -50,7 +50,8 @@ It should be lightweight and fast, and it should do a small set of core things v
 
 - **Kotlin**, native Android.
 - **Boox's Onyx pen SDK** for drawing. It gives the fast-ink (raw drawing) mode the stock app uses. Plain Android canvas drawing is too laggy on e-ink.
-- **An open-source PDF library** for rendering pages and for reading and writing annotations (the choice is left to the builder, see section 10).
+- **MuPDF** (Artifex's official Android library) for rendering pages and for reading and writing annotations. Owner-approved 2026-11-09, see section 10.
+- **Licence: AGPL-3.0** for the whole app, as MuPDF requires. The owner plans to open-source the app anyway (owner-approved 2026-11-09).
 - **Readable code.** The owner will read the code but not write it. Small files, plain names, comments that explain *why*, and no cleverness where something boring works.
 - **Process rule:** any architectural or feature change from this document must be explained to the owner in plain words and approved before it's made. Only the owner gives these approvals. Treat them as hard stop points in the plan, especially the PDF library choice and the side-button test result (section 9).
 
@@ -105,7 +106,7 @@ Navigation:
 
 **Snip.** A separate tool from lasso. Drag a rectangle to capture that region **as a picture**, including the printed PDF content and any ink on it. Paste it onto another page in the same document. Once pasted it acts as a single image object: it can be moved, resized, deleted, and lasso-selected, but not edited stroke by stroke.
 
-**Pen side buttons.** One button switches to lasso select and the other to the stroke eraser. Each is active **only while held**, and releasing returns to whatever tool was active before (normally pen or highlighter). Which physical button does which should be easy to swap, but no settings screen is needed beyond that.
+**Pen side buttons.** Button 1 switches to lasso select and button 2 to the stroke eraser. Each is active **only while held**, and releasing returns to whatever tool was active before (normally pen or highlighter). The mapping is fixed, with no swap: the tablet reports button 2 as the pen's eraser end (owner-approved 2026-11-09, see [probe results](../probe-results.md)). A button counts only if it's held when the pen touches down. A press partway through a stroke takes effect on the next stroke, because that's how the pen reports it (owner-approved 2026-11-09).
 
 **Undo and redo** cover everything in the current session: strokes, erases, moves, resizes, pastes, deletes, rotations.
 
@@ -158,11 +159,13 @@ The first piece of work should be a tiny throwaway test app the owner installs t
 
 A similar early check is worthwhile for palm rejection and finger-vs-pen separation while raw drawing is on.
 
+**Outcome (2026-11-09):** the test was run, and the buttons can be told apart in both modes. The results and the decisions they led to are in [probe-results.md](../probe-results.md).
+
 ## 10. Left to the builder
 
 These are yours to decide. Report the main choices to the owner in plain words, and get approval for anything that's architectural.
 
-- **PDF library.** It must render fast on this hardware, read and write annotations and page rotation, and preserve foreign annotations. Licence matters: some strong options (for example MuPDF) are AGPL. That's fine for a personal app, but tell the owner if you pick one, because it would constrain ever publishing the app closed-source.
+- **PDF library: decided, MuPDF** (owner-approved 2026-11-09). It must render fast on this hardware, read and write annotations and page rotation, and preserve foreign annotations. MuPDF does all of this in one library. PDFium was the alternative, but it has no maintained Android wrapper that writes annotations. Android's own PdfRenderer only gains annotation editing in API 36.1, and the tablet runs 36.0. MuPDF is AGPL, so the app is AGPL-3.0 and its source is published. A quick speed check on the tablet comes first in the main build.
 - **File access method** (All files access vs the Storage Access Framework), as long as in-place editing, atomic replace, and change detection all work.
 - The exact format for stroke data stored inside annotations.
 - The journal format and how often background saves run.

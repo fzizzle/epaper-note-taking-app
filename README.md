@@ -44,4 +44,20 @@ Blank notebooks, the partial eraser, copy and paste between documents, extra pen
 
 - Kotlin, native Android.
 - Boox's Onyx pen SDK for low-latency e-ink drawing.
-- An open-source PDF library, not chosen yet.
+- MuPDF for rendering PDFs and writing annotations.
+
+## Licence
+
+AGPL-3.0 (see [LICENSE](LICENSE)), because the app uses MuPDF.
+
+## Building
+
+The app lives in `notes/`. The Android tools are installed in the home folder, so load them first:
+
+```sh
+source ~/.local/opt/android-env.sh
+cd notes
+./gradlew :app:assembleDebug              # build the app
+./gradlew :app:testDebugUnitTest          # tests that run on the laptop
+./gradlew :app:connectedDebugAndroidTest  # tests that run on the tablet (USB connected)
+```
