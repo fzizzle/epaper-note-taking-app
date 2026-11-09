@@ -210,11 +210,11 @@ class PdfFile private constructor(private val doc: PDFDocument) : PdfPages {
                 opened.destroy()
                 throw PdfOpenException("${file.name} is password-protected.")
             }
-            val pdf = opened.asPDF()
-            if (pdf == null) {
-                opened.destroy()
-                throw PdfOpenException("${file.name} is not a PDF.")
-            }
+            // asPDF returns a second handle with its own reference, so the first one is let go
+            // now. Otherwise the document, and its open file, would linger until the garbage
+            // collector got round to it.
+            val pdf = try { opened.asPDF() } finally { opened.destroy() }
+                ?: throw PdfOpenException("${file.name} is not a PDF.")
             // MuPDF repairs damaged files as it opens them. One with no usable pages left is
             // refused here, rather than failing later in the middle of drawing.
             val pages = try { pdf.countPages() } catch (e: RuntimeException) { 0 }

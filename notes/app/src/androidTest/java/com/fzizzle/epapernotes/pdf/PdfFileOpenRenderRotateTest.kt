@@ -19,6 +19,16 @@ class PdfFileOpenRenderRotateTest {
 
     @Test fun rendersAtRequestedWidth() = PdfFile.open(TestPdfs.blank(dir)).use { assertEquals(1860, it.render(0, 1860).width) }
 
+    /** Closing lets go of the file at once, not whenever the garbage collector runs. */
+    @Test fun closeReleasesTheFile() {
+        val file = TestPdfs.blank(dir)
+        fun held() = File("/proc/self/fd").listFiles().orEmpty().count {
+            try { it.canonicalPath == file.canonicalPath } catch (e: java.io.IOException) { false }
+        }
+        PdfFile.open(file).use { assertEquals(1, held()) }
+        assertEquals(0, held())
+    }
+
     @Test fun garbageFileFailsCleanly() {
         assertThrows(PdfOpenException::class.java) { PdfFile.open(TestPdfs.garbage(dir)) }
     }
