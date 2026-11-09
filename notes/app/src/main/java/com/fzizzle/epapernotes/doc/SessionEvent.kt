@@ -12,6 +12,13 @@ sealed interface SessionEvent {
     /** Something else changed the file since it was opened. The app stops writing into it. */
     data object ChangedOnDisk : SessionEvent
 
+    /**
+     * A change couldn't be written into the open PDF, which may now hold only part of it. The
+     * app stops saving into the file; everything is kept in the journal and comes back on the
+     * next open.
+     */
+    data object WritingStopped : SessionEvent
+
     /** MuPDF repaired the file to open it. Nothing is written until the owner chooses. */
     data object NeedsRepairDecision : SessionEvent
 

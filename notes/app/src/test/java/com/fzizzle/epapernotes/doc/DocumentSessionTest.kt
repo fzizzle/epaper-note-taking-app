@@ -473,4 +473,79 @@ class DocumentSessionTest {
         assertEquals("items=300", pdf.readText())
         assertEquals(0, journalStrokes())
     }
+
+    /** Review: the selection keeps the moved items, so it must get the ids the file really has. */
+    @Test fun secondMoveOfPlan2StrokeDoesNotDuplicate() {
+        val s = session()
+        val old = InkItem("o7", line)
+        fake.pageItems[0] = mutableListOf(old)
+        val first = s.record(ReplaceItems(0, listOf(old), listOf(old.copy(stroke = dot)))) as ReplaceItems
+        val moved = first.after.single()
+        assertNotEquals("o7", moved.id)
+        s.record(ReplaceItems(0, listOf(moved), listOf((moved as InkItem).copy(stroke = line))))
+        assertEquals(listOf(line), strokesOn(0))
+    }
+
+    @Test fun zeroDistanceMoveIsNoUndoStep() {
+        val s = session()
+        s.addStroke(0, dot)
+        val item = fake.items(0).single()
+        assertEquals(null, s.record(ReplaceItems(0, listOf(item), listOf(item))))
+        assertEquals(1, journalStrokes())
+        s.undo()
+        assertEquals(0, fake.itemCount) // the undo took back the stroke, not a zero move
+    }
+
+    @Test fun failedApplyStopsSavingAndKeepsTheJournal() {
+        val s = session()
+        s.addStroke(0, dot)
+        fake.failNextApply = true
+        s.addStroke(0, line)
+        assertTrue(events.contains(SessionEvent.WritingStopped))
+        s.saveNow()
+        assertEquals(0, fake.saves)
+        assertEquals(2, journalStrokes())
+        reopenAfterKill()
+        assertEquals(listOf(dot, line), strokesOn(0))
+    }
+
+    @Test fun failedApplyIsNotSavedIntoARepairedFileOrItsCopy() {
+        fake = FakePdfPages(wasRepaired = true)
+        val s = session()
+        fake.failNextApply = true
+        s.addStroke(0, dot)
+        events.clear()
+        s.saveRepairedToCopy()
+        assertFalse(File(pdf.parentFile, "Lecture (my edits 2026-11-09).pdf").exists())
+        assertEquals(listOf<SessionEvent>(SessionEvent.WritingStopped), events)
+        events.clear()
+        s.saveIntoRepairedFile()
+        assertEquals("original", pdf.readText())
+        assertEquals(listOf<SessionEvent>(SessionEvent.WritingStopped), events)
+    }
+
+    @Test fun replayThatFailsToApplyIsNotReportedAsRecovered() {
+        ChangeJournal.forDocument(journals, pdf).apply { start(FileIdentity.of(pdf)); append(AddItems(0, listOf(InkItem("a", dot)))) }
+        fake.failNextApply = true
+        session()
+        assertFalse(events.any { it is SessionEvent.Replayed })
+        assertTrue(events.contains(SessionEvent.WritingStopped))
+        assertEquals(1, journalStrokes())
+    }
+
+    /** A bad page number from a tool is logged, never thrown out of the worker. */
+    @Test fun workerToolFailuresAreCaught() {
+        val s = session()
+        s.erase(99, acrossLine)
+        s.rotate(listOf(99))
+        var answered: List<Item>? = null
+        s.select(99, listOf(Pt(0f, 0f), Pt(9f, 0f), Pt(9f, 9f))) { answered = it }
+        assertEquals(emptyList<Item>(), answered)
+        answered = null
+        s.items(99) { answered = it }
+        assertEquals(emptyList<Item>(), answered)
+        s.addStroke(0, dot) // still working
+        s.saveNow()
+        assertEquals("items=1", pdf.readText())
+    }
 }

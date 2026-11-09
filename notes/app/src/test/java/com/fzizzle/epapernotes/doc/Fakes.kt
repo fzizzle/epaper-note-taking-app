@@ -10,6 +10,8 @@ class FakePdfPages(override var wasRepaired: Boolean = false, private val saveDe
     val pageItems = mutableMapOf<Int, MutableList<Item>>()
     val rotations = mutableMapOf<Int, Int>()
     var failNextSave = false
+    /** The next apply writes half of the change, then throws, as a MuPDF error midway might. */
+    var failNextApply = false
     var saves = 0
     /** Runs in the middle of a save, to imitate the pen writing while the worker saves. */
     var duringSave: (() -> Unit)? = null
@@ -22,6 +24,7 @@ class FakePdfPages(override var wasRepaired: Boolean = false, private val saveDe
     val itemCount get() = pageItems.values.sumOf { it.size }
 
     override fun items(page: Int): List<Item> {
+        checkPage(page)
         val now = pageItems[page].orEmpty().toList()
         duringItems?.invoke()
         return now
@@ -29,6 +32,15 @@ class FakePdfPages(override var wasRepaired: Boolean = false, private val saveDe
 
     /** As PdfFile does it: ids that aren't there are skipped. */
     override fun apply(change: Change) {
+        if (failNextApply && change is ReplaceItems) {
+            failNextApply = false
+            remove(change.page, change.before)
+            throw IllegalStateException("mupdf error")
+        }
+        if (failNextApply) {
+            failNextApply = false
+            throw IllegalStateException("mupdf error")
+        }
         when (change) {
             is AddItems -> on(change.page).addAll(change.items)
             is RemoveItems -> remove(change.page, change.items)
@@ -40,7 +52,15 @@ class FakePdfPages(override var wasRepaired: Boolean = false, private val saveDe
         }
     }
 
-    override fun rotation(page: Int) = rotations[page] ?: 0
+    override fun rotation(page: Int): Int {
+        checkPage(page)
+        return rotations[page] ?: 0
+    }
+
+    /** As PdfFile does: a page that isn't there is an error. */
+    private fun checkPage(page: Int) {
+        if (page !in 0 until pageCount) throw IndexOutOfBoundsException("no page $page")
+    }
 
     private fun on(page: Int) = pageItems.getOrPut(page) { mutableListOf() }
 

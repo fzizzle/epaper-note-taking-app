@@ -142,7 +142,7 @@ class DocumentSession(
         // The replayed changes, and any the pen has added since the journal opened.
         applyPending()
         checkRepair(opened)
-        if (replay.isNotEmpty()) {
+        if (replay.isNotEmpty() && !applyFailed) {
             events(SessionEvent.Replayed(replay.size))
             scheduleAutosave()
         }
@@ -163,11 +163,15 @@ class DocumentSession(
      * worker recording at once, and `applied` says exactly which changes a save contains.
      * [erase] and [rotate] work out their change on the worker and then come through here like
      * anyone else: their change is applied after everything recorded before it.
+     *
+     * Returns the change as journaled, or null if it was empty and ignored. It can differ from
+     * [change]: a plan-2 item gets a new id when moved (see [withFreshIds]), and a caller that
+     * keeps hold of the moved items, like the selection, must use these.
      */
-    fun record(change: Change) {
+    fun record(change: Change): Change? {
         journalReady.await()
         val fresh = withFreshIds(change)
-        if (isEmpty(fresh)) return
+        if (isEmpty(fresh)) return null
         synchronized(lock) {
             commit(fresh) {
                 undoable.addLast(fresh)
@@ -176,6 +180,7 @@ class DocumentSession(
             }
         }
         scheduleAutosave()
+        return fresh
     }
 
     /** Takes back this session's last change, by recording its inverse. */
@@ -220,9 +225,7 @@ class DocumentSession(
 
     /** Removes the items an eraser [trail] (PDF space) touches on [page]. */
     fun erase(page: Int, trail: List<Pt>) {
-        scheduler.post {
-            val p = pages ?: return@post
-            applyPending()
+        onWorker("erase on page $page") { p ->
             val hits = Eraser.hits(p.items(page), trail) // items() once: it's costly for snips
             if (hits.isNotEmpty()) record(RemoveItems(page, hits))
         }
@@ -230,29 +233,45 @@ class DocumentSession(
 
     /** The items a lasso [loop] (PDF space) picks up on [page], given to [answer] on the worker. */
     fun select(page: Int, loop: List<Pt>, answer: (List<Item>) -> Unit) {
-        scheduler.post {
-            val p = pages ?: return@post answer(emptyList())
-            applyPending()
-            answer(Lasso.selects(p.items(page), loop))
-        }
+        var found = emptyList<Item>()
+        onWorker("select on page $page", then = { answer(found) }) { p -> found = Lasso.selects(p.items(page), loop) }
     }
 
     /** All of the app's items on [page], given to [answer] on the worker. */
     fun items(page: Int, answer: (List<Item>) -> Unit) {
-        scheduler.post {
-            val p = pages ?: return@post answer(emptyList())
-            applyPending()
-            answer(p.items(page))
+        var found = emptyList<Item>()
+        onWorker("items on page $page", then = { answer(found) }) { p -> found = p.items(page) }
+    }
+
+    /** Turns each of [pageNumbers] by 90° clockwise, as one undo step. */
+    fun rotate(pageNumbers: List<Int>) {
+        onWorker("rotate $pageNumbers") { p ->
+            val before = pageNumbers.associateWith { p.rotation(it) }
+            record(RotatePages(before, before.mapValues { (_, degrees) -> (degrees + 90) % 360 }))
         }
     }
 
-    /** Turns each of [pages] by 90° clockwise, as one undo step. */
-    fun rotate(pages: List<Int>) {
+    /**
+     * Runs [task] on the worker with the PDF brought up to date, then [then] whatever happened
+     * (so a caller waiting for an answer always gets one). A failure, say a page that doesn't
+     * exist, is logged and goes no further: it must never take the worker down.
+     */
+    private fun onWorker(what: String, then: () -> Unit = {}, task: (PdfPages) -> Unit) {
         scheduler.post {
-            val p = this.pages ?: return@post
-            applyPending()
-            val before = pages.associateWith { p.rotation(it) }
-            record(RotatePages(before, before.mapValues { (_, degrees) -> (degrees + 90) % 360 }))
+            try {
+                pages?.let { p ->
+                    applyPending()
+                    task(p)
+                }
+            } catch (e: Exception) {
+                // System.err reaches logcat on the tablet, and keeps this file free of Android code.
+                System.err.println("DocumentSession: $what failed: $e")
+            }
+            try {
+                then()
+            } catch (e: Exception) {
+                System.err.println("DocumentSession: answering $what failed: $e")
+            }
         }
     }
 
@@ -276,7 +295,8 @@ class DocumentSession(
                 // The PDF may now hold part of this change, so saving it could lose or double
                 // something. Stop saving; the journal keeps everything for the next open.
                 applyFailed = true
-                events(SessionEvent.SaveFailed(e.message ?: "A change couldn't be written into the file."))
+                System.err.println("DocumentSession: applying a change failed: $e")
+                events(SessionEvent.WritingStopped)
                 break
             }
             applied++
@@ -305,7 +325,7 @@ class DocumentSession(
         scheduler.post {
             repairDecided = true
             waitingForRepairDecision = false
-            save()
+            if (applyFailed) events(SessionEvent.WritingStopped) else save()
         }
     }
 
@@ -313,6 +333,8 @@ class DocumentSession(
     fun saveRepairedToCopy() {
         scheduler.post {
             val p = pages ?: return@post
+            // A partly written change mustn't go into the copy either.
+            if (applyFailed) return@post events(SessionEvent.WritingStopped)
             val copy = CopyNames.myEdits(file, clock())
             try {
                 SafeSave.replace(copy) { p.saveTo(it) }
@@ -428,7 +450,7 @@ class DocumentSession(
     private fun isEmpty(change: Change) = when (change) {
         is AddItems -> change.items.isEmpty()
         is RemoveItems -> change.items.isEmpty()
-        is ReplaceItems -> change.before.isEmpty() && change.after.isEmpty()
+        is ReplaceItems -> change.before == change.after // nothing, or a move by zero
         is RotatePages -> change.before == change.after
     }
 
