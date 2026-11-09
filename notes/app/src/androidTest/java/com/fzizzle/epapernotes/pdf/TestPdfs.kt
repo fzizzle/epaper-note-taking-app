@@ -53,6 +53,16 @@ object TestPdfs {
         return File(dir, "cut.pdf").apply { writeBytes(whole.copyOf(whole.size * 6 / 10)) }
     }
 
+    /**
+     * A valid PDF whose pointer to its object table is wrong, a common kind of damage. MuPDF
+     * opens it by rebuilding the table, and reports it as repaired.
+     */
+    fun brokenXref(dir: File): File {
+        val text = String(blank(dir, pages = 2).readBytes(), Charsets.ISO_8859_1)
+        val broken = Regex("startxref\\s+\\d+").replace(text, "startxref\n999999")
+        return File(dir, "broken.pdf").apply { writeBytes(broken.toByteArray(Charsets.ISO_8859_1)) }
+    }
+
     /** 1 KB of random bytes with a .pdf name, like a damaged download. */
     fun garbage(dir: File): File = File(dir, "bad.pdf").apply { writeBytes(Random(42).nextBytes(1024)) }
 
