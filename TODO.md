@@ -2,7 +2,7 @@
 
 ## Next up
 
-- [ ] **Run the pen and touch probe:** [plan](docs/superpowers/plans/2026-11-07-pen-and-touch-probe.md)
+- [x] **Run the pen and touch probe:** [plan](docs/superpowers/plans/2026-11-07-pen-and-touch-probe.md)
   - [x] Build tools installed in the home folder (`source ~/.local/opt/android-env.sh`)
   - [x] Pen Probe app built (`probe/`), with 13 unit tests passing and the final review done
   - [x] Install it on the tablet and work through [probe/TESTING.md](probe/TESTING.md)
@@ -12,7 +12,8 @@
 ## After that
 
 - [x] Choose a PDF library: MuPDF, so the app is AGPL-3.0 (approved 2026-11-09).
-- [ ] Write the plan for the main app, based on the probe results and the library choice.
+- [x] Write the plan for the main app: split into 5 plans. Plan 1 is the [PDF foundation](docs/superpowers/plans/2026-11-09-pdf-foundation.md), ending in a speed check.
+- [ ] Carry out plan 1, then review the speed check results (hard stop).
 
 ## Later (not in the first version)
 
