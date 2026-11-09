@@ -35,7 +35,7 @@ It should be lightweight and fast, and it should do a small set of core things v
 - Copy and paste between different documents.
 - More than one pen colour or style, and more than one highlighter colour.
 - Any sync, account, cloud, or login.
-- Landscape screen orientation (the owner nearly always uses portrait).
+- Landscape-specific layouts. The screen may turn (section 6.2), but nothing is designed especially for landscape.
 - Support for devices other than the Note Air 6 C. Don't lock the app to it needlessly, but don't test or design for others.
 - Text recognition, search inside handwriting, shapes, templates, layers UI, or any other feature not listed here.
 
@@ -77,14 +77,14 @@ Layout: the PDF pages fill the screen. A **thin top strip** (about 5% of the hei
 
 The page menu holds **rotate this page** and **rotate all pages**.
 
-Nothing else is permanently on screen except a small page indicator (for example "4 / 32").
+Nothing else is permanently on screen except a small page indicator with **‹ and › buttons** on either side of it (for example "‹ 4 / 32 ›").
 
-Orientation: **portrait only, locked** (the owner nearly always holds it portrait). Landscape slides are handled by rotating the PDF pages (section 6.4), not by turning the screen. Locking also avoids the Onyx fast-ink mode's weakness with screen rotation mid-session.
+Orientation: **follows the tablet** (owner's decision, 2026-11-09). The design first locked portrait, but Android 16 on the Note Air 6 C overrides an app's orientation lock on large screens, and its opt-outs have no effect. The app handles a turn correctly: the page refits and strokes stay in place. To keep the screen upright, the owner uses Boox's own rotation lock. Landscape slides are still best handled by rotating the PDF pages (section 6.4).
 
 Navigation:
 
-- Pages are laid out in a vertical continuous scroll.
-- **One finger scrolls. Two fingers pinch-zoom and pan.** The pen never scrolls, and a finger never draws.
+- **One page at a time** (owner's decision, 2026-11-09, replacing the continuous scroll). The page is fitted to the screen, and **‹ ›** in the strip go to the previous and next page. Tapping the page number opens a small "Go to page" box; ‹ and › are greyed out on the first and last page (lightweight additions the owner allowed, 2026-11-09).
+- **Two fingers pinch-zoom. When zoomed in, one finger moves around the page, and pushing on past the page's top or bottom edge turns the page.** At normal size a one-finger swipe does nothing, so pages only turn on purpose. The pen never moves the page, and a finger never draws.
 - A resting palm or hand must neither draw nor move the page.
 
 ### 6.3 Tools
@@ -135,6 +135,7 @@ Typical use is once per document: a deck of landscape slides gets rotated so it 
 
 - **Every stroke must survive a crash, kill, or power loss from the moment the pen lifts**, even before the PDF has been rewritten. The expected approach: append each change to a small journal in the app's private storage immediately, and replay it on next open if the PDF save didn't complete. Clear the journal once the PDF save is confirmed.
 - **The PDF on disk must never be left half-written.** Write the new version to a temporary file in the same folder, flush it to disk, then atomically replace the original. Temporary files must not show up in the library grid, and stale ones from a crash must be cleaned up.
+- **Damaged files: warn first** (owner-approved 2026-11-09). MuPDF quietly repairs a damaged PDF when it opens it, and a save would then replace the original with the repaired version, losing anything it couldn't recover. So when a file needed repair, the app tells the owner before anything is written to it. It offers two choices: **save into this file anyway**, or **keep the original and save my writing to a copy**. The copy is named like a conflict copy (section 7.4). Until the owner chooses, strokes are still kept safe in the journal.
 
 ### 7.4 Conflicts (file changed on disk while open)
 
@@ -186,7 +187,7 @@ The owner can overturn any of these:
 - The "last page" position is kept in app-private storage.
 - The conflict copy naming format.
 - Rotation in 90° steps, from the page menu in the toolbar.
-- Pages scroll vertically and continuously.
+- ~~Pages scroll vertically and continuously.~~ Replaced by the owner on 2026-11-09: one page at a time (section 6.2).
 - Copy and delete live in a small action bar next to the selection, and Paste appears in the top strip only after a copy or snip. You place a paste with a pen tap.
 - After a crash, strokes that never reached the PDF are replayed into a "my edits" copy if the file changed on disk in the meantime.
-- Portrait orientation is locked.
+- ~~Portrait orientation is locked.~~ Replaced on 2026-11-09: the screen follows the tablet, because Android 16 overrides the lock (section 6.2).

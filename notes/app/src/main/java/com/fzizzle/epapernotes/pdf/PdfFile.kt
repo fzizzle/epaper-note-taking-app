@@ -11,11 +11,12 @@ import com.artifex.mupdf.fitz.PDFPage
 import com.artifex.mupdf.fitz.Point
 import com.artifex.mupdf.fitz.Rect
 import com.artifex.mupdf.fitz.android.AndroidDrawDevice
+import com.fzizzle.epapernotes.doc.PdfPages
+import com.fzizzle.epapernotes.geometry.Affine
 import com.fzizzle.epapernotes.ink.Stroke
 import com.fzizzle.epapernotes.ink.StrokeCodec
 import com.fzizzle.epapernotes.ink.StrokeOutline
 import com.fzizzle.epapernotes.ink.StrokeStyle
-import java.io.Closeable
 import java.io.File
 
 /**
@@ -29,9 +30,30 @@ import java.io.File
  * It never writes over its own source file. [saveTo] writes a new file, and the caller swaps
  * it in safely (see SafeSave).
  */
-class PdfFile private constructor(private val doc: PDFDocument) : Closeable {
+class PdfFile private constructor(private val doc: PDFDocument) : PdfPages {
 
-    val pageCount: Int get() = doc.countPages()
+    override val pageCount: Int get() = doc.countPages()
+
+    /**
+     * True when MuPDF had to repair the file, while opening it or later while reading it.
+     * Saving would then replace the original with the repaired version, so the owner is asked
+     * first (spec §7.3). Asked fresh each time, because the repair can happen late.
+     */
+    override val wasRepaired: Boolean get() = doc.wasRepaired()
+
+    /**
+     * Maps PDF user space (where strokes are stored) to display points: the page as shown,
+     * rotation applied, origin at the top-left corner, y pointing down.
+     */
+    fun pdfToDisplay(page: Int): Affine {
+        val p = doc.loadPage(page) as PDFPage
+        try {
+            val m = p.transform
+            return Affine(m.a, m.b, m.c, m.d, m.e, m.f)
+        } finally {
+            p.destroy()
+        }
+    }
 
     /** Page size in points as shown, with its rotation applied. */
     fun displaySize(page: Int): SizeF {
@@ -93,7 +115,7 @@ class PdfFile private constructor(private val doc: PDFDocument) : Closeable {
     fun foreignAnnotationCount(page: Int): Int = annotationDicts(page).count { !isOurs(it) }
 
     /** Adds [stroke] to the page as a standard PDF ink annotation and returns its id. */
-    fun addStroke(page: Int, stroke: Stroke): Int {
+    override fun addStroke(page: Int, stroke: Stroke): Int {
         val p = doc.loadPage(page) as PDFPage
         try {
             val style = StrokeStyle.of(stroke.kind)
@@ -143,9 +165,13 @@ class PdfFile private constructor(private val doc: PDFDocument) : Closeable {
      * "garbage" drops objects nothing refers to any more. Deleting an annotation only unlinks
      * it, so without this, erased strokes would stay in the file for good. Only level 1:
      * higher levels renumber objects, which would change the stroke ids.
+     *
+     * "objstms" packs small objects into compressed object streams. Each stroke keeps its
+     * point list and its private stroke data as text, and that text would otherwise be stored
+     * uncompressed.
      */
-    fun saveTo(target: File) {
-        doc.save(target.path, "compress,garbage")
+    override fun saveTo(target: File) {
+        doc.save(target.path, "compress,garbage,objstms")
     }
 
     override fun close() = doc.destroy()

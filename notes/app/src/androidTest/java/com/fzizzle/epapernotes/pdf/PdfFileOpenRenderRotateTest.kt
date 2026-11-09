@@ -2,8 +2,11 @@ package com.fzizzle.epapernotes.pdf
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.fzizzle.epapernotes.geometry.Pt
+import com.fzizzle.epapernotes.ink.Box
 import java.io.File
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -46,4 +49,14 @@ class PdfFileOpenRenderRotateTest {
 
     @Test(timeout = 5000) fun pageTreeLoopDoesNotHang() =
         PdfFile.open(TestPdfs.blank(dir, parentLoop = true)).use { assertEquals(0, it.rotation(0)) }
+
+    @Test fun pdfToDisplayHandlesOffsetAndRotation() = PdfFile.open(TestPdfs.blank(dir, mediaBox = Box(100f, 100f, 712f, 892f))).use {
+        val flat = it.pdfToDisplay(0).map(Pt(150f, 842f))
+        assertEquals(50f, flat.x, 0.5f); assertEquals(50f, flat.y, 0.5f)
+        it.setRotation(0, 90)
+        val turned = it.pdfToDisplay(0).map(Pt(150f, 842f))
+        assertEquals(742f, turned.x, 0.5f); assertEquals(50f, turned.y, 0.5f)
+    }
+
+    @Test fun blankFileWasNotRepaired() = PdfFile.open(TestPdfs.blank(dir)).use { assertFalse(it.wasRepaired) }
 }

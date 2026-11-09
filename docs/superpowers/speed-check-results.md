@@ -46,3 +46,17 @@ adb shell cat /sdcard/Android/data/com.fzizzle.epapernotes/files/check/results.t
 
 1. **Go ahead with the writing screen (plan 2) on MuPDF?** The speed is there.
 2. **The stroke-size fix:** I suggest doing it first thing in plan 2, as described above. Or you can accept the current size for now.
+
+## Update: smaller strokes (plan 2, Task 1)
+
+Each stroke is now drawn as one outline with rounded ends, rather than a circle at every point. Its coordinates are written to 0.1 pt, and saves pack small objects into compressed object streams (`objstms`). Rerun on the same two PDFs, same test strokes:
+
+| | PWT (14.0 MB) | FLE (17.4 MB) |
+|---|---|---|
+| Size after a save with no changes | 13.7 MB (object streams make the file itself smaller) | 17.3 MB |
+| Size after saving 50 strokes | 13.9 MB (+0.2 MB, about 4 KB per stroke) | 17.5 MB (+0.2 MB) |
+| Add 50 strokes | 622 ms (about 12 ms per stroke) | 552 ms |
+| Save (safe replace) | 109 ms | 114 ms |
+| Reopen and read the strokes back | 329 ms, 50 of 50 | 238 ms, 50 of 50 |
+
+These 200-point test strokes are long, and real handwriting strokes are shorter. A densely written page should now add well under 0.5 MB.

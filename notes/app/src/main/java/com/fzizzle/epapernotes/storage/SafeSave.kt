@@ -1,7 +1,6 @@
 package com.fzizzle.epapernotes.storage
 
 import java.io.File
-import java.io.FileOutputStream
 import java.io.IOException
 import java.nio.channels.FileChannel
 import java.nio.file.Files
@@ -37,8 +36,11 @@ object SafeSave {
         temp.delete()
         try {
             write(temp)
+            // Never swap in nothing. If the temp file is missing or empty (say another session
+            // removed it), the original must stay. Opening it to sync must not create it either.
+            if (!temp.exists() || temp.length() == 0L) throw IOException("the new version of ${target.name} came out empty")
             // Make sure the bytes are on the storage chip, not just in memory, before the swap.
-            FileOutputStream(temp, true).use { it.fd.sync() }
+            FileChannel.open(temp.toPath(), StandardOpenOption.WRITE).use { it.force(true) }
             Files.move(temp.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
         } catch (e: Throwable) {
             temp.delete()

@@ -1,6 +1,7 @@
 package com.fzizzle.epapernotes.ink
 
 import java.util.Locale
+import kotlin.math.sin
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -41,5 +42,32 @@ class StrokeOutlineTest {
         } finally {
             Locale.setDefault(old)
         }
+    }
+
+    private fun curves(cs: String) = Regex(" c\\b").findAll(cs).count()
+
+    @Test fun straightStrokeHasOnlyEndCaps() {
+        val cs = StrokeOutline.contentStream(Stroke(StrokeKind.PEN, (0 until 200).map { StrokePoint(10f + it, 50f, 0.5f) }))
+        assertEquals(8, curves(cs)) // two circles, one at each end
+    }
+
+    @Test fun sharpCornerGetsACircle() {
+        val cs = StrokeOutline.contentStream(pen(StrokePoint(0f, 0f, 0.5f), StrokePoint(50f, 0f, 0.5f), StrokePoint(50f, 50f, 0.5f)))
+        assertEquals(12, curves(cs)) // both ends plus the 90° corner
+    }
+
+    @Test fun longStrokeIsSmall() {
+        val wavy = Stroke(StrokeKind.PEN, (0 until 200).map { i ->
+            StrokePoint(50f + i * 2.5f, 100f + 4f * sin(i / 5f), 0.3f + 0.5f * ((i % 20) / 20f))
+        })
+        val length = StrokeOutline.contentStream(wavy).length
+        assertTrue("$length characters", length < 6000)
+    }
+
+    /** A see-through highlighter must be filled once: overlapping fills would show darker blotches. */
+    @Test fun strokeIsFilledInOneGo() {
+        val zigzag = Stroke(StrokeKind.HIGHLIGHTER, (0 until 30).map { StrokePoint(10f + it * 3, if (it % 2 == 0) 0f else 20f, 1f) })
+        val fills = Regex("(^|\\s)f(\\s|$)").findAll(StrokeOutline.contentStream(zigzag)).count()
+        assertEquals(1, fills)
     }
 }
