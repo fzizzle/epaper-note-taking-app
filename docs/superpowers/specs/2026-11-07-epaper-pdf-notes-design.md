@@ -24,7 +24,7 @@ It should be lightweight and fast, and it should do a small set of core things v
 1. A pen that feels as immediate as the stock app (Boox fast-ink drawing).
 2. PDFs live in the owner's folder tree, and the app reflects that tree exactly, including changes made outside the app.
 3. Handwriting is stored as a separate layer in the PDF file itself (standard PDF annotations). It is visible in other PDF viewers, and the original page content is never modified.
-4. Both pen side buttons are mappable: one for **lasso select**, one for **stroke eraser**, each active **only while the button is held**.
+4. Both pen side buttons are used: button 1 for **lasso select**, button 2 for **stroke eraser**, each active **only while the button is held**.
 5. Minimal UI: one thin toolbar strip, nothing else permanently on screen.
 6. Writing is never lost: autosave, crash safety, and conflict handling that keeps both versions.
 
@@ -105,7 +105,7 @@ Navigation:
 
 **Snip.** A separate tool from lasso. Drag a rectangle to capture that region **as a picture**, including the printed PDF content and any ink on it. Paste it onto another page in the same document. Once pasted it acts as a single image object: it can be moved, resized, deleted, and lasso-selected, but not edited stroke by stroke.
 
-**Pen side buttons.** One button switches to lasso select and the other to the stroke eraser. Each is active **only while held**, and releasing returns to whatever tool was active before (normally pen or highlighter). Which physical button does which should be easy to swap, but no settings screen is needed beyond that.
+**Pen side buttons.** Button 1 switches to lasso select and button 2 to the stroke eraser. Each is active **only while held**, and releasing returns to whatever tool was active before (normally pen or highlighter). The mapping is fixed, with no swap: the tablet reports button 2 as the pen's eraser end (owner-approved 2026-11-09, see [probe results](../probe-results.md)). A button counts only if it's held when the pen touches down. A press partway through a stroke takes effect on the next stroke, because that's how the pen reports it (owner-approved 2026-11-09).
 
 **Undo and redo** cover everything in the current session: strokes, erases, moves, resizes, pastes, deletes, rotations.
 
@@ -157,6 +157,8 @@ The app records the file's identity (for example its size, modified time, and/or
 The first piece of work should be a tiny throwaway test app the owner installs that just shows which button is pressed, both in normal touch handling and with the Onyx raw-drawing mode on. The outcome goes back to the owner before the main build relies on it. If the buttons can't be told apart, that's a design change the owner needs to decide on (process rule, section 5).
 
 A similar early check is worthwhile for palm rejection and finger-vs-pen separation while raw drawing is on.
+
+**Outcome (2026-11-09):** the test was run, and the buttons can be told apart in both modes. The results and the decisions they led to are in [probe-results.md](../probe-results.md).
 
 ## 10. Left to the builder
 
