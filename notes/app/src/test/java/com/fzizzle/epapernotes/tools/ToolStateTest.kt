@@ -41,6 +41,25 @@ class ToolStateTest {
         assertTrue(s.fastInkOn())
     }
 
+    @Test fun snipDoneDoesNothingUnlessSnipping() {
+        val s = ToolState()
+        s.chosen = Tool.HIGHLIGHTER
+        s.chosen = Tool.SNIP
+        s.snipDone()
+        s.chosen = Tool.ERASER
+        s.snipDone() // a late or repeated call must not undo the owner's later choice
+        assertEquals(Tool.ERASER, s.chosen)
+    }
+
+    @Test fun choosingSnipTwiceKeepsTheEarlierTool() {
+        val s = ToolState()
+        s.chosen = Tool.HIGHLIGHTER
+        s.chosen = Tool.SNIP
+        s.chosen = Tool.SNIP
+        s.snipDone()
+        assertEquals(Tool.HIGHLIGHTER, s.chosen)
+    }
+
     @Test fun pasteShowsOnlyWithAClipboard() {
         val s = ToolState()
         assertFalse(s.showPaste)

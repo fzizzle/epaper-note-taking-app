@@ -223,11 +223,17 @@ class DocumentSession(
         }
     }
 
-    /** Removes the items an eraser [trail] (PDF space) touches on [page]. */
-    fun erase(page: Int, trail: List<Pt>) {
-        onWorker("erase on page $page") { p ->
+    /**
+     * Removes the items an eraser [trail] (PDF space) touches on [page]. [answer] gets how many,
+     * on the worker, before the [SessionEvent.PageChanged] the removal brings: the screen needs
+     * to know whether to expect one.
+     */
+    fun erase(page: Int, trail: List<Pt>, answer: (hits: Int) -> Unit = {}) {
+        var count = 0
+        onWorker("erase on page $page", then = { answer(count) }) { p ->
             val hits = Eraser.hits(p.items(page), trail) // items() once: it's costly for snips
             if (hits.isNotEmpty()) record(RemoveItems(page, hits))
+            count = hits.size
         }
     }
 

@@ -18,21 +18,35 @@ import kotlin.math.min
 object Eraser {
     const val RADIUS_PT = 3f
 
-    fun hits(items: List<Item>, trail: List<Pt>): List<Item> =
-        if (trail.isEmpty()) emptyList() else items.filter { hit(it, trail) }
+    fun hits(items: List<Item>, trail: List<Pt>): List<Item> {
+        if (trail.isEmpty()) return emptyList()
+        val segments = trailSegments(trail)
+        return items.filter { hit(it, segments) }
+    }
 
-    private fun hit(item: Item, trail: List<Pt>): Boolean = when (item) {
-        is ImageItem -> trailSegments(trail).any { (p, q) -> touchesBox(p, q, item.box) }
+    private fun hit(item: Item, trail: List<Pair<Pt, Pt>>): Boolean = when (item) {
+        is ImageItem -> trail.any { (p, q) -> touchesBox(p, q, item.box) }
         is InkItem -> {
             val s = item.stroke
             val style = StrokeStyle.of(s.kind)
             val pts = s.points
-            pts.indices.any { i ->
+            // Only the bits of the trail that come near the stroke at all. A page can hold
+            // thousands of points and a swipe hundreds, and testing every pair took seconds on
+            // the tablet (Task 7's launch check).
+            val reach = RADIUS_PT + pts.maxOf { style.widthAt(it.pressure, s.widthScale) } / 2
+            val near = Box(
+                pts.minOf { it.x } - reach, pts.minOf { it.y } - reach,
+                pts.maxOf { it.x } + reach, pts.maxOf { it.y } + reach,
+            )
+            val close = trail.filter { (p, q) -> min(p.x, q.x) <= near.x1 && max(p.x, q.x) >= near.x0 && min(p.y, q.y) <= near.y1 && max(p.y, q.y) >= near.y0 }
+            close.isNotEmpty() && pts.indices.any { i ->
                 val a = pts[i]
                 val b = pts[minOf(i + 1, pts.lastIndex)] // a lone point is a segment of length 0
                 // The wider end, so a pressure change along the segment never makes it too easy to miss.
                 val half = max(style.widthAt(a.pressure, s.widthScale), style.widthAt(b.pressure, s.widthScale)) / 2
-                trailSegments(trail).any { (p, q) -> segmentDistance(p, q, Pt(a.x, a.y), Pt(b.x, b.y)) <= RADIUS_PT + half }
+                val pa = Pt(a.x, a.y)
+                val pb = Pt(b.x, b.y)
+                close.any { (p, q) -> segmentDistance(p, q, pa, pb) <= RADIUS_PT + half }
             }
         }
     }

@@ -7,6 +7,7 @@ import android.graphics.Rect
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.view.Gravity
 import android.view.View
@@ -23,7 +24,10 @@ import com.fzizzle.epapernotes.geometry.Affine
 import com.fzizzle.epapernotes.geometry.Pt
 import com.fzizzle.epapernotes.ink.StrokeKind
 import com.fzizzle.epapernotes.pdf.PdfFile
+import com.fzizzle.epapernotes.tools.PenButton
 import com.fzizzle.epapernotes.tools.Tool
+import com.fzizzle.epapernotes.tools.ToolState
+import com.fzizzle.epapernotes.tools.liveLine
 import java.io.File
 
 /**
@@ -44,7 +48,10 @@ class WritingActivity : Activity() {
     private lateinit var highlighterButton: StripButton
     private lateinit var previousButton: StripButton
     private lateinit var nextButton: StripButton
-    private var tool = Tool.PEN
+    private val toolState = ToolState()
+
+    /** The button the pen last showed while hovering or landing. UI thread. */
+    private var hoverButton = PenButton.NONE
 
     /** For each page, PDF space to display points, inverted: how a pen point finds its place in the PDF. */
     private var displayToPdf: List<Affine> = emptyList()
@@ -61,6 +68,22 @@ class WritingActivity : Activity() {
      */
     @Volatile private var penMapping: Pair<Int, Affine>? = null
     @Volatile private var strokeMapping: Pair<Int, Affine>? = null
+
+    /**
+     * The same for the tool: what a stroke would be if the pen landed now, worked out by the
+     * UI thread from [toolState], and the one the current stroke got. A button counts only if
+     * it's held at touch-down (spec §6.3). Onyx's pen-down and Android's touch-down race by a
+     * few ms (probe results §4), so both latch it; the touch-down carries the button for sure.
+     */
+    @Volatile private var penChoice = PenButton.NONE to Tool.PEN
+    @Volatile private var strokeChoice: Pair<PenButton, Tool>? = null
+
+    /**
+     * Pages with a change on its way that the page view can't show by itself, like an erase.
+     * [SessionEvent.PageChanged] also follows every pen stroke, and redrawing then would pause
+     * fast-ink after each one (plan 2, problem 1), so only these pages are redrawn. UI thread.
+     */
+    private val redrawWhenChanged = HashSet<Int>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -153,7 +176,26 @@ class WritingActivity : Activity() {
             }
         }
 
-        pen = PenInput(pages, onPenDown = { strokeMapping = penMapping }) { points -> onPenStroke(points) }
+        pen = PenInput(
+            pages,
+            onPenDown = {
+                strokeMapping = penMapping
+                strokeChoice = penChoice
+            },
+            onStroke = { points -> onPenStroke(points) },
+            onEraseTrail = { points -> onEraseTrail(points) },
+        )
+        pages.onStylusHover = { button ->
+            if (button != hoverButton) {
+                hoverButton = button
+                publishPenChoice()
+            }
+        }
+        pages.onStylusDown = { button ->
+            hoverButton = button
+            publishPenChoice()
+            strokeChoice = penChoice
+        }
         pages.onFingerGestureStart = {
             Log.i(TAG, "fingers down: pause fast-ink")
             pausePenAndRedraw()
@@ -192,19 +234,62 @@ class WritingActivity : Activity() {
         penMapping = v.page to v.pageToScreen().inverse().then(displayToPdf[v.page])
     }
 
+    /** UI thread: whenever the chosen tool or the held button changes. Also sets the live line to match. */
+    private fun publishPenChoice() {
+        penChoice = hoverButton to toolState.strokeTool(hoverButton)
+        updatePenWidth()
+    }
+
     /**
-     * A finished pen stroke, on Onyx's thread. Into the journal straight away (spec §7.3).
-     * The page isn't redrawn: Onyx's ink stays on screen, and the page view keeps its own copy
-     * of the stroke for whenever it redraws. Redrawing here used to pause fast-ink and cut off
-     * the next stroke (owner's first writing session).
+     * A finished pen stroke, on Onyx's thread. What it does depends on the tool it got at
+     * touch-down. Ink goes into the journal straight away (spec §7.3). The page isn't redrawn:
+     * Onyx's ink stays on screen, and the page view keeps its own copy of the stroke for
+     * whenever it redraws. Redrawing here used to pause fast-ink and cut off the next stroke
+     * (owner's first writing session).
      */
     private fun onPenStroke(points: List<FloatArray>) {
         val (page, screenToPdf) = strokeMapping ?: penMapping ?: return
-        val kind = if (tool == Tool.HIGHLIGHTER) StrokeKind.HIGHLIGHTER else StrokeKind.PEN
-        val (_, stroke) = PenPoints.toStroke(kind, points) { x, y -> page to screenToPdf.map(Pt(x, y)) } ?: return
-        session.addStroke(page, stroke)
-        Log.i(TAG, "stroke page=$page points=${stroke.points.size} kind=$kind")
-        runOnUiThread { pages.addStroke(page, stroke) }
+        val (button, tool) = strokeChoice ?: penChoice
+        Log.i(TAG, "stroke page=$page tool=$tool button=$button points=${points.size}")
+        when (tool) {
+            Tool.PEN, Tool.HIGHLIGHTER -> {
+                val kind = if (tool == Tool.HIGHLIGHTER) StrokeKind.HIGHLIGHTER else StrokeKind.PEN
+                val (_, stroke) = PenPoints.toStroke(kind, points) { x, y -> page to screenToPdf.map(Pt(x, y)) } ?: return
+                session.addStroke(page, stroke)
+                runOnUiThread { pages.addStroke(page, stroke) }
+            }
+            Tool.ERASER -> erase(page, points.map { screenToPdf.map(Pt(it[0], it[1])) })
+            Tool.LASSO -> {
+                val loop = points.map { screenToPdf.map(Pt(it[0], it[1])) }
+                session.select(page, loop) { items ->
+                    // Task 8 turns this into a selection. Until then, just wipe the grey loop.
+                    Log.i(TAG, "lasso page=$page selected=${items.size}")
+                    runOnUiThread { showWithoutFastInk() }
+                }
+            }
+            Tool.SNIP -> Unit // fast-ink is off while snipping (ToolState.fastInkOn); Task 8 draws it
+        }
+    }
+
+    /** Button 2's trail, from Onyx's erase callbacks, on Onyx's thread. */
+    private fun onEraseTrail(points: List<FloatArray>) {
+        val (page, screenToPdf) = strokeMapping ?: penMapping ?: return
+        Log.i(TAG, "stroke page=$page tool=${Tool.ERASER} button=${PenButton.ERASER_END} points=${points.size} (erase callback)")
+        erase(page, points.map { screenToPdf.map(Pt(it[0], it[1])) })
+    }
+
+    /**
+     * Removes what the [trail] (PDF space) touched once the pen has lifted (plan decision 5).
+     * The page is then redrawn without it, which also wipes the grey trail. If nothing was
+     * hit, no change comes, so the trail is wiped straight away.
+     */
+    private fun erase(page: Int, trail: List<Pt>) {
+        val started = SystemClock.uptimeMillis()
+        session.erase(page, trail) { hits ->
+            Log.i(TAG, "erase page=$page hits=$hits ms=${SystemClock.uptimeMillis() - started}")
+            // Posted before the PageChanged that follows a hit, so it's marked in time.
+            runOnUiThread { if (hits > 0) redrawWhenChanged += page else showWithoutFastInk() }
+        }
     }
 
     /** "Go to page": type a number, which is quicker than tapping › through a long deck. */
@@ -269,16 +354,19 @@ class WritingActivity : Activity() {
     }
 
     private fun choose(newTool: Tool) {
-        tool = newTool
-        penButton.isSelected = tool == Tool.PEN
-        highlighterButton.isSelected = tool == Tool.HIGHLIGHTER
-        updatePenWidth()
+        toolState.chosen = newTool
+        penButton.isSelected = newTool == Tool.PEN
+        highlighterButton.isSelected = newTool == Tool.HIGHLIGHTER
+        publishPenChoice()
     }
 
-    /** The live ink should be as wide as the saved ink will be, at this zoom. */
+    /**
+     * Onyx's live line for the tool the pen would get now: grey from the first point for a
+     * lasso drawn with button 1. Ink is as wide as the saved ink will be, at this zoom.
+     */
     private fun updatePenWidth() {
         val v = pages.viewport
-        pen.setTool(tool, v?.pxPerPt() ?: 1f)
+        pen.setLiveLine(liveLine(penChoice.second), v?.pxPerPt() ?: 1f)
     }
 
     override fun onPause() {
@@ -310,8 +398,11 @@ class WritingActivity : Activity() {
             SessionEvent.WritingStopped -> toast("A change couldn't be written into this file, so it isn't being saved into. Your writing is kept safe in the app.")
             SessionEvent.NeedsRepairDecision -> askAboutRepair()
             is SessionEvent.Replayed -> toast("Recovered ${event.count} change(s) that hadn't been saved.")
-            // The undo and redo buttons and redrawing after erases and moves come with their tools.
-            is SessionEvent.PageChanged, is SessionEvent.HistoryChanged -> Unit
+            is SessionEvent.PageChanged -> event.pages.forEach { page ->
+                // Redrawn the usual way: once rendered, onPageShown shows it without fast-ink.
+                if (redrawWhenChanged.remove(page)) pages.pageChanged(page)
+            }
+            is SessionEvent.HistoryChanged -> Unit // the undo and redo buttons come in Task 9
             is SessionEvent.EarlierWritingKept -> toast("Unsaved writing from before this file changed was kept safe.")
             is SessionEvent.SavedToCopy -> toast("Saved to ${event.copy.name}.")
             is SessionEvent.OpenFailed -> {

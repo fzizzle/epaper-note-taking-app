@@ -15,6 +15,7 @@ import com.fzizzle.epapernotes.geometry.Affine
 import com.fzizzle.epapernotes.geometry.Pt
 import com.fzizzle.epapernotes.ink.Stroke
 import com.fzizzle.epapernotes.ink.StrokeStyle
+import com.fzizzle.epapernotes.tools.PenButton
 import kotlin.math.abs
 
 /**
@@ -34,6 +35,14 @@ class PageView(context: Context) : View(context) {
     var onFingerGestureEnd: (moved: Boolean) -> Unit = {}
     var onViewportChanged: () -> Unit = {}
 
+    /**
+     * The pen touched down, or started or went on hovering, with this button held. Hover
+     * comes first, often 100–500 ms before touch-down (probe results §2), so the live line can
+     * be set before the first point. Called before the finger handling, for pen events only.
+     */
+    var onStylusDown: (PenButton) -> Unit = {}
+    var onStylusHover: (PenButton) -> Unit = {}
+
     /** Called after a page rendering is put on screen. */
     var onPageShown: (page: Int) -> Unit = {}
 
@@ -50,8 +59,18 @@ class PageView(context: Context) : View(context) {
 
     private val bitmaps = PageBitmaps<Rendered>(200L * 1024 * 1024) { it.bitmap.byteCount.toLong() }
 
+    /**
+     * The rendering a [pageChanged] page had, shown until its fresh one arrives: on e-ink the
+     * old page for a moment is calmer than a grey placeholder. Only for the page on show.
+     */
+    private val stale = mutableMapOf<Int, Rendered>()
+
     // Renders on their way, and the ink version each will contain.
     private val inFlight = mutableMapOf<Pair<Int, Int>, Int>()
+
+    // Renders that were on their way when their page changed: they may not have the change,
+    // so they're thrown away on arrival and asked for again. At most one per page and width.
+    private val outdated = mutableSetOf<Pair<Int, Int>>()
 
     private val ink = InkOverlay()
 
@@ -83,6 +102,7 @@ class PageView(context: Context) : View(context) {
         val leaving = v.page
         val moved = if (forward) v.next() else v.previous()
         if (!moved) return false
+        stale.remove(leaving)
         // Next time this page is visited, render it afresh so its new strokes come from the PDF.
         if (ink.version(leaving) > 0) bitmaps.invalidate(leaving)
         invalidate()
@@ -96,6 +116,7 @@ class PageView(context: Context) : View(context) {
         val leaving = v.page
         if (page == leaving) return
         v.goTo(page)
+        stale.remove(leaving)
         if (ink.version(leaving) > 0) bitmaps.invalidate(leaving)
         invalidate()
         onViewportChanged()
@@ -107,9 +128,21 @@ class PageView(context: Context) : View(context) {
         invalidate()
     }
 
+    /**
+     * [page]'s ink changed in a way the overlay can't show, like an erase: render it afresh.
+     * Task 8 replaces this with InkOverlay's stale-rendering rule. UI thread.
+     */
+    fun pageChanged(page: Int) {
+        if (page == viewport?.page) bitmaps.anyFor(page)?.let { stale[page] = it }
+        bitmaps.invalidate(page)
+        inFlight.keys.filter { it.first == page }.forEach { outdated += it }
+        invalidate()
+    }
+
     /** Rendering failed (a damaged page, say). Forget it, so it's asked for again next time. UI thread. */
     fun renderFailed(page: Int, widthPx: Int) {
         inFlight.remove(page to widthPx)
+        outdated.remove(page to widthPx)
     }
 
     /** The view changed size, for instance the tablet turned: refit the same page. */
@@ -124,9 +157,15 @@ class PageView(context: Context) : View(context) {
 
     /** A rendering arrived from the worker. UI thread. */
     fun pageRendered(page: Int, widthPx: Int, bitmap: Bitmap) {
+        if (outdated.remove(page to widthPx)) {
+            inFlight.remove(page to widthPx)
+            invalidate() // asks for it again
+            return
+        }
         val version = inFlight.remove(page to widthPx) ?: 0
         android.util.Log.i("Notes", "rendered page=$page width=$widthPx version=$version of ${ink.version(page)}")
         bitmaps.put(page, widthPx, Rendered(bitmap, version))
+        stale.remove(page)
         invalidate()
         onPageShown(page)
     }
@@ -160,7 +199,7 @@ class PageView(context: Context) : View(context) {
         val dst = RectF(topLeft.x, topLeft.y, bottomRight.x, bottomRight.y)
 
         val w = renderWidth(v, page)
-        val shown = bitmaps.get(page, w) ?: bitmaps.anyFor(page)
+        val shown = bitmaps.get(page, w) ?: bitmaps.anyFor(page) ?: stale[page]
         if (shown != null) canvas.drawBitmap(shown.bitmap, null, dst, pagePaint) else canvas.drawRect(dst, placeholder)
 
         // Whatever this rendering is missing, whenever it was made.
@@ -243,11 +282,15 @@ class PageView(context: Context) : View(context) {
         if (event.actionMasked == MotionEvent.ACTION_HOVER_ENTER || event.actionMasked == MotionEvent.ACTION_HOVER_EXIT) {
             android.util.Log.i("Notes", "pen ${MotionEvent.actionToString(event.actionMasked)} tool=${event.getToolType(0)}")
         }
+        // Not on exit: the pen leaves hover just as it lands, and a missing button there must
+        // not turn a grey lasso line back into ink.
+        if (isPen(event) && event.actionMasked != MotionEvent.ACTION_HOVER_EXIT) onStylusHover(buttonOf(event))
         return super.onHoverEvent(event)
     }
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
         val m = event.actionMasked
+        if (m == MotionEvent.ACTION_DOWN && isPen(event)) onStylusDown(buttonOf(event))
         if (m == MotionEvent.ACTION_DOWN || m == MotionEvent.ACTION_POINTER_DOWN) {
             val lag = android.os.SystemClock.uptimeMillis() - event.eventTime
             android.util.Log.i("Notes", "touch ${MotionEvent.actionToString(m)} tool=${event.getToolType(event.actionIndex)} pointers=${event.pointerCount} deliveredLateMs=$lag")
@@ -281,6 +324,21 @@ class PageView(context: Context) : View(context) {
         scaler.onTouchEvent(event)
         if (!scaler.isInProgress) scroller.onTouchEvent(event)
         return true
+    }
+
+    private fun isPen(event: MotionEvent): Boolean = when (event.getToolType(0)) {
+        MotionEvent.TOOL_TYPE_STYLUS, MotionEvent.TOOL_TYPE_ERASER -> true
+        else -> false
+    }
+
+    /**
+     * Button 2 makes the pen report as an eraser; button 1 is an ordinary button flag
+     * (probe results §1). Button 1's flag is ignored on the eraser, which wins.
+     */
+    private fun buttonOf(event: MotionEvent): PenButton = when {
+        event.getToolType(0) == MotionEvent.TOOL_TYPE_ERASER -> PenButton.ERASER_END
+        event.isButtonPressed(MotionEvent.BUTTON_STYLUS_PRIMARY) -> PenButton.LASSO_BUTTON
+        else -> PenButton.NONE
     }
 
     companion object {

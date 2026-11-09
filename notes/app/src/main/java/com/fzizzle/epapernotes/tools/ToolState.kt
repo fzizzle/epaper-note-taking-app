@@ -40,8 +40,9 @@ class ToolState {
     /** Fast-ink would paint over the selection box, the paste ghost and the snip rectangle. */
     fun fastInkOn(): Boolean = !hasSelection && !pasteArmed && chosen != Tool.SNIP
 
+    /** Back to the tool before the snip. Only while snipping: a late call mustn't undo a newer choice. */
     fun snipDone() {
-        chosen = beforeSnip
+        if (chosen == Tool.SNIP) chosen = beforeSnip
     }
 
     val showPaste: Boolean get() = clipboard != null

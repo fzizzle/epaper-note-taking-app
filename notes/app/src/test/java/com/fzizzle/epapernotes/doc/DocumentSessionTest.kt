@@ -275,8 +275,19 @@ class DocumentSessionTest {
     @Test fun eraseThatTouchesNothingRecordsNothing() {
         val s = session()
         s.addStroke(0, dot)
-        s.erase(0, acrossLine)
+        var hits = -1
+        s.erase(0, acrossLine) { hits = it }
         assertEquals(1, journalStrokes())
+        assertEquals(0, hits)
+    }
+
+    @Test fun eraseAnswersWithHowManyItemsItRemoved() {
+        val s = session()
+        s.addStroke(0, line)
+        s.addStroke(0, dot)
+        var hits = -1
+        s.erase(0, acrossLine) { hits = it }
+        assertEquals(1, hits)
     }
 
     /** The pen writes while the worker is working out an erase. Both reach the save, in order. */
