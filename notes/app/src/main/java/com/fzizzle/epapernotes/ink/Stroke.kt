@@ -12,8 +12,13 @@ enum class StrokeKind { PEN, HIGHLIGHTER }
  */
 data class StrokePoint(val x: Float, val y: Float, val pressure: Float)
 
-/** A single pen or highlighter stroke. Always has at least one point (a tap makes a dot). */
-data class Stroke(val kind: StrokeKind, val points: List<StrokePoint>) {
+/**
+ * A single pen or highlighter stroke. Always has at least one point (a tap makes a dot).
+ *
+ * [widthScale] multiplies the style's width. It is 1 for fresh ink; resizing a selection
+ * multiplies it, so enlarged writing keeps its look instead of getting thin lines.
+ */
+data class Stroke(val kind: StrokeKind, val points: List<StrokePoint>, val widthScale: Float = 1f) {
     init {
         require(points.isNotEmpty()) { "a stroke needs at least one point" }
     }

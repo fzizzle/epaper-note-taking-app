@@ -27,6 +27,12 @@ class StrokeOutlineTest {
         assertEquals(Box(99f, 99f, 201f, 101f), b)
     }
 
+    @Test fun widthScaleWidensBounds() {
+        val one = StrokeOutline.bounds(pen(StrokePoint(100f, 100f, 1f)))
+        val two = StrokeOutline.bounds(Stroke(StrokeKind.PEN, listOf(StrokePoint(100f, 100f, 1f)), widthScale = 2f))
+        assertEquals((one.x1 - one.x0) * 2, two.x1 - two.x0, 1e-4f)
+    }
+
     @Test fun singlePointIsADot() {
         val cs = StrokeOutline.contentStream(pen(StrokePoint(50f, 50f, 0.5f)))
         assertTrue(cs.startsWith("0.00 0.00 0.00 rg"))

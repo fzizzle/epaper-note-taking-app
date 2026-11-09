@@ -35,7 +35,7 @@ object StrokeOutline {
         var x1 = -Float.MAX_VALUE
         var y1 = -Float.MAX_VALUE
         for (p in stroke.points) {
-            val r = style.widthAt(p.pressure) / 2
+            val r = style.widthAt(p.pressure, stroke.widthScale) / 2
             x0 = min(x0, p.x - r)
             y0 = min(y0, p.y - r)
             x1 = max(x1, p.x + r)
@@ -52,34 +52,34 @@ object StrokeOutline {
 
         val pts = withoutRepeats(stroke.points)
         if (pts.size == 1) {
-            circle(out, pts[0].x, pts[0].y, style.widthAt(pts[0].pressure) / 2)
+            circle(out, pts[0].x, pts[0].y, style.widthAt(pts[0].pressure, stroke.widthScale) / 2)
             out.append("f\n")
             return out.toString()
         }
 
-        outline(out, pts, style)
-        circle(out, pts.first().x, pts.first().y, style.widthAt(pts.first().pressure) / 2)
+        outline(out, pts, style, stroke.widthScale)
+        circle(out, pts.first().x, pts.first().y, style.widthAt(pts.first().pressure, stroke.widthScale) / 2)
         for (i in 1 until pts.size - 1) {
             if (isSharpTurn(pts[i - 1], pts[i], pts[i + 1])) {
-                circle(out, pts[i].x, pts[i].y, style.widthAt(pts[i].pressure) / 2)
+                circle(out, pts[i].x, pts[i].y, style.widthAt(pts[i].pressure, stroke.widthScale) / 2)
             }
         }
-        circle(out, pts.last().x, pts.last().y, style.widthAt(pts.last().pressure) / 2)
+        circle(out, pts.last().x, pts.last().y, style.widthAt(pts.last().pressure, stroke.widthScale) / 2)
         // Non-zero fill: every piece, and every overlap, is filled exactly once.
         out.append("f\n")
         return out.toString()
     }
 
     /** Forward along the left edge, back along the right, filled. Non-zero fill keeps tight curls solid. */
-    private fun outline(out: StringBuilder, pts: List<StrokePoint>, style: StrokeStyle) {
+    private fun outline(out: StringBuilder, pts: List<StrokePoint>, style: StrokeStyle, scale: Float) {
         val normals = pts.indices.map { normalAt(pts, it) }
         for (i in pts.indices) {
-            val r = style.widthAt(pts[i].pressure) / 2
+            val r = style.widthAt(pts[i].pressure, scale) / 2
             val (nx, ny) = normals[i]
             out.append("${n(pts[i].x + nx * r)} ${n(pts[i].y + ny * r)} ${if (i == 0) "m" else "l"} ")
         }
         for (i in pts.indices.reversed()) {
-            val r = style.widthAt(pts[i].pressure) / 2
+            val r = style.widthAt(pts[i].pressure, scale) / 2
             val (nx, ny) = normals[i]
             out.append("${n(pts[i].x - nx * r)} ${n(pts[i].y - ny * r)} l ")
         }

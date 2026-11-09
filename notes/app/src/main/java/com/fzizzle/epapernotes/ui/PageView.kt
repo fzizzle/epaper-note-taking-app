@@ -199,7 +199,7 @@ class PageView(context: Context) : View(context) {
         for (i in pts.indices) {
             val a = pts[if (i == 0) 0 else i - 1]
             val b = pts[i]
-            inkPaint.strokeWidth = style.widthAt(stroke.points[i].pressure) * pxPerPt
+            inkPaint.strokeWidth = style.widthAt(stroke.points[i].pressure, stroke.widthScale) * pxPerPt
             canvas.drawLine(a.x, a.y, b.x, b.y, inkPaint)
         }
     }

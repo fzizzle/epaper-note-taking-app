@@ -9,8 +9,12 @@ package com.fzizzle.epapernotes.ink
  */
 class StrokeStyle(val rgb: FloatArray, val opacity: Float, val minWidth: Float, val maxWidth: Float) {
 
-    /** Width at a point: straight-line between [minWidth] (no pressure) and [maxWidth] (full). */
-    fun widthAt(pressure: Float): Float = minWidth + (maxWidth - minWidth) * pressure.coerceIn(0f, 1f)
+    /**
+     * Width at a point: straight-line between [minWidth] (no pressure) and [maxWidth] (full),
+     * times [scale] (the stroke's `widthScale`).
+     */
+    fun widthAt(pressure: Float, scale: Float = 1f): Float =
+        (minWidth + (maxWidth - minWidth) * pressure.coerceIn(0f, 1f)) * scale
 
     companion object {
         private val PEN = StrokeStyle(floatArrayOf(0f, 0f, 0f), opacity = 1f, minWidth = 0.6f, maxWidth = 2.0f)
