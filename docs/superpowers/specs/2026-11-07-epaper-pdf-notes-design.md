@@ -35,7 +35,7 @@ It should be lightweight and fast, and it should do a small set of core things v
 - Copy and paste between different documents.
 - More than one pen colour or style, and more than one highlighter colour.
 - Any sync, account, cloud, or login.
-- Landscape screen orientation (the owner nearly always uses portrait).
+- Landscape-specific layouts. The screen may turn (section 6.2), but nothing is designed especially for landscape.
 - Support for devices other than the Note Air 6 C. Don't lock the app to it needlessly, but don't test or design for others.
 - Text recognition, search inside handwriting, shapes, templates, layers UI, or any other feature not listed here.
 
@@ -79,7 +79,7 @@ The page menu holds **rotate this page** and **rotate all pages**.
 
 Nothing else is permanently on screen except a small page indicator with **‹ and › buttons** on either side of it (for example "‹ 4 / 32 ›").
 
-Orientation: **portrait only, locked** (the owner nearly always holds it portrait). Landscape slides are handled by rotating the PDF pages (section 6.4), not by turning the screen. Locking also avoids the Onyx fast-ink mode's weakness with screen rotation mid-session.
+Orientation: **follows the tablet** (owner's decision, 2026-11-09). The design first locked portrait, but Android 16 on the Note Air 6 C overrides an app's orientation lock on large screens, and its opt-outs have no effect. The app handles a turn correctly: the page refits and strokes stay in place. To keep the screen upright, the owner uses Boox's own rotation lock. Landscape slides are still best handled by rotating the PDF pages (section 6.4).
 
 Navigation:
 
@@ -190,4 +190,4 @@ The owner can overturn any of these:
 - ~~Pages scroll vertically and continuously.~~ Replaced by the owner on 2026-11-09: one page at a time (section 6.2).
 - Copy and delete live in a small action bar next to the selection, and Paste appears in the top strip only after a copy or snip. You place a paste with a pen tap.
 - After a crash, strokes that never reached the PDF are replayed into a "my edits" copy if the file changed on disk in the meantime.
-- Portrait orientation is locked.
+- ~~Portrait orientation is locked.~~ Replaced on 2026-11-09: the screen follows the tablet, because Android 16 overrides the lock (section 6.2).
