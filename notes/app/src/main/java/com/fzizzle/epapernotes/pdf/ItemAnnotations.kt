@@ -113,8 +113,13 @@ internal class ItemAnnotations(private val doc: PDFDocument) {
         dict.put("Rect", rectArray(item.box))
     }
 
+    /**
+     * Numbers go in with push(Float). Never push(PDFObject): MuPDF 1.28.5's Java binding drops a
+     * reference it never took, so the pushed object is freed while the array still uses it (see
+     * MuPdfStressTest). PDFDocument.addObject has the same fault.
+     */
     private fun rectArray(b: Box): PDFObject = doc.newArray().apply {
-        listOf(b.x0, b.y0, b.x1, b.y1).forEach { push(doc.newReal(it)) }
+        listOf(b.x0, b.y0, b.x1, b.y1).forEach { push(it) }
     }
 
     /** The picture back as a PNG, re-encoded by MuPDF from the image its appearance draws. */

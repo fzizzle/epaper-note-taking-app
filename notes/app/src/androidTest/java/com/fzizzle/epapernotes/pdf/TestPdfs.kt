@@ -31,9 +31,10 @@ object TestPdfs {
         val doc = PDFDocument()
         repeat(pages) {
             val page = doc.addPage(Rect(0f, 0f, 612f, 792f), 0, doc.newDictionary(), "")
-            // Set the box directly: addPage normalises its rect to start at 0,0.
+            // Set the box directly: addPage normalises its rect to start at 0,0. Numbers go in
+            // with push(Float), never push(PDFObject), which frees what it pushes (see MuPdfStressTest).
             val box = doc.newArray()
-            listOf(mediaBox.x0, mediaBox.y0, mediaBox.x1, mediaBox.y1).forEach { box.push(doc.newReal(it)) }
+            listOf(mediaBox.x0, mediaBox.y0, mediaBox.x1, mediaBox.y1).forEach { box.push(it) }
             page.put("MediaBox", box)
             // addPage always writes /Rotate 0, which would hide a rotation set on the page tree.
             page.delete("Rotate")
