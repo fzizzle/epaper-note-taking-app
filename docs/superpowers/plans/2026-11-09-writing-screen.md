@@ -266,6 +266,8 @@ This is the heart of "writing is never lost". It decides when to save, what to d
 
 ### Task 7: Page layout and screen-to-PDF mapping
 
+> **Changed in Task 10 (owner's decision, 2026-11-09):** the continuous scroll was replaced by one page at a time with ‹ › buttons. `PageLayout` is gone, and `Viewport` now shows a single fitted page (see the code and spec §6.2).
+
 **Files:**
 - Create: `notes/app/src/main/java/com/fzizzle/epapernotes/ui/PageLayout.kt`, `notes/app/src/main/java/com/fzizzle/epapernotes/ui/Viewport.kt`
 - Test: `notes/app/src/test/java/com/fzizzle/epapernotes/ui/PageLayoutTest.kt`, `notes/app/src/test/java/com/fzizzle/epapernotes/ui/ViewportTest.kt`

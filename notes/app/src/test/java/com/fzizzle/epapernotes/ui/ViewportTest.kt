@@ -3,35 +3,68 @@ package com.fzizzle.epapernotes.ui
 import com.fzizzle.epapernotes.geometry.Affine
 import com.fzizzle.epapernotes.geometry.Pt
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ViewportTest {
-    private val layout = PageLayout(listOf(SizePt(612f, 792f), SizePt(792f, 612f), SizePt(612f, 792f)), viewWidthPx = 1860)
-    private fun viewport() = Viewport(layout, viewHeightPx = 2300)
+    private val portrait = SizePt(612f, 792f)
+    private val landscape = SizePt(792f, 612f)
+    private fun viewport() = Viewport(listOf(portrait, landscape, portrait), viewWidthPx = 1860, viewHeightPx = 2300)
 
-    @Test fun scrollIsClamped() {
-        val v = viewport()
-        v.scrollBy(0f, -100f)
-        assertEquals(0f, v.scrollY, 0.01f)
-        v.scrollBy(0f, 1e6f)
-        assertEquals(layout.contentHeight - 2300, v.scrollY, 0.01f)
+    private fun corners(v: Viewport, size: SizePt): Pair<Pt, Pt> {
+        val m = v.pageToScreen()
+        return m.map(Pt(0f, 0f)) to m.map(Pt(size.w, size.h))
     }
 
-    @Test fun noSidewaysScrollAtZoomOne() {
+    @Test fun portraitPageFitsTheScreen() {
+        val (tl, br) = corners(viewport(), portrait)
+        val scale = minOf(1860f / 612, 2300f / 792) // whole page visible
+        assertEquals(scale, viewport().pxPerPt(), 1e-4f)
+        assertEquals((1860 - 612 * scale) / 2, tl.x, 0.5f) // centred
+        assertEquals(0f, tl.y, 0.5f)
+        assertEquals(2300f, br.y, 0.5f)
+    }
+
+    @Test fun landscapePageIsCentredVertically() {
         val v = viewport()
-        v.scrollBy(300f, 0f)
-        assertEquals(0f, v.scrollX, 0.01f)
+        v.next()
+        val (tl, br) = corners(v, landscape)
+        assertEquals(0f, tl.x, 0.5f)
+        assertEquals(1860f, br.x, 0.5f)
+        assertEquals(2300f / 2, (tl.y + br.y) / 2, 0.5f)
+    }
+
+    @Test fun nextAndPreviousStayInRange() {
+        val v = viewport()
+        assertFalse(v.previous())
+        assertTrue(v.next())
+        assertTrue(v.next())
+        assertFalse(v.next())
+        assertEquals(2, v.page)
+    }
+
+    @Test fun turningThePageResetsZoom() {
+        val v = viewport()
+        v.zoomAround(3f, 900f, 900f)
+        v.next()
+        assertEquals(1f, v.zoom, 1e-4f)
+    }
+
+    @Test fun noPanningAtNormalSize() {
+        val v = viewport()
+        val before = v.pageToScreen()
+        v.panBy(300f, 300f)
+        assertEquals(before, v.pageToScreen())
     }
 
     @Test fun zoomKeepsFocusPointStill() {
         val v = viewport()
-        v.scrollBy(0f, 1000f)
-        val (pageBefore, ptBefore) = v.screenToPage(600f, 900f)
+        val before = v.screenToPage(600f, 900f)
         v.zoomAround(2f, 600f, 900f)
-        val (pageAfter, ptAfter) = v.screenToPage(600f, 900f)
-        assertEquals(pageBefore, pageAfter)
-        assertEquals(ptBefore.x, ptAfter.x, 0.01f)
-        assertEquals(ptBefore.y, ptAfter.y, 0.01f)
+        val after = v.screenToPage(600f, 900f)
+        assertEquals(before.x, after.x, 0.01f)
+        assertEquals(before.y, after.y, 0.01f)
     }
 
     @Test fun zoomIsClampedTo1And4() {
@@ -42,38 +75,46 @@ class ViewportTest {
         assertEquals(1f, v.zoom, 1e-4f)
     }
 
-    @Test fun currentPageIsUnderCentre() {
+    @Test fun panIsClampedToThePage() {
         val v = viewport()
-        assertEquals(0, v.currentPage())
-        v.scrollBy(0f, layout.pageTop(1) - 1000)
-        assertEquals(1, v.currentPage())
+        v.zoomAround(2f, 0f, 0f)
+        v.panBy(-1e6f, -1e6f) // try to drag far past the top-left
+        val tl = v.pageToScreen().map(Pt(0f, 0f))
+        assertEquals(0f, tl.x, 0.5f)
+        assertEquals(0f, tl.y, 0.5f)
     }
 
-    /** The whole chain: PDF point → display point → screen pixel, and back, zoomed, scrolled and rotated. */
-    @Test fun mapsThroughZoomScrollAndRotation() {
+    /** Pushing past the page's edge is reported, so the screen can turn the page. */
+    @Test fun panReportsHowFarItWentPastTheEdge() {
+        val v = viewport()
+        v.zoomAround(2f, 0f, 0f)
+        assertEquals(0f, v.panBy(0f, 100f), 0.01f) // still room to move down the page
+        v.panBy(0f, 1e5f) // to the bottom
+        assertEquals(250f, v.panBy(0f, 250f), 0.01f) // past the bottom edge
+        assertEquals(0f, v.panBy(0f, -50f), 0.01f) // back up: fine
+    }
+
+    @Test fun goToShowsThatPage() {
+        val v = viewport()
+        v.goTo(2)
+        assertEquals(2, v.page)
+        v.goTo(99)
+        assertEquals(2, v.page)
+    }
+
+    /** The whole chain: PDF point → display point → screen pixel, and back, zoomed, panned and rotated. */
+    @Test fun mapsThroughZoomPanAndRotation() {
         // Page 1 is a portrait page with MediaBox (100,100)-(712,892), turned 90°. This is the
-        // transform PdfFile.pdfToDisplay gives for it (checked on the tablet in plan 2, Task 2).
+        // transform PdfFile.pdfToDisplay gives for it (checked on the tablet in Task 2).
         val pdfToDisplay = Affine(a = 0f, b = 1f, c = 1f, d = 0f, e = -100f, f = -100f)
         val v = viewport()
+        v.next()
         v.zoomAround(2f, 900f, 1200f)
-        v.scrollBy(150f, layout.pageTop(1) * 2 - 800)
+        v.panBy(150f, -80f)
 
-        val screen = v.pageToScreen(1).map(pdfToDisplay.map(Pt(150f, 842f)))
-        val (page, display) = v.screenToPage(screen.x, screen.y)
-        val back = pdfToDisplay.inverse().map(display)
-        assertEquals(1, page)
+        val screen = v.pageToScreen().map(pdfToDisplay.map(Pt(150f, 842f)))
+        val back = pdfToDisplay.inverse().map(v.screenToPage(screen.x, screen.y))
         assertEquals(150f, back.x, 0.5f)
         assertEquals(842f, back.y, 0.5f)
-    }
-
-    /** Reopening a document restores the page at the top of the screen, so the same view comes back. */
-    @Test fun topPageRoundTripsThroughScrollToPage() {
-        val v = viewport()
-        v.scrollBy(0f, layout.pageTop(1) + 50)
-        val saved = v.topPage()
-        val reopened = viewport()
-        reopened.scrollToPage(saved)
-        assertEquals(v.currentPage(), reopened.currentPage())
-        assertEquals(1, saved)
     }
 }

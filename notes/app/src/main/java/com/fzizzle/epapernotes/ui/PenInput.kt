@@ -25,6 +25,10 @@ enum class Tool { PEN, HIGHLIGHTER }
 class PenInput(private val view: View, private val onStroke: (List<FloatArray>) -> Unit) {
 
     private var helper: TouchHelper? = null
+
+    /** True while the pen is on the screen. Nothing may pause fast-ink then: it would cut the stroke short. */
+    @Volatile var isWriting = false
+        private set
     private var tool = Tool.PEN
     private var pxPerPt = 1f
 
@@ -88,13 +92,23 @@ class PenInput(private val view: View, private val onStroke: (List<FloatArray>) 
             onStroke(points.map { floatArrayOf(it.x, it.y, it.pressure) })
         }
 
-        override fun onBeginRawDrawing(shortcut: Boolean, p: TouchPoint?) = Unit
-        override fun onEndRawDrawing(shortcut: Boolean, p: TouchPoint?) = Unit
+        override fun onBeginRawDrawing(shortcut: Boolean, p: TouchPoint?) {
+            isWriting = true
+        }
+
+        override fun onEndRawDrawing(shortcut: Boolean, p: TouchPoint?) {
+            isWriting = false
+        }
         override fun onRawDrawingTouchPointMoveReceived(p: TouchPoint?) = Unit
 
         // Button 2 (the "eraser end", probe results §1). Ignored until plan 3 adds the eraser.
-        override fun onBeginRawErasing(shortcut: Boolean, p: TouchPoint?) = Unit
-        override fun onEndRawErasing(shortcut: Boolean, p: TouchPoint?) = Unit
+        override fun onBeginRawErasing(shortcut: Boolean, p: TouchPoint?) {
+            isWriting = true
+        }
+
+        override fun onEndRawErasing(shortcut: Boolean, p: TouchPoint?) {
+            isWriting = false
+        }
         override fun onRawErasingTouchPointMoveReceived(p: TouchPoint?) = Unit
         override fun onRawErasingTouchPointListReceived(list: TouchPointList?) = Unit
     }
