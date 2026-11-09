@@ -1,6 +1,11 @@
 package com.fzizzle.epapernotes.pdf
 
+import android.graphics.Bitmap
+import android.graphics.Color
+import com.artifex.mupdf.fitz.PDFAnnotation
 import com.artifex.mupdf.fitz.PDFDocument
+import com.artifex.mupdf.fitz.PDFPage
+import com.artifex.mupdf.fitz.Quad
 import com.artifex.mupdf.fitz.Rect
 import com.fzizzle.epapernotes.ink.Box
 import java.io.File
@@ -36,4 +41,39 @@ object TestPdfs {
 
     /** 1 KB of random bytes with a .pdf name, like a damaged download. */
     fun garbage(dir: File): File = File(dir, "bad.pdf").apply { writeBytes(Random(42).nextBytes(1024)) }
+
+    /** A one-page PDF with a highlight, a link and a free-text note, as another app might leave. */
+    fun withForeignAnnotations(dir: File): File {
+        val source = blank(dir, pages = 1)
+        val doc = PDFDocument.openDocument(source.path).asPDF()
+        val page = doc.loadPage(0) as PDFPage
+        page.createAnnotation(PDFAnnotation.TYPE_HIGHLIGHT).apply {
+            setQuadPoints(arrayOf(Quad(Rect(100f, 100f, 300f, 120f)))); update()
+        }
+        page.createLink(Rect(100f, 200f, 300f, 220f), "https://example.com")
+        page.createAnnotation(PDFAnnotation.TYPE_FREE_TEXT).apply {
+            setRect(Rect(100f, 300f, 300f, 340f)); setContents("a note"); update()
+        }
+        page.update()
+        val file = File.createTempFile("foreign", ".pdf", dir)
+        doc.save(file.path, "")
+        doc.destroy()
+        return file
+    }
+
+    /** Subtype and /Rect of every annotation on page 0 that the app didn't make, to compare across a save. */
+    fun foreignSignature(file: File): List<String> {
+        val doc = PDFDocument.openDocument(file.path).asPDF()
+        val annots = doc.findPage(0).get("Annots")
+        val out = (0 until annots.size()).map { annots.get(it) }
+            .filter { it.get("PNotesStroke").isNull }
+            .map { "${it.get("Subtype").asName()} ${it.get("Rect")}" }
+        doc.destroy()
+        return out
+    }
+
+    fun isDark(px: Int) = Color.red(px) < 100 && Color.green(px) < 100 && Color.blue(px) < 100
+
+    /** How many dark pixels column [x] has: a measure of line thickness there. */
+    fun darkHeightAt(bmp: Bitmap, x: Int) = (0 until bmp.height).count { isDark(bmp.getPixel(x, it)) }
 }
