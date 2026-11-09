@@ -89,18 +89,22 @@ class PdfFileStrokesTest {
         assertTrue(!SafeSave.tempFileFor(source).exists())
     }
 
-    /** A page of handwriting must not bloat the file: the speed check measured ~64 KB per stroke before compression. */
+    /** A page of handwriting must not bloat the file. Wavy strokes like real writing, as in the speed check. */
     @Test fun savedStrokesAreCompact() {
         val empty = File(dir, "empty.pdf")
         val written = File(dir, "written.pdf")
         val source = TestPdfs.blank(dir, pages = 1)
         PdfFile.open(source).use { it.saveTo(empty) }
         PdfFile.open(source).use { pdf ->
-            repeat(50) { n -> pdf.addStroke(0, Stroke(StrokeKind.PEN, (0 until 200).map { StrokePoint(50f + it * 2.5f, 100f + n * 12f, 0.5f) })) }
+            repeat(50) { n ->
+                pdf.addStroke(0, Stroke(StrokeKind.PEN, (0 until 200).map { i ->
+                    StrokePoint(50f + i * 2.5f, 100f + n * 12f + 4f * kotlin.math.sin(i / 5f), 0.3f + 0.5f * ((i % 20) / 20f))
+                }))
+            }
             pdf.saveTo(written)
         }
         val perStroke = (written.length() - empty.length()) / 50
-        assertTrue("$perStroke bytes per stroke", perStroke < 20_000)
+        assertTrue("$perStroke bytes per stroke", perStroke < 4_000)
     }
 
     /** An off-centre stroke moves to where a 90° clockwise turn puts it, and leaves its old spot. */

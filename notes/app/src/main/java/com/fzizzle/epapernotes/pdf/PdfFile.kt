@@ -143,9 +143,13 @@ class PdfFile private constructor(private val doc: PDFDocument) : Closeable {
      * "garbage" drops objects nothing refers to any more. Deleting an annotation only unlinks
      * it, so without this, erased strokes would stay in the file for good. Only level 1:
      * higher levels renumber objects, which would change the stroke ids.
+     *
+     * "objstms" packs small objects into compressed object streams. Each stroke keeps its
+     * point list and its private stroke data as text, and that text would otherwise be stored
+     * uncompressed.
      */
     fun saveTo(target: File) {
-        doc.save(target.path, "compress,garbage")
+        doc.save(target.path, "compress,garbage,objstms")
     }
 
     override fun close() = doc.destroy()

@@ -1,6 +1,7 @@
 package com.fzizzle.epapernotes.ink
 
 import java.util.Locale
+import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
@@ -13,10 +14,15 @@ import kotlin.math.min
  * them they'd draw one fixed width and the pressure would be lost. MuPDF draws the same
  * commands inside the app, so the app and other viewers look alike.
  *
- * The shape is simple on purpose: a filled four-sided piece between each pair of
- * neighbouring points, plus a filled circle at every point, which rounds the joins and ends.
+ * The shape is one filled outline: along the left edge of the stroke, then back along the
+ * right edge, each pushed out by half the width at that point. Circles round off the two ends
+ * and fill the notch where the line turns sharply. Plan 1 drew a circle at every point, which
+ * made each stroke about 20 KB; this is a fraction of that.
  */
 object StrokeOutline {
+
+    /** A turn sharper than this gets a circle, so the corner stays round instead of notched. */
+    private val SHARP_TURN_COS = cos(Math.toRadians(45.0)).toFloat()
 
     /** The area the stroke covers, including its width. */
     fun bounds(stroke: Stroke): Box {
@@ -39,33 +45,73 @@ object StrokeOutline {
     fun contentStream(stroke: Stroke): String {
         val style = StrokeStyle.of(stroke.kind)
         val out = StringBuilder()
-        out.append("${n(style.rgb[0])} ${n(style.rgb[1])} ${n(style.rgb[2])} rg\n")
+        out.append("${colour(style.rgb[0])} ${colour(style.rgb[1])} ${colour(style.rgb[2])} rg\n")
 
-        val pts = stroke.points
-        for (i in 0 until pts.size - 1) {
-            segment(out, pts[i], pts[i + 1], style)
+        val pts = withoutRepeats(stroke.points)
+        if (pts.size == 1) {
+            circle(out, pts[0].x, pts[0].y, style.widthAt(pts[0].pressure) / 2)
+            return out.toString()
         }
-        for (p in pts) {
-            circle(out, p.x, p.y, style.widthAt(p.pressure) / 2)
+
+        outline(out, pts, style)
+        circle(out, pts.first().x, pts.first().y, style.widthAt(pts.first().pressure) / 2)
+        for (i in 1 until pts.size - 1) {
+            if (isSharpTurn(pts[i - 1], pts[i], pts[i + 1])) {
+                circle(out, pts[i].x, pts[i].y, style.widthAt(pts[i].pressure) / 2)
+            }
         }
+        circle(out, pts.last().x, pts.last().y, style.widthAt(pts.last().pressure) / 2)
         return out.toString()
     }
 
-    private fun segment(out: StringBuilder, a: StrokePoint, b: StrokePoint, style: StrokeStyle) {
+    /** Forward along the left edge, back along the right, filled. Non-zero fill keeps tight curls solid. */
+    private fun outline(out: StringBuilder, pts: List<StrokePoint>, style: StrokeStyle) {
+        val normals = pts.indices.map { normalAt(pts, it) }
+        for (i in pts.indices) {
+            val r = style.widthAt(pts[i].pressure) / 2
+            val (nx, ny) = normals[i]
+            out.append("${n(pts[i].x + nx * r)} ${n(pts[i].y + ny * r)} ${if (i == 0) "m" else "l"} ")
+        }
+        for (i in pts.indices.reversed()) {
+            val r = style.widthAt(pts[i].pressure) / 2
+            val (nx, ny) = normals[i]
+            out.append("${n(pts[i].x - nx * r)} ${n(pts[i].y - ny * r)} l ")
+        }
+        out.append("h f\n")
+    }
+
+    /** The direction "sideways" at a point: the average of its neighbouring segments' normals. */
+    private fun normalAt(pts: List<StrokePoint>, i: Int): Pair<Float, Float> {
+        val before = if (i > 0) segmentNormal(pts[i - 1], pts[i]) else null
+        val after = if (i < pts.size - 1) segmentNormal(pts[i], pts[i + 1]) else null
+        if (before == null) return after!!
+        if (after == null) return before
+        val sx = before.first + after.first
+        val sy = before.second + after.second
+        val len = hypot(sx, sy)
+        // The line doubles back on itself: the two normals cancel out, so keep the first one.
+        if (len < 1e-3f) return before
+        return sx / len to sy / len
+    }
+
+    private fun segmentNormal(a: StrokePoint, b: StrokePoint): Pair<Float, Float> {
         val dx = b.x - a.x
         val dy = b.y - a.y
         val len = hypot(dx, dy)
-        if (len == 0f) return // same spot twice: the circle at that point covers it
-        // Unit normal: perpendicular to the segment, used to push each side out by half a width.
-        val nx = -dy / len
-        val ny = dx / len
-        val ra = style.widthAt(a.pressure) / 2
-        val rb = style.widthAt(b.pressure) / 2
-        out.append("${n(a.x + nx * ra)} ${n(a.y + ny * ra)} m ")
-        out.append("${n(b.x + nx * rb)} ${n(b.y + ny * rb)} l ")
-        out.append("${n(b.x - nx * rb)} ${n(b.y - ny * rb)} l ")
-        out.append("${n(a.x - nx * ra)} ${n(a.y - ny * ra)} l h f\n")
+        return -dy / len to dx / len
     }
+
+    private fun isSharpTurn(a: StrokePoint, b: StrokePoint, c: StrokePoint): Boolean {
+        val ux = b.x - a.x
+        val uy = b.y - a.y
+        val vx = c.x - b.x
+        val vy = c.y - b.y
+        val cosine = (ux * vx + uy * vy) / (hypot(ux, uy) * hypot(vx, vy))
+        return cosine < SHARP_TURN_COS
+    }
+
+    private fun withoutRepeats(points: List<StrokePoint>): List<StrokePoint> =
+        points.filterIndexed { i, p -> i == 0 || p.x != points[i - 1].x || p.y != points[i - 1].y }
 
     /** A circle made of four Bézier curves, the standard way to draw one in PDF. */
     private fun circle(out: StringBuilder, cx: Float, cy: Float, r: Float) {
@@ -78,5 +124,9 @@ object StrokeOutline {
     }
 
     // Locale.ROOT: PDF needs '.' as the decimal point, whatever language the tablet uses.
-    private fun n(v: Float) = String.format(Locale.ROOT, "%.2f", v)
+    // Coordinates to 0.1 pt: even at the maximum 4x zoom that's under 2 screen pixels, and it
+    // keeps each stroke's drawing small. The exact points are kept in the stroke data anyway.
+    private fun n(v: Float) = String.format(Locale.ROOT, "%.1f", v)
+
+    private fun colour(v: Float) = String.format(Locale.ROOT, "%.2f", v)
 }
