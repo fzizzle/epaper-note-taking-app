@@ -82,9 +82,19 @@ class StripButton(context: Context, private val glyph: Glyph, description: Strin
         penMark.close()
     }
 
+    override fun setEnabled(enabled: Boolean) {
+        if (enabled != isEnabled) super.setEnabled(enabled)
+        invalidate()
+    }
+
     override fun onDraw(canvas: Canvas) {
-        val inverted = isSelected || isPressed
-        val fg = if (inverted) Color.WHITE else Color.BLACK
+        val inverted = isEnabled && (isSelected || isPressed)
+        // Greyed out when there's nowhere to go (‹ on the first page, › on the last).
+        val fg = when {
+            !isEnabled -> DISABLED
+            inverted -> Color.WHITE
+            else -> Color.BLACK
+        }
         val s = minOf(width, height).toFloat()
         val cx = width / 2f
         val cy = height / 2f
@@ -146,6 +156,8 @@ class StripButton(context: Context, private val glyph: Glyph, description: Strin
     }
 
     companion object {
+        private val DISABLED = Color.rgb(200, 200, 200)
+
         /** The same yellow the highlighter draws with in fast-ink (PenInput). */
         val HIGHLIGHTER_YELLOW = Color.rgb(255, 235, 59)
     }

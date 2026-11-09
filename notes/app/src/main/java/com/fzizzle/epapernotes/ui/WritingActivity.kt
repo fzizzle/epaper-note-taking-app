@@ -10,6 +10,9 @@ import android.os.Looper
 import android.util.Log
 import android.view.Gravity
 import android.view.View
+import android.text.InputType
+import android.view.WindowManager
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -38,6 +41,8 @@ class WritingActivity : Activity() {
     private lateinit var pen: PenInput
     private lateinit var penButton: StripButton
     private lateinit var highlighterButton: StripButton
+    private lateinit var previousButton: StripButton
+    private lateinit var nextButton: StripButton
     private var tool = Tool.PEN
 
     /** For each page, PDF space to display points, inverted: how a pen point finds its place in the PDF. */
@@ -67,6 +72,7 @@ class WritingActivity : Activity() {
             setTextColor(Color.BLACK)
             gravity = Gravity.CENTER
             fontFeatureSettings = "tnum" // even-width digits, so the number doesn't jiggle as pages turn
+            setOnClickListener { askForPage() } // tap the number to jump to a page
         }
         val stripHeight = (resources.displayMetrics.heightPixels * 0.05f).toInt() // about 5% (spec §6.2)
         val gap = stripHeight / 8
@@ -83,9 +89,11 @@ class WritingActivity : Activity() {
             addView(penButton, square())
             addView(highlighterButton, square())
             addView(View(this@WritingActivity), LinearLayout.LayoutParams(0, 1, 1f)) // pushes the page controls right
-            addView(StripButton(this@WritingActivity, StripButton.Glyph.PREVIOUS, "Previous page").apply { setOnClickListener { turn(forward = false) } }, square())
+            previousButton = StripButton(this@WritingActivity, StripButton.Glyph.PREVIOUS, "Previous page").apply { setOnClickListener { turn(forward = false) } }
+            nextButton = StripButton(this@WritingActivity, StripButton.Glyph.NEXT, "Next page").apply { setOnClickListener { turn(forward = true) } }
+            addView(previousButton, square())
             addView(indicator, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.MATCH_PARENT).apply { marginEnd = gap })
-            addView(StripButton(this@WritingActivity, StripButton.Glyph.NEXT, "Next page").apply { setOnClickListener { turn(forward = true) } }, square().apply { marginEnd = 0 })
+            addView(nextButton, square().apply { marginEnd = 0 })
         }
         setContentView(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -198,6 +206,35 @@ class WritingActivity : Activity() {
         runOnUiThread { pages.addStroke(page, stroke) }
     }
 
+    /** "Go to page": type a number, which is quicker than tapping › through a long deck. */
+    private fun askForPage() {
+        val v = pages.viewport ?: return
+        val field = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER
+            hint = "1 to $pageCount"
+            textSize = 22f
+            setSelectAllOnFocus(true)
+            setText((v.page + 1).toString())
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Go to page")
+            .setView(field)
+            .setPositiveButton("Go") { _, _ ->
+                val wanted = field.text.toString().toIntOrNull() ?: return@setPositiveButton
+                Log.i(TAG, "go to page $wanted")
+                pages.goTo(wanted.coerceIn(1, pageCount) - 1)
+                showWithoutFastInk()
+            }
+            .setNegativeButton("Cancel", null)
+            .create()
+        // Fast-ink would freeze the dialog on screen, so it's off while the dialog is open.
+        pen.pause()
+        dialog.setOnDismissListener { pen.resume() }
+        dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
+        dialog.show()
+        field.requestFocus()
+    }
+
     private fun turn(forward: Boolean) {
         Log.i(TAG, "turn forward=$forward")
         if (pages.turn(forward)) showWithoutFastInk()
@@ -259,7 +296,9 @@ class WritingActivity : Activity() {
     private fun updateIndicator() {
         val v = pages.viewport ?: return
         indicator.text = "${v.page + 1} / $pageCount"
-        indicator.contentDescription = "Page ${v.page + 1} of $pageCount"
+        indicator.contentDescription = "Page ${v.page + 1} of $pageCount. Tap to go to a page."
+        previousButton.isEnabled = v.page > 0
+        nextButton.isEnabled = v.page < pageCount - 1
     }
 
     private fun show(event: SessionEvent) {

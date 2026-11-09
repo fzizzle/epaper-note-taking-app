@@ -83,7 +83,7 @@ Orientation: **follows the tablet** (owner's decision, 2026-11-09). The design f
 
 Navigation:
 
-- **One page at a time** (owner's decision, 2026-11-09, replacing the continuous scroll). The page is fitted to the screen, and **‹ ›** in the strip go to the previous and next page.
+- **One page at a time** (owner's decision, 2026-11-09, replacing the continuous scroll). The page is fitted to the screen, and **‹ ›** in the strip go to the previous and next page. Tapping the page number opens a small "Go to page" box; ‹ and › are greyed out on the first and last page (lightweight additions the owner allowed, 2026-11-09).
 - **Two fingers pinch-zoom. When zoomed in, one finger moves around the page, and pushing on past the page's top or bottom edge turns the page.** At normal size a one-finger swipe does nothing, so pages only turn on purpose. The pen never moves the page, and a finger never draws.
 - A resting palm or hand must neither draw nor move the page.
 

@@ -90,6 +90,17 @@ class PageView(context: Context) : View(context) {
         return true
     }
 
+    /** Jumps straight to [page] (kept within the document). */
+    fun goTo(page: Int) {
+        val v = viewport ?: return
+        val leaving = v.page
+        if (page == leaving) return
+        v.goTo(page)
+        if (ink.version(leaving) > 0) bitmaps.invalidate(leaving)
+        invalidate()
+        onViewportChanged()
+    }
+
     /** A stroke just written on [page]: show it until the page's rendering includes it. UI thread. */
     fun addStroke(page: Int, stroke: Stroke) {
         ink.add(page, stroke)
