@@ -5,14 +5,13 @@ import android.graphics.Rect
 import android.view.View
 import com.fzizzle.epapernotes.ink.StrokeKind
 import com.fzizzle.epapernotes.ink.StrokeStyle
+import com.fzizzle.epapernotes.tools.Tool
 import com.onyx.android.sdk.api.device.epd.EpdController
 import com.onyx.android.sdk.api.device.epd.UpdateMode
 import com.onyx.android.sdk.data.note.TouchPoint
 import com.onyx.android.sdk.pen.RawInputCallback
 import com.onyx.android.sdk.pen.TouchHelper
 import com.onyx.android.sdk.pen.data.TouchPointList
-
-enum class Tool { PEN, HIGHLIGHTER }
 
 /**
  * The pen, through Boox's fast-ink mode: Onyx draws the ink straight onto the e-ink panel as
@@ -89,15 +88,15 @@ class PenInput(
     private fun applyTool() {
         val h = helper ?: return
         when (tool) {
-            Tool.PEN -> {
-                h.setStrokeStyle(TouchHelper.STROKE_STYLE_FOUNTAIN) // the line follows pressure
-                h.setStrokeColor(Color.BLACK)
-                h.setStrokeWidth(StrokeStyle.of(StrokeKind.PEN).maxWidth * pxPerPt)
-            }
             Tool.HIGHLIGHTER -> {
                 h.setStrokeStyle(TouchHelper.STROKE_STYLE_MARKER)
                 h.setStrokeColor(StripButton.HIGHLIGHTER_YELLOW)
                 h.setStrokeWidth(StrokeStyle.of(StrokeKind.HIGHLIGHTER).maxWidth * pxPerPt)
+            }
+            else -> { // PEN; Task 7 gives the other tools their own live line
+                h.setStrokeStyle(TouchHelper.STROKE_STYLE_FOUNTAIN) // the line follows pressure
+                h.setStrokeColor(Color.BLACK)
+                h.setStrokeWidth(StrokeStyle.of(StrokeKind.PEN).maxWidth * pxPerPt)
             }
         }
     }

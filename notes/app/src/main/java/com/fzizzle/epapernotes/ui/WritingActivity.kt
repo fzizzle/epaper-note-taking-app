@@ -23,6 +23,7 @@ import com.fzizzle.epapernotes.geometry.Affine
 import com.fzizzle.epapernotes.geometry.Pt
 import com.fzizzle.epapernotes.ink.StrokeKind
 import com.fzizzle.epapernotes.pdf.PdfFile
+import com.fzizzle.epapernotes.tools.Tool
 import java.io.File
 
 /**
