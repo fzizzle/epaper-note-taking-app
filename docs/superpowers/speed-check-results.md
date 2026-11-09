@@ -8,9 +8,9 @@ Pages are rendered at 1860 px wide, the full screen width. "Strokes" are 50 test
 
 | | Pass mark | PWT "Les véhicules hybrides et électriques" (14.0 MB, 125 pages) | FLE "Cours 3 – B1 Léonard de Vinci" (17.4 MB, 45 pages) |
 |---|---|---|---|
-| Open | under 1 s | **13 ms** | **0 ms** |
+| Open | under 1 s | **9 ms** | **0 ms** |
 | First page | — | 110 ms | 9 ms |
-| Pages 2–10 (median) | under 300 ms | **78 ms** (slowest 130 ms) | **61 ms** (slowest 99 ms) |
+| Pages 2–10 (median) | under 300 ms | **77 ms** (slowest 129 ms) | **60 ms** (slowest 97 ms) |
 | Add 50 strokes | — | 2619 ms (about 50 ms per stroke) | 2561 ms (about 50 ms per stroke) |
 | Save (safe replace) | under 2 s | **212 ms** | **202 ms** |
 | Reopen and read the strokes back | — | 283 ms, 50 of 50 back | 211 ms, 50 of 50 back |
@@ -19,7 +19,7 @@ Pages are rendered at 1860 px wide, the full screen width. "Strokes" are 50 test
 
 ## What it means
 
-**Speed: passes comfortably.** Pages render several times faster than the pass mark, and a full save of a 14–17 MB file takes a quarter of a second. Building the writing screen on MuPDF as designed is supported by these numbers.
+**Speed: passes comfortably.** Pages render several times faster than the pass mark, and a full save of a 14–17 MB file takes about a fifth of a second. Building the writing screen on MuPDF as designed is supported by these numbers.
 
 **Adding a stroke takes about 50 ms.** That happens in the background after the pen lifts. The ink itself is drawn instantly by Onyx's fast-ink, so the pen won't feel it. It would matter if hundreds of strokes were added at once, such as pasting a big selection. Plan 2/3 should batch those.
 
