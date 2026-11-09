@@ -77,6 +77,10 @@ class PageView(context: Context) : View(context) {
     // and asked for again.
     private val inFlight = mutableMapOf<Pair<Int, Int>, Int>()
 
+    // Renders on their way when their page was left or rotated: thrown away when they come.
+    // The worker answers in order, so each comes before any asked for again at that width.
+    private val dropped = mutableListOf<Pair<Int, Int>>()
+
     private val ink = InkOverlay()
 
     private var pinching = false
@@ -127,8 +131,22 @@ class PageView(context: Context) : View(context) {
     /** Next time [page] is visited, render it afresh so its new ink comes from the PDF. */
     private fun forget(page: Int) {
         if (ink.version(page) == 0) return
-        bitmaps.invalidate(page)
+        dropRenderings(page)
+        // A rendering still on its way may lack strokes this drops, so dropRenderings came first.
         ink.left(page)
+    }
+
+    /** [page] turned: its renderings are the wrong way round. Call before [setPages] lays it out anew. UI thread. */
+    fun pageRotated(page: Int) {
+        dropRenderings(page)
+    }
+
+    private fun dropRenderings(page: Int) {
+        bitmaps.invalidate(page)
+        inFlight.keys.filter { it.first == page }.forEach {
+            inFlight.remove(it)
+            dropped += it
+        }
     }
 
     /** The page's ink version now (see InkOverlay): a rendering asked for from now on contains everything up to it. */
@@ -153,7 +171,7 @@ class PageView(context: Context) : View(context) {
 
     /** Rendering failed (a damaged page, say). Forget it, so it's asked for again next time. UI thread. */
     fun renderFailed(page: Int, widthPx: Int) {
-        inFlight.remove(page to widthPx)
+        if (!dropped.remove(page to widthPx)) inFlight.remove(page to widthPx)
     }
 
     /** Where the page on show is, for the selection layer. Null until the pages are laid out. */
@@ -174,6 +192,7 @@ class PageView(context: Context) : View(context) {
 
     /** A rendering arrived from the worker. UI thread. */
     fun pageRendered(page: Int, widthPx: Int, bitmap: Bitmap) {
+        if (dropped.remove(page to widthPx)) return // asked for before the page was left or rotated
         val version = inFlight.remove(page to widthPx) ?: 0
         val stale = ink.isStale(page, version)
         android.util.Log.i("Notes", "rendered page=$page width=$widthPx version=$version of ${ink.version(page)}${if (stale) " (stale, asking again)" else ""}")

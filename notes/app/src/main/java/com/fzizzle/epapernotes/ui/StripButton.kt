@@ -3,6 +3,7 @@ package com.fzizzle.epapernotes.ui
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.Path
 import android.view.View
@@ -15,11 +16,12 @@ import android.view.View
  * A tool button shows the mark its tool makes: the pen a stroke that thins out, the
  * highlighter a short yellow band, the only colour in the strip. The selected tool, and any
  * button while it's pressed, is drawn inverted (black tile, white mark), which reads at a
- * glance on e-ink.
+ * glance on e-ink. The eraser, lasso and snip show what they leave or take: a tilted block, a
+ * dashed loop, a dashed rectangle. Paste is inverted too while it's armed.
  */
 class StripButton(context: Context, private val glyph: Glyph, description: String) : View(context) {
 
-    enum class Glyph { BACK, PREVIOUS, NEXT, PEN, HIGHLIGHTER }
+    enum class Glyph { BACK, PREVIOUS, NEXT, PEN, HIGHLIGHTER, ERASER, LASSO, SNIP, UNDO, REDO, PASTE, MENU }
 
     init {
         contentDescription = description
@@ -33,10 +35,16 @@ class StripButton(context: Context, private val glyph: Glyph, description: Strin
     }
     private val path = Path()
 
-    private val isTool get() = glyph == Glyph.PEN || glyph == Glyph.HIGHLIGHTER
+    private val isTool get() = glyph in TOOLS
 
+    /** Dashes for the lasso and snip marks, sized to the tile. */
+    private var dashes: DashPathEffect? = null
+
+    // Only on a real change: undo and redo are set after every stroke, and a needless redraw
+    // costs an e-ink refresh of the strip.
     override fun setSelected(selected: Boolean) {
-        if (selected != isSelected) super.setSelected(selected)
+        if (selected == isSelected) return
+        super.setSelected(selected)
         invalidate()
     }
 
@@ -50,8 +58,9 @@ class StripButton(context: Context, private val glyph: Glyph, description: Strin
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
-        if (glyph != Glyph.PEN) return
         val s = minOf(w, h).toFloat()
+        dashes = DashPathEffect(floatArrayOf(s * 0.07f, s * 0.05f), 0f)
+        if (glyph != Glyph.PEN) return
         val cx = w / 2f
         val cy = h / 2f
         // Centre line: one S-shaped curve across the tile.
@@ -83,13 +92,14 @@ class StripButton(context: Context, private val glyph: Glyph, description: Strin
     }
 
     override fun setEnabled(enabled: Boolean) {
-        if (enabled != isEnabled) super.setEnabled(enabled)
+        if (enabled == isEnabled) return
+        super.setEnabled(enabled)
         invalidate()
     }
 
     override fun onDraw(canvas: Canvas) {
         val inverted = isEnabled && (isSelected || isPressed)
-        // Greyed out when there's nowhere to go (‹ on the first page, › on the last).
+        // Greyed out when there's nowhere to go (‹ on the first page, › on the last, undo with nothing to undo).
         val fg = when {
             !isEnabled -> DISABLED
             inverted -> Color.WHITE
@@ -152,11 +162,82 @@ class StripButton(context: Context, private val glyph: Glyph, description: Strin
                 ink.color = fg
                 canvas.drawPath(path, ink)
             }
+            Glyph.ERASER -> {
+                // A block tilted like an eraser at work, its rubber end filled.
+                canvas.save()
+                canvas.rotate(-35f, cx, cy)
+                ink.style = Paint.Style.FILL
+                canvas.drawRect(cx - s * 0.3f, cy - s * 0.12f, cx - s * 0.08f, cy + s * 0.12f, ink)
+                ink.style = Paint.Style.STROKE
+                ink.strokeWidth = s * 0.05f
+                canvas.drawRect(cx - s * 0.3f, cy - s * 0.12f, cx + s * 0.3f, cy + s * 0.12f, ink)
+                canvas.restore()
+            }
+            Glyph.LASSO -> {
+                // A dashed loop with a short solid tail where the pen closed it.
+                ink.style = Paint.Style.STROKE
+                ink.strokeWidth = s * 0.05f
+                ink.pathEffect = dashes
+                canvas.drawOval(cx - s * 0.3f, cy - s * 0.24f, cx + s * 0.3f, cy + s * 0.12f, ink)
+                ink.pathEffect = null
+                path.reset()
+                path.moveTo(cx - s * 0.16f, cy + s * 0.09f)
+                path.quadTo(cx - s * 0.2f, cy + s * 0.2f, cx - s * 0.1f, cy + s * 0.28f)
+                canvas.drawPath(path, ink)
+            }
+            Glyph.SNIP -> {
+                // A dashed rectangle, with a solid corner where the drag ends.
+                ink.style = Paint.Style.STROKE
+                ink.strokeWidth = s * 0.05f
+                ink.pathEffect = dashes
+                canvas.drawRect(cx - s * 0.28f, cy - s * 0.22f, cx + s * 0.22f, cy + s * 0.18f, ink)
+                ink.pathEffect = null
+                ink.strokeWidth = s * 0.07f
+                path.reset()
+                path.moveTo(cx + s * 0.32f, cy + s * 0.04f)
+                path.lineTo(cx + s * 0.32f, cy + s * 0.28f)
+                path.lineTo(cx + s * 0.08f, cy + s * 0.28f)
+                canvas.drawPath(path, ink)
+            }
+            Glyph.UNDO, Glyph.REDO -> {
+                // A U-turn arrow pointing back (undo) or, mirrored, forward (redo).
+                canvas.save()
+                if (glyph == Glyph.REDO) canvas.scale(-1f, 1f, cx, cy)
+                ink.style = Paint.Style.STROKE
+                ink.strokeWidth = s * 0.07f
+                val r = s * 0.15f
+                path.reset()
+                path.moveTo(cx - s * 0.12f, cy + s * 0.22f)
+                path.lineTo(cx + s * 0.06f, cy + s * 0.22f)
+                path.arcTo(cx + s * 0.06f - r, cy - s * 0.08f, cx + s * 0.06f + r, cy + s * 0.22f, 90f, -180f, false)
+                path.lineTo(cx - s * 0.26f, cy - s * 0.08f)
+                path.moveTo(cx - s * 0.13f, cy - s * 0.21f)
+                path.lineTo(cx - s * 0.26f, cy - s * 0.08f)
+                path.lineTo(cx - s * 0.13f, cy + s * 0.05f)
+                canvas.drawPath(path, ink)
+                canvas.restore()
+            }
+            Glyph.PASTE -> {
+                // A clipboard: the board, and the clip at its top.
+                ink.style = Paint.Style.STROKE
+                ink.strokeWidth = s * 0.05f
+                canvas.drawRect(cx - s * 0.2f, cy - s * 0.22f, cx + s * 0.2f, cy + s * 0.28f, ink)
+                ink.style = Paint.Style.FILL
+                canvas.drawRect(cx - s * 0.1f, cy - s * 0.3f, cx + s * 0.1f, cy - s * 0.15f, ink)
+            }
+            Glyph.MENU -> {
+                // ⋯
+                ink.style = Paint.Style.FILL
+                for (i in -1..1) canvas.drawCircle(cx + i * s * 0.2f, cy, s * 0.055f, ink)
+            }
         }
     }
 
     companion object {
         private val DISABLED = Color.rgb(200, 200, 200)
+
+        /** The buttons that pick a tool: framed, and inverted while picked. */
+        private val TOOLS = setOf(Glyph.PEN, Glyph.HIGHLIGHTER, Glyph.ERASER, Glyph.LASSO, Glyph.SNIP)
 
         /** The same yellow the highlighter draws with in fast-ink (PenInput). */
         val HIGHLIGHTER_YELLOW = Color.rgb(255, 235, 59)

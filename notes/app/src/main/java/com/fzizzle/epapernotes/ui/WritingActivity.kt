@@ -17,6 +17,7 @@ import android.text.InputType
 import android.view.WindowManager
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.PopupMenu
 import android.widget.TextView
 import android.widget.Toast
 import com.fzizzle.epapernotes.doc.AddItems
@@ -41,15 +42,16 @@ import com.fzizzle.epapernotes.tools.Tool
 import com.fzizzle.epapernotes.tools.ToolState
 import com.fzizzle.epapernotes.tools.liveLine
 import com.fzizzle.epapernotes.tools.placedOn
+import com.fzizzle.epapernotes.ui.StripButton.Glyph
 import java.io.ByteArrayOutputStream
 import java.io.File
 import kotlin.math.max
 import kotlin.math.min
 
 /**
- * The writing screen (spec §6.2): one page at a time fills the screen under one thin strip.
- * Plan 2 has the back button, the pen and highlighter, and ‹ page indicator ›. The other
- * tools come in plan 3.
+ * The writing screen (spec §6.2): one page at a time fills the screen under one thin strip:
+ * ← library, the tools, undo and redo, Paste (only once there's something to paste), the ⋯
+ * page menu, and ‹ page indicator ›.
  */
 class WritingActivity : Activity() {
 
@@ -60,8 +62,11 @@ class WritingActivity : Activity() {
     private lateinit var path: String
     private var pageCount = 0
     private lateinit var pen: PenInput
-    private lateinit var penButton: StripButton
-    private lateinit var highlighterButton: StripButton
+    private lateinit var toolButtons: Map<Tool, StripButton>
+    private lateinit var undoButton: StripButton
+    private lateinit var redoButton: StripButton
+    private lateinit var pasteButton: StripButton
+    private lateinit var menuButton: StripButton
     private lateinit var previousButton: StripButton
     private lateinit var nextButton: StripButton
     private val toolState = ToolState()
@@ -102,6 +107,9 @@ class WritingActivity : Activity() {
      * fast-ink after each one (plan 2, problem 1), so only these pages are redrawn. UI thread.
      */
     private val redrawWhenChanged = HashSet<Int>()
+
+    /** An undo or redo changed this page, not the one on show: go there once it's changed (decision 10). UI thread. */
+    private var goToWhenChanged = NO_PAGE
 
     /**
      * A show was skipped because the pen was down: say, an erased page arrived while the owner
@@ -185,25 +193,29 @@ class WritingActivity : Activity() {
         pages.selectionLayer = layer
         pages.onFingerTap = { x, y -> pages.frame()?.let { layer.onFingerTap(x, y, it) } }
         val gap = stripHeight / 8
-        fun square() = LinearLayout.LayoutParams(stripHeight - 2 * gap, stripHeight - 2 * gap).apply { marginEnd = gap }
-
-        penButton = StripButton(this, StripButton.Glyph.PEN, "Pen").apply { setOnClickListener { choose(Tool.PEN) } }
-        highlighterButton = StripButton(this, StripButton.Glyph.HIGHLIGHTER, "Highlighter").apply { setOnClickListener { choose(Tool.HIGHLIGHTER) } }
-        val strip = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(gap, 0, gap, 0)
-            setBackgroundColor(Color.WHITE)
-            addView(StripButton(this@WritingActivity, StripButton.Glyph.BACK, "Back to the list").apply { setOnClickListener { finish() } }, square().apply { marginEnd = gap * 3 })
-            addView(penButton, square())
-            addView(highlighterButton, square())
-            addView(View(this@WritingActivity), LinearLayout.LayoutParams(0, 1, 1f)) // pushes the page controls right
-            previousButton = StripButton(this@WritingActivity, StripButton.Glyph.PREVIOUS, "Previous page").apply { setOnClickListener { turn(forward = false) } }
-            nextButton = StripButton(this@WritingActivity, StripButton.Glyph.NEXT, "Next page").apply { setOnClickListener { turn(forward = true) } }
-            addView(previousButton, square())
-            addView(indicator, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.MATCH_PARENT).apply { marginEnd = gap })
-            addView(nextButton, square().apply { marginEnd = 0 })
-        }
+        // In the spec's order (§6.2), a wider gap after ← and after the tools.
+        val strip = StripRow(this, side = stripHeight - 2 * gap, gap = gap).apply { setBackgroundColor(Color.WHITE) }
+        fun button(glyph: Glyph, description: String, gaps: Int = 1, onClick: () -> Unit) =
+            StripButton(this, glyph, description).also {
+                it.setOnClickListener { onClick() }
+                strip.addSquare(it, gaps)
+            }
+        button(Glyph.BACK, "Back to the list", gaps = 3) { finish() }
+        toolButtons = mapOf(
+            Tool.PEN to button(Glyph.PEN, "Pen") { choose(Tool.PEN) },
+            Tool.HIGHLIGHTER to button(Glyph.HIGHLIGHTER, "Highlighter") { choose(Tool.HIGHLIGHTER) },
+            Tool.ERASER to button(Glyph.ERASER, "Eraser") { choose(Tool.ERASER) },
+            Tool.LASSO to button(Glyph.LASSO, "Lasso select") { choose(Tool.LASSO) },
+            Tool.SNIP to button(Glyph.SNIP, "Snip", gaps = 3) { choose(Tool.SNIP) },
+        )
+        undoButton = button(Glyph.UNDO, "Undo") { undoOrRedo(undo = true) }.apply { isEnabled = false }
+        redoButton = button(Glyph.REDO, "Redo") { undoOrRedo(undo = false) }.apply { isEnabled = false }
+        pasteButton = button(Glyph.PASTE, "Paste") { togglePaste() }.apply { visibility = View.GONE }
+        menuButton = button(Glyph.MENU, "Page menu") { openPageMenu() }
+        strip.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f)) // pushes the page controls right
+        previousButton = button(Glyph.PREVIOUS, "Previous page") { turn(forward = false) }
+        strip.addView(indicator, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.MATCH_PARENT).apply { marginEnd = gap })
+        nextButton = button(Glyph.NEXT, "Next page", gaps = 0) { turn(forward = true) }
         setContentView(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.WHITE)
@@ -246,20 +258,11 @@ class WritingActivity : Activity() {
             publishPenMapping()
             if (documentShown) pen.setLimit(Rect(0, 0, pages.width, pages.height))
         }
-        session.runOnDocument { pdf ->
-            val file = pdf as PdfFile
-            val sizes = (0 until file.pageCount).map { file.displaySize(it).let { s -> SizePt(s.width, s.height) } }
-            val transforms = (0 until file.pageCount).map { file.pdfToDisplay(it) }
-            runOnUiThread {
-                pageCount = sizes.size
-                pdfToDisplay = transforms
-                displayToPdf = transforms.map { it.inverse() }
-                pages.setPages(sizes, transforms, lastPages.get(path))
-                pages.post {
-                    documentShown = true
-                    publishPenMapping()
-                    penOn()
-                }
+        layOutPages(startPage = lastPages.get(path)) {
+            pages.post {
+                documentShown = true
+                publishPenMapping()
+                penOn()
             }
         }
 
@@ -315,6 +318,28 @@ class WritingActivity : Activity() {
             }
         }
         choose(Tool.PEN)
+    }
+
+    /**
+     * Reads every page's size and placement on the worker, then lays the pages out at
+     * [startPage], or the page on show: at the start, and again once a page has turned. A
+     * rotation replayed at open can come before the first layout, so then it's the last page open.
+     */
+    private fun layOutPages(startPage: Int? = null, then: () -> Unit) {
+        session.runOnDocument { pdf ->
+            val file = pdf as PdfFile
+            val sizes = (0 until file.pageCount).map { file.displaySize(it).let { s -> SizePt(s.width, s.height) } }
+            val transforms = (0 until file.pageCount).map { file.pdfToDisplay(it) }
+            runOnUiThread {
+                // A page that turned has renderings the wrong way round.
+                pdfToDisplay.indices.filter { it < transforms.size && transforms[it] != pdfToDisplay[it] }.forEach { pages.pageRotated(it) }
+                pageCount = sizes.size
+                pdfToDisplay = transforms
+                displayToPdf = transforms.map { it.inverse() }
+                pages.setPages(sizes, transforms, startPage ?: pages.viewport?.page ?: lastPages.get(path))
+                then()
+            }
+        }
     }
 
     override fun onResume() {
@@ -434,6 +459,11 @@ class WritingActivity : Activity() {
         val page = pages.viewport?.page ?: return
         if (page == shownPage) return
         shownPage = page
+        letGoOfAll()
+    }
+
+    /** UI thread. Lets go of the selection and cancels an armed paste, if there's either. */
+    private fun letGoOfAll() {
         if (!toolState.hasSelection && !toolState.pasteArmed) return
         letGo()
         toolState.pasteArmed = false
@@ -441,10 +471,10 @@ class WritingActivity : Activity() {
     }
 
     /**
-     * The Paste button (Task 9 puts it in the strip; it shows while [ToolState.showPaste]):
-     * arms a paste for the next pen tap on the page, or cancels one already armed.
+     * The Paste button (it shows while [ToolState.showPaste]): arms a paste for the next pen
+     * tap on the page, or cancels one already armed.
      */
-    fun togglePaste() {
+    private fun togglePaste() {
         if (toolState.clipboard == null) return
         toolState.pasteArmed = !toolState.pasteArmed
         Log.i(TAG, "paste armed=${toolState.pasteArmed}")
@@ -465,7 +495,7 @@ class WritingActivity : Activity() {
         override fun copy() {
             toolState.clipboard = Clipboard(selected, pdfToDisplay[selectedPage])
             Log.i(TAG, "copied page=$selectedPage items=${selected.size}")
-            // Task 9 hooks in here: refresh the strip, which shows Paste once toolState.showPaste is true.
+            updateStrip() // Paste appears
         }
 
         override fun delete() {
@@ -531,7 +561,10 @@ class WritingActivity : Activity() {
                 val box = Box(corners.minOf { it.x }, corners.minOf { it.y }, corners.maxOf { it.x }, corners.maxOf { it.y })
                 val item = ImageItem(ItemIds.next(), box, file.rotation(page) / 90, png)
                 Log.i(TAG, "snip page=$page px=$size bytes=${png.size} ms=${SystemClock.uptimeMillis() - started}")
-                runOnUiThread { toolState.clipboard = Clipboard(listOf(item), toDisplay) }
+                runOnUiThread {
+                    toolState.clipboard = Clipboard(listOf(item), toDisplay)
+                    updateStrip() // Paste appears
+                }
             } catch (e: Exception) {
                 Log.w(TAG, "snip failed page=$page", e)
                 runOnUiThread { toast("Couldn't take the snip.") }
@@ -558,6 +591,7 @@ class WritingActivity : Activity() {
      * Never while the pen is down: then the lift does it.
      */
     private fun toolStateChanged() {
+        updateStrip()
         layer.snipping = toolState.chosen == Tool.SNIP
         layer.pasteArmed = toolState.pasteArmed
         handler.removeCallbacks(resumeFastInk)
@@ -605,9 +639,10 @@ class WritingActivity : Activity() {
     /**
      * [page] has a change on its way that the page view can't show by itself, so redraw it
      * when the change reaches the PDF (the [SessionEvent.PageChanged] handler in [show]).
-     * Every change made from the screen must call this: erases now, and in Tasks 8–9 moves,
-     * resizes, deletes, pastes, undo and redo, and rotations. Plain pen strokes must not: the
-     * page view already shows them, and a redraw would pause fast-ink after each one. UI thread.
+     * Every change made from the screen must call this: erases, moves, resizes, deletes,
+     * pastes, undo and redo ([undoOrRedo]), and rotations ([rotate]). Plain pen strokes must
+     * not: the page view already shows them, and a redraw would pause fast-ink after each one.
+     * UI thread.
      */
     private fun expectRedraw(page: Int) {
         redrawWhenChanged += page
@@ -644,6 +679,58 @@ class WritingActivity : Activity() {
         dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
         dialog.show()
         field.requestFocus()
+    }
+
+    /**
+     * Undo or redo (spec §6.3). The session says what it recorded, so its pages are marked
+     * for a redraw before its PageChanged can come: that comes through the UI thread's queue,
+     * behind this. A change on another page is undone there, in view (decision 10): the page
+     * is gone to once the change has reached the PDF ([pagesChanged]), so it shows it.
+     */
+    private fun undoOrRedo(undo: Boolean) {
+        letGoOfAll() // the selection may be what's undone
+        val change = (if (undo) session.undo() else session.redo()) ?: return
+        Log.i(TAG, "${if (undo) "undo" else "redo"} pages=${change.pages}")
+        change.pages.forEach { expectRedraw(it) }
+        val here = pages.viewport?.page ?: return
+        goToWhenChanged = if (here in change.pages) NO_PAGE else change.pages.min()
+    }
+
+    /** ⋯: the page menu (spec §6.4). Fast-ink is off while it's open, as for "Go to page". */
+    private fun openPageMenu() {
+        if (pen.isWriting) return // pausing fast-ink now would cut the stroke
+        val menu = PopupMenu(this, menuButton)
+        menu.menu.add("Rotate this page").setOnMenuItemClickListener { rotate(all = false); true }
+        menu.menu.add("Rotate all pages").setOnMenuItemClickListener { rotate(all = true); true }
+        dialogOpen = true
+        pen.pause()
+        menu.setOnDismissListener {
+            dialogOpen = false
+            resumeFastInk.run()
+        }
+        menu.show()
+    }
+
+    /** Turns the page on show, or every page, 90° clockwise from where it is (spec §6.4), as one undo step. */
+    private fun rotate(all: Boolean) {
+        val here = pages.viewport?.page ?: return
+        letGoOfAll()
+        val turning = if (all) (0 until pageCount).toList() else listOf(here)
+        Log.i(TAG, "rotate ${if (all) "all $pageCount pages" else "page ${here + 1}"}")
+        turning.forEach { expectRedraw(it) }
+        session.rotate(turning)
+    }
+
+    /** UI thread: changes have reached the PDF on [changed] pages. */
+    private fun pagesChanged(changed: Set<Int>) {
+        // Redrawn the usual way: once rendered, onPageShown shows it without fast-ink.
+        changed.forEach { if (redrawWhenChanged.remove(it)) pages.pageChanged(it) }
+        val target = goToWhenChanged
+        if (target !in changed) return
+        goToWhenChanged = NO_PAGE
+        Log.i(TAG, "go to page ${target + 1}: the undo or redo changed it")
+        pages.goTo(target)
+        showWithoutFastInk()
     }
 
     private fun turn(forward: Boolean) {
@@ -697,10 +784,15 @@ class WritingActivity : Activity() {
 
     /** The strip, the live line and the pen's next stroke follow [ToolState.chosen]. */
     private fun toolChosen() {
-        penButton.isSelected = toolState.chosen == Tool.PEN
-        highlighterButton.isSelected = toolState.chosen == Tool.HIGHLIGHTER
         publishPenChoice()
         toolStateChanged()
+    }
+
+    /** The chosen tool inverted, and Paste there once there's something to paste, inverted while armed. */
+    private fun updateStrip() {
+        toolButtons.forEach { (tool, button) -> button.isSelected = toolState.chosen == tool }
+        pasteButton.visibility = if (toolState.showPaste) View.VISIBLE else View.GONE
+        pasteButton.isSelected = toolState.pasteArmed
     }
 
     /**
@@ -745,11 +837,12 @@ class WritingActivity : Activity() {
             SessionEvent.WritingStopped -> toast("A change couldn't be written into this file, so it isn't being saved into. Your writing is kept safe in the app.")
             SessionEvent.NeedsRepairDecision -> askAboutRepair()
             is SessionEvent.Replayed -> toast("Recovered ${event.count} change(s) that hadn't been saved.")
-            is SessionEvent.PageChanged -> event.pages.forEach { page ->
-                // Redrawn the usual way: once rendered, onPageShown shows it without fast-ink.
-                if (redrawWhenChanged.remove(page)) pages.pageChanged(page)
+            // A page that turned has a new size and place on screen: lay the pages out again first.
+            is SessionEvent.PageChanged -> if (event.rotated) layOutPages { pagesChanged(event.pages) } else pagesChanged(event.pages)
+            is SessionEvent.HistoryChanged -> {
+                undoButton.isEnabled = event.canUndo
+                redoButton.isEnabled = event.canRedo
             }
-            is SessionEvent.HistoryChanged -> Unit // the undo and redo buttons come in Task 9
             is SessionEvent.EarlierWritingKept -> toast("Unsaved writing from before this file changed was kept safe.")
             is SessionEvent.SavedToCopy -> toast("Saved to ${event.copy.name}.")
             is SessionEvent.OpenFailed -> {
@@ -774,6 +867,7 @@ class WritingActivity : Activity() {
 
     companion object {
         const val EXTRA_PATH = "path"
+        private const val NO_PAGE = -1
         const val SHOW_PAUSE_MS = 150L
 
         /** How long the pen must rest before a show skipped while writing is tried again. */

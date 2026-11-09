@@ -352,6 +352,19 @@ class DocumentSessionTest {
         assertEquals(listOf(dot), strokesOn(0))
     }
 
+    /** The screen marks the pages to redraw, and goes to an undone change's page (decision 10). */
+    @Test fun undoAndRedoSayWhatTheyRecorded() {
+        val s = session()
+        s.addStroke(3, dot)
+        val undone = s.undo()
+        assertTrue(undone is RemoveItems)
+        assertEquals(setOf(3), undone!!.pages)
+        assertEquals(setOf(3), s.redo()!!.pages)
+        assertTrue(s.redo() == null) // nothing left to redo
+        s.undo()
+        assertTrue(s.undo() == null) // nothing left to undo
+    }
+
     @Test fun newChangeClearsRedo() {
         val s = session()
         s.addStroke(0, dot)

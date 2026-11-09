@@ -183,29 +183,38 @@ class DocumentSession(
         return fresh
     }
 
-    /** Takes back this session's last change, by recording its inverse. */
-    fun undo() {
+    /**
+     * Takes back this session's last change, by recording its inverse. Returns that inverse,
+     * or null if there was nothing to undo: the screen needs its pages, like [record]'s callers.
+     */
+    fun undo(): Change? {
         // No wait for the journal: a change to undo means it was ready long ago.
-        synchronized(lock) {
-            val last = undoable.lastOrNull() ?: return
-            commit(last.inverse()) {
-                undoable.removeLast()
-                redoable.addLast(last)
+        val inverse = synchronized(lock) {
+            val last = undoable.lastOrNull() ?: return null
+            last.inverse().also {
+                commit(it) {
+                    undoable.removeLast()
+                    redoable.addLast(last)
+                }
             }
         }
         scheduleAutosave()
+        return inverse
     }
 
-    /** Puts back the last change [undo] took back. */
-    fun redo() {
-        synchronized(lock) {
-            val next = redoable.lastOrNull() ?: return
-            commit(next) {
-                redoable.removeLast()
-                undoable.addLast(next)
+    /** Puts back the last change [undo] took back, and returns it (null if there was none). */
+    fun redo(): Change? {
+        val next = synchronized(lock) {
+            val next = redoable.lastOrNull() ?: return null
+            next.also {
+                commit(it) {
+                    redoable.removeLast()
+                    undoable.addLast(it)
+                }
             }
         }
         scheduleAutosave()
+        return next
     }
 
     /**
