@@ -9,6 +9,7 @@ import com.fzizzle.epapernotes.ink.StrokeKind
 import com.fzizzle.epapernotes.ink.StrokePoint
 import com.fzizzle.epapernotes.pdf.TestPdfs.darkHeightAt
 import com.fzizzle.epapernotes.pdf.TestPdfs.isDark
+import com.fzizzle.epapernotes.storage.SafeSave
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -75,5 +76,16 @@ class PdfFileStrokesTest {
         }
         PdfFile.open(out).use { assertEquals(3, it.foreignAnnotationCount(0)) }
         assertEquals(before, TestPdfs.foreignSignature(out))
+    }
+
+    /** MuPDF keeps the source file open while it's replaced underneath, which is how autosave will work. */
+    @Test fun safeSaveOverSourceFile() {
+        val source = TestPdfs.blank(dir)
+        PdfFile.open(source).use { pdf ->
+            pdf.addStroke(0, line)
+            SafeSave.replace(source) { pdf.saveTo(it) }
+        }
+        PdfFile.open(source).use { assertEquals(1, it.strokes(0).size) }
+        assertTrue(!SafeSave.tempFileFor(source).exists())
     }
 }
