@@ -114,9 +114,19 @@ class WritingActivity : Activity() {
             Log.i(TAG, "fingers down: pause fast-ink")
             pausePenAndRedraw()
         }
-        pages.onFingerGestureEnd = {
-            Log.i(TAG, "fingers up: resume fast-ink")
-            pen.resume()
+        pages.onFingerGestureEnd = { moved ->
+            if (moved) {
+                // Wipe fast-ink's leftover copy of the strokes, then hand the pen back.
+                Log.i(TAG, "fingers up after moving: clean refresh, then resume fast-ink")
+                pages.invalidate()
+                pages.post {
+                    pen.cleanRefresh(pages)
+                    handler.postDelayed({ pen.resume() }, CLEAN_REFRESH_MS)
+                }
+            } else {
+                Log.i(TAG, "fingers up: resume fast-ink")
+                pen.resume()
+            }
         }
         pages.onPageShown = { page -> if (page == pages.viewport?.page) showWithoutFastInk() }
         choose(Tool.PEN)
@@ -244,6 +254,9 @@ class WritingActivity : Activity() {
     companion object {
         const val EXTRA_PATH = "path"
         const val SHOW_PAUSE_MS = 150L
+
+        /** A full e-ink refresh takes about this long; the pen comes back after it. */
+        const val CLEAN_REFRESH_MS = 450L
         private const val TAG = "Notes"
     }
 }

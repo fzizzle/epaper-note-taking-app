@@ -5,6 +5,8 @@ import android.graphics.Rect
 import android.view.View
 import com.fzizzle.epapernotes.ink.StrokeKind
 import com.fzizzle.epapernotes.ink.StrokeStyle
+import com.onyx.android.sdk.api.device.epd.EpdController
+import com.onyx.android.sdk.api.device.epd.UpdateMode
 import com.onyx.android.sdk.data.note.TouchPoint
 import com.onyx.android.sdk.pen.RawInputCallback
 import com.onyx.android.sdk.pen.TouchHelper
@@ -57,6 +59,16 @@ class PenInput(private val view: View, private val onStroke: (List<FloatArray>) 
 
     fun resume() {
         helper?.setRawDrawingEnabled(true)
+    }
+
+    /**
+     * A full, clean e-ink refresh of [view]. Fast-ink's own copy of the strokes can stay on the
+     * panel while the page zooms or moves underneath, showing up as stretched, skewed ghosts
+     * (owner's writing session). A full refresh wipes them. It flashes once, so it's only used
+     * after the page has moved.
+     */
+    fun cleanRefresh(view: View) {
+        EpdController.invalidate(view, UpdateMode.GC)
     }
 
     fun setLimit(limit: Rect) {

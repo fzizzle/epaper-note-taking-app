@@ -30,7 +30,8 @@ class PageView(context: Context) : View(context) {
 
     /** Fast-ink must pause while fingers move the page, so these tell the screen when. */
     var onFingerGestureStart: () -> Unit = {}
-    var onFingerGestureEnd: () -> Unit = {}
+    /** [moved] is true when the gesture zoomed or moved the page. */
+    var onFingerGestureEnd: (moved: Boolean) -> Unit = {}
     var onViewportChanged: () -> Unit = {}
 
     /** Called after a page rendering is put on screen. */
@@ -57,6 +58,7 @@ class PageView(context: Context) : View(context) {
     private var pinching = false
     private var fingersDown = false
     private var pastEdge = 0f
+    private var movedThisGesture = false
 
     private val placeholder = Paint().apply { color = Color.rgb(235, 235, 235) }
     private val pagePaint = Paint(Paint.FILTER_BITMAP_FLAG)
@@ -181,6 +183,7 @@ class PageView(context: Context) : View(context) {
             val v = viewport ?: return true
             // At normal size the whole page is showing: a swipe does nothing (spec §6.2).
             if (v.zoom <= 1.05f) return true
+            movedThisGesture = true
             val beyond = v.panBy(dx, dy)
             pastEdge = if (beyond != 0f && (pastEdge == 0f || (beyond > 0) == (pastEdge > 0))) pastEdge + beyond else 0f
             invalidate()
@@ -195,6 +198,7 @@ class PageView(context: Context) : View(context) {
         }
 
         override fun onScale(d: ScaleGestureDetector): Boolean {
+            movedThisGesture = true
             viewport?.zoomAround(d.scaleFactor, d.focusX, d.focusY)
             invalidate()
             onViewportChanged()
@@ -232,6 +236,7 @@ class PageView(context: Context) : View(context) {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 pastEdge = 0f
+                movedThisGesture = false
                 if (!fingersDown) {
                     fingersDown = true
                     onFingerGestureStart()
@@ -239,11 +244,11 @@ class PageView(context: Context) : View(context) {
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 // Pushed well past the top or bottom of a zoomed page: turn the page.
-                if (abs(pastEdge) > height * TURN_PUSH_FRACTION) turn(forward = pastEdge > 0)
+                if (abs(pastEdge) > height * TURN_PUSH_FRACTION && turn(forward = pastEdge > 0)) movedThisGesture = true
                 pastEdge = 0f
                 if (fingersDown) {
                     fingersDown = false
-                    onFingerGestureEnd()
+                    onFingerGestureEnd(movedThisGesture)
                 }
             }
         }
