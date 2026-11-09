@@ -41,6 +41,14 @@ class PenInput(
     private var line = LiveLine.PEN
     private var pxPerPt = 1f
 
+    /**
+     * True while Onyx draws the pen's ink on the panel: fast-ink is on and not paused. A stroke
+     * that lands then is drawn by Onyx, so the app must record it. It errs towards true: set
+     * before Onyx starts drawing and cleared only after it has stopped.
+     */
+    @Volatile var drawsInk = false
+        private set
+
     fun on(limit: Rect) {
         if (helper != null) return
         val h = TouchHelper.create(view, callback)
@@ -50,22 +58,28 @@ class PenInput(
         h.enableSideBtnErase(false)
         helper = h
         applyLine()
+        drawsInk = true
         h.setRawDrawingEnabled(true)
     }
 
     fun off() {
         val h = helper ?: return
         h.setRawDrawingEnabled(false)
+        drawsInk = false
         h.closeRawDrawing()
         helper = null
     }
 
     fun pause() {
-        helper?.setRawDrawingEnabled(false)
+        val h = helper ?: return
+        h.setRawDrawingEnabled(false)
+        drawsInk = false
     }
 
     fun resume() {
-        helper?.setRawDrawingEnabled(true)
+        val h = helper ?: return
+        drawsInk = true
+        h.setRawDrawingEnabled(true)
     }
 
     /**

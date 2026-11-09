@@ -48,8 +48,12 @@ class SelectionLayer(private val handlePx: Float, private val listener: Listener
         /** A tap while a paste is armed, in display points of the page. */
         fun pasteAt(at: Pt)
 
-        /** A stroke with a side button held, traced here because fast-ink is off. Screen pixels. */
-        fun traced(button: PenButton, points: List<Pt>)
+        /**
+         * A stroke traced here because fast-ink is off: one with a side button held, or one
+         * written with no selection, snip or paste (just after letting go of a selection, before
+         * fast-ink is back). `[x, y, rawPressure]` in screen pixels, as Onyx reports them.
+         */
+        fun traced(button: PenButton, points: List<FloatArray>)
     }
 
     /** True while the snip tool is chosen. */
@@ -73,7 +77,7 @@ class SelectionLayer(private val handlePx: Float, private val listener: Listener
     }
     private class Paste(val at: Pt) : Gesture
     private class Trace(val button: PenButton) : Gesture {
-        val points = mutableListOf<Pt>()
+        val points = mutableListOf<FloatArray>()
     }
     private object Swallow : Gesture
 
@@ -112,7 +116,7 @@ class SelectionLayer(private val handlePx: Float, private val listener: Listener
         val here = Pt(event.x, event.y)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                gesture = startGesture(here, button, frame)
+                gesture = startGesture(here, event.pressure, button, frame)
                 redraw()
             }
             MotionEvent.ACTION_MOVE -> when (val g = gesture) {
@@ -125,8 +129,8 @@ class SelectionLayer(private val handlePx: Float, private val listener: Listener
                     redraw()
                 }
                 is Trace -> {
-                    for (i in 0 until event.historySize) g.points += Pt(event.getHistoricalX(i), event.getHistoricalY(i))
-                    g.points += here
+                    for (i in 0 until event.historySize) g.points += point(event.getHistoricalX(i), event.getHistoricalY(i), event.getHistoricalPressure(i))
+                    g.points += point(here.x, here.y, event.pressure)
                     redraw()
                 }
                 else -> Unit
@@ -146,19 +150,22 @@ class SelectionLayer(private val handlePx: Float, private val listener: Listener
         return pressBar(x, y, frame)
     }
 
-    private fun startGesture(at: Pt, button: PenButton, frame: PageFrame): Gesture {
+    private fun startGesture(at: Pt, pressure: Float, button: PenButton, frame: PageFrame): Gesture {
         // A side button always does its own thing: button 2 erases, button 1 lassos afresh.
         if (button != PenButton.NONE) {
             if (hasSelection) listener.cleared()
-            return Trace(button).also { it.points += at }
+            return Trace(button).also { it.points += point(at.x, at.y, pressure) }
         }
         if (pasteArmed) return Paste(at)
         if (snipping) return Snip(at)
-        val b = bounds ?: return Swallow
+        // Nothing to work on: the selection was let go and fast-ink is about to come back.
+        // This is writing, so it's traced and recorded like any stroke, never thrown away.
+        val b = bounds ?: return Trace(PenButton.NONE).also { it.points += point(at.x, at.y, pressure) }
         if (pressBar(at.x, at.y, frame)) return Swallow
         val box = SelectionBox(screenBox(b, frame.pdfToScreen))
         val grip = box.gripAt(at.x, at.y, handlePx)
         if (grip == SelectionBox.Grip.NONE) {
+            // The tap that lets go of the selection is just that: it draws no dot.
             listener.cleared()
             return Swallow
         }
@@ -233,8 +240,8 @@ class SelectionLayer(private val handlePx: Float, private val listener: Listener
             is Snip -> canvas.drawRect(min(g.start.x, g.end.x), min(g.start.y, g.end.y), max(g.start.x, g.end.x), max(g.start.y, g.end.y), dashed)
             is Trace -> if (g.points.size > 1) {
                 val path = Path()
-                path.moveTo(g.points[0].x, g.points[0].y)
-                g.points.drop(1).forEach { path.lineTo(it.x, it.y) }
+                path.moveTo(g.points[0][0], g.points[0][1])
+                g.points.drop(1).forEach { path.lineTo(it[0], it[1]) }
                 canvas.drawPath(path, grey)
             }
             else -> Unit
@@ -292,6 +299,9 @@ class SelectionLayer(private val handlePx: Float, private val listener: Listener
     companion object {
         /** A snip smaller than this on a side (display points) is a slip, not a snip. */
         const val MIN_SNIP_PT = 10f
+
+        /** Android's pressure (0..1) as the raw reading Onyx reports, so both make the same stroke. */
+        private fun point(x: Float, y: Float, pressure: Float) = floatArrayOf(x, y, pressure * PenPoints.MAX_PRESSURE)
 
         private fun union(items: List<Item>): Box? {
             if (items.isEmpty()) return null

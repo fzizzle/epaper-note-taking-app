@@ -148,10 +148,16 @@ class WritingActivity : Activity() {
      */
     private var screenPenDown = false
 
-    /** True while [PageView.penHandler] is set. Onyx's thread reads it at pen-down. */
+    /** Whether the screen follows the pen stroke under way, rather than Onyx (see [screenPen]). UI thread. */
+    private var screenStroke = false
+
+    /**
+     * True while [PageView.penHandler] is set, which is only while fast-ink is paused for a
+     * tool. Onyx's thread reads it at pen-down.
+     */
     @Volatile private var screenHasPen = false
 
-    /** Whether the stroke Onyx is following started while Onyx had the pen. */
+    /** Whether the app records the stroke Onyx is following (see where it's set, in onPenDown). */
     @Volatile private var onyxOwnsStroke = true
 
     /** Fast-ink had to go off for a tool while the pen was down; the lift does it. */
@@ -271,7 +277,10 @@ class WritingActivity : Activity() {
             onPenDown = {
                 strokeMapping = penMapping
                 strokeChoice = penChoice
-                onyxOwnsStroke = !screenHasPen
+                // The rule: whatever Onyx draws, the app records. Onyx draws while fast-ink is
+                // on, whoever is meant to have the pen, so only a stroke that lands with fast-ink
+                // paused and the screen holding the pen is left to the screen, which traces it.
+                onyxOwnsStroke = pen.drawsInk || !screenHasPen
                 handler.removeCallbacks(retryShow)
             },
             onStroke = { points -> onPenStroke(points) },
@@ -351,7 +360,13 @@ class WritingActivity : Activity() {
     /** The pen is limited to the page area, below the strip. Fast-ink stays off if a tool needs it off. */
     private fun penOn() {
         pen.on(Rect(0, 0, pages.width, pages.height))
-        if (!fastInkWanted()) pen.pause()
+        if (!fastInkWanted()) {
+            pen.pause()
+        } else {
+            // A resume that onPause cancelled can leave the screen holding the pen.
+            pages.penHandler = null
+            screenHasPen = false
+        }
     }
 
     /**
@@ -383,29 +398,35 @@ class WritingActivity : Activity() {
         val (page, screenToPdf) = strokeMapping ?: penMapping ?: return
         val (button, tool) = strokeChoice ?: penChoice
         if (!onyxOwnsStroke) {
-            // The screen had the pen (a selection, snip or paste) when this stroke began, and it
-            // has handled it already.
+            // Fast-ink was paused and the screen had the pen (a selection, snip or paste) when
+            // this stroke began: Onyx drew nothing, and the screen has handled it already.
             Log.i(TAG, "stroke from Onyx ignored: the screen had the pen")
             return
         }
         Log.i(TAG, "stroke page=$page tool=$tool button=$button points=${points.size}")
         when (tool) {
-            Tool.PEN, Tool.HIGHLIGHTER -> {
-                val kind = if (tool == Tool.HIGHLIGHTER) StrokeKind.HIGHLIGHTER else StrokeKind.PEN
-                val (_, stroke) = PenPoints.toStroke(kind, points) { x, y -> page to screenToPdf.map(Pt(x, y)) } ?: return
-                session.addStroke(page, stroke)
-                runOnUiThread { pages.addStroke(page, stroke) }
-            }
+            Tool.PEN, Tool.HIGHLIGHTER -> write(page, screenToPdf, tool, points)
             Tool.ERASER -> erase(page, points.map { screenToPdf.map(Pt(it[0], it[1])) })
             Tool.LASSO -> lasso(page, points.map { screenToPdf.map(Pt(it[0], it[1])) })
             Tool.SNIP -> Unit // fast-ink is off while snipping (ToolState.fastInkOn): the selection layer has it
         }
     }
 
+    /**
+     * A pen or highlighter stroke, `[x, y, rawPressure]` in screen pixels, recorded as ink: into
+     * the journal straight away, then onto the page view's own copy. Any thread.
+     */
+    private fun write(page: Int, screenToPdf: Affine, tool: Tool, points: List<FloatArray>) {
+        val kind = if (tool == Tool.HIGHLIGHTER) StrokeKind.HIGHLIGHTER else StrokeKind.PEN
+        val (_, stroke) = PenPoints.toStroke(kind, points) { x, y -> page to screenToPdf.map(Pt(x, y)) } ?: return
+        session.addStroke(page, stroke)
+        runOnUiThread { pages.addStroke(page, stroke) }
+    }
+
     /** Button 2's trail, from Onyx's erase callbacks, on Onyx's thread. */
     private fun onEraseTrail(points: List<FloatArray>) {
         val (page, screenToPdf) = strokeMapping ?: penMapping ?: return
-        if (!onyxOwnsStroke) return // the screen had the pen; it traced this itself
+        if (!onyxOwnsStroke) return // fast-ink was paused and the screen had the pen; it traced this itself
         Log.i(TAG, "stroke page=$page tool=${Tool.ERASER} button=${PenButton.ERASER_END} points=${points.size} (erase callback)")
         erase(page, points.map { screenToPdf.map(Pt(it[0], it[1])) })
     }
@@ -526,15 +547,18 @@ class WritingActivity : Activity() {
             if (done != null) setSelection(page, done.items, notShownYet = true) else toolStateChanged()
         }
 
-        override fun traced(button: PenButton, points: List<Pt>) {
+        override fun traced(button: PenButton, points: List<FloatArray>) {
             val (page, screenToPdf) = penMapping ?: return
             val tool = toolState.strokeTool(button)
             Log.i(TAG, "stroke page=$page tool=$tool button=$button points=${points.size} (traced, fast-ink off)")
-            val pdf = points.map { screenToPdf.map(it) }
+            val pdf by lazy { points.map { screenToPdf.map(Pt(it[0], it[1])) } }
             when (tool) {
+                // Written in the moment before fast-ink came back, say just after letting go of
+                // a selection: ink like any other, recorded the way an Onyx stroke is.
+                Tool.PEN, Tool.HIGHLIGHTER -> write(page, screenToPdf, tool, points)
                 Tool.ERASER -> erase(page, pdf)
                 Tool.LASSO -> lasso(page, pdf)
-                else -> Unit
+                Tool.SNIP -> Unit // the snip tool never traces: the layer has its rectangle
             }
         }
     }
@@ -602,22 +626,31 @@ class WritingActivity : Activity() {
             handler.postDelayed(resumeFastInk, SHOW_PAUSE_MS)
             return
         }
-        pages.penHandler = screenPen
-        screenHasPen = true
         // Set before the check, so a lift from here on sees it and does the pause.
         pauseWhenLifted = true
         if (pen.isWriting) {
+            // Onyx keeps the pen, and the next stroke too if it lands before the pause: Onyx
+            // draws it, so it must reach onPenStroke, not the screen.
             Log.i(TAG, "fast-ink off for the tool once the pen lifts")
             return
         }
         pauseWhenLifted = false
         Log.i(TAG, "fast-ink off for the tool")
         pen.pause()
+        // Only now, with fast-ink paused, does the screen take the pen.
+        pages.penHandler = screenPen
+        screenHasPen = true
     }
 
-    /** Pen events while fast-ink is off for a tool. UI thread. */
-    private val screenPen: (MotionEvent) -> Boolean = { e ->
+    /**
+     * Pen events while fast-ink is off for a tool. UI thread. A stroke that lands while Onyx
+     * draws after all (fast-ink back on with the screen still holding the pen) is Onyx's, and
+     * Onyx's callback records it (see onPenDown); the screen leaves it alone, or it would count twice.
+     */
+    private val screenPen: (MotionEvent) -> Boolean = screen@{ e ->
         val m = e.actionMasked
+        if (m == MotionEvent.ACTION_DOWN) screenStroke = !pen.drawsInk
+        if (!screenStroke) return@screen false
         if (m == MotionEvent.ACTION_DOWN) {
             screenPenDown = true
             handler.removeCallbacks(retryShow)
