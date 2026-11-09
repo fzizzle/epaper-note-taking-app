@@ -44,13 +44,23 @@ class DevStartActivity : Activity() {
             .filter { it.isFile && it.name.endsWith(".pdf", ignoreCase = true) && !SafeSave.isTempFile(it.name) }
             .sortedBy { it.path }
             .toList()
+        // The file opened last goes first, so coming back to the app is one tap.
+        val last = getSharedPreferences(PREFS, MODE_PRIVATE).getString(LAST_OPENED, null)?.let { File(it) }?.takeIf { it.exists() }
+        val rows = listOfNotNull(last) + pdfs
+        val labels = listOfNotNull(last?.let { "▶  Continue: ${it.name}" }) + pdfs.map { it.relativeTo(root).path }
         val list = ListView(this)
-        list.adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, pdfs.map { it.relativeTo(root).path })
-        list.setOnItemClickListener { _, _, position, _ -> open(pdfs[position]) }
+        list.adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, labels)
+        list.setOnItemClickListener { _, _, position, _ -> open(rows[position]) }
         setContentView(list)
     }
 
     private fun open(pdf: File) {
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(LAST_OPENED, pdf.path).apply()
         startActivity(Intent(this, WritingActivity::class.java).putExtra(WritingActivity.EXTRA_PATH, pdf.path))
+    }
+
+    private companion object {
+        const val PREFS = "dev-start"
+        const val LAST_OPENED = "last-opened"
     }
 }
