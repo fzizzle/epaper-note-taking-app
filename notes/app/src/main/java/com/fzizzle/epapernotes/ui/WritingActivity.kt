@@ -52,8 +52,9 @@ import kotlin.math.min
 
 /**
  * The writing screen (spec §6.2): one page at a time fills the screen under one thin strip:
- * ← library, the tools, undo and redo, Paste (only once there's something to paste), the ⋯
- * page menu, and ‹ page indicator ›.
+ * ← library at the left; in the middle an island with the tools, undo and redo, and Paste (only
+ * once there's something to paste); at the right the ⋯ page menu and ‹ page indicator ›. The
+ * status bar is hidden here, so the strip sits at the very top of the screen.
  */
 class WritingActivity : Activity() {
 
@@ -61,6 +62,9 @@ class WritingActivity : Activity() {
     private lateinit var pages: PageView
     private lateinit var indicator: TextView
     private lateinit var lastPages: LastPageStore
+
+    /** TEMPORARY: which island look the owner is trying, kept between documents. */
+    private val stripLook by lazy { StripLook(getSharedPreferences("strip-look", MODE_PRIVATE)) }
     /** The file being written into. It changes once, if the owner saves a damaged file's writing to a copy. */
     private lateinit var path: String
     private var pageCount = 0
@@ -70,6 +74,8 @@ class WritingActivity : Activity() {
     private lateinit var redoButton: StripButton
     private lateinit var pasteButton: StripButton
     private lateinit var menuButton: StripButton
+    private lateinit var island: IslandRow
+    private lateinit var stripView: View
     private lateinit var previousButton: StripButton
     private lateinit var nextButton: StripButton
     private val toolState = ToolState()
@@ -183,8 +189,9 @@ class WritingActivity : Activity() {
             pages.penHandler = null
             screenHasPen = false
         }
-        // Onyx writing means fast-ink is on already.
-        if (fastInkWanted() && !pen.isWriting) {
+        // Onyx writing means fast-ink is on already. Switching it on again when it was never
+        // paused (choosing another tool) makes Onyx refresh the whole screen, so not then.
+        if (fastInkWanted() && !pen.isWriting && !pen.drawsInk) {
             Log.i(TAG, "resume fast-ink")
             pen.resume()
         }
@@ -203,34 +210,48 @@ class WritingActivity : Activity() {
             fontFeatureSettings = "tnum" // even-width digits, so the number doesn't jiggle as pages turn
             setOnClickListener { askForPage() } // tap the number to jump to a page
         }
-        val stripHeight = (resources.displayMetrics.heightPixels * 0.05f).toInt() // about 5% (spec §6.2)
-        layer = SelectionLayer(handlePx = stripHeight / 3f, listener = selectionListener) { pages.invalidate() }
+        // A little under 5% of the height (spec §6.2): the owner asked for it slightly thinner.
+        val stripHeight = (resources.displayMetrics.heightPixels * 0.044f).toInt()
+        // The selection's handles keep the size they had with the 5% strip.
+        layer = SelectionLayer(handlePx = resources.displayMetrics.heightPixels * 0.05f / 3f, listener = selectionListener) { pages.invalidate() }
         pages.selectionLayer = layer
         pages.onFingerTap = { x, y -> pages.frame()?.let { layer.onFingerTap(x, y, it) } }
         val gap = stripHeight / 8
-        // In the spec's order (§6.2), a wider gap after ← and after the tools.
-        val strip = StripRow(this, side = stripHeight - 2 * gap, gap = gap).apply { setBackgroundColor(Color.WHITE) }
-        fun button(glyph: Glyph, description: String, gaps: Int = 1, onClick: () -> Unit) =
+        val side = stripHeight - 2 * gap
+        val left = StripRow(this, side = side, gap = gap)
+        island = IslandRow(this, side = side, gap = gap / 3).apply { style = stripLook.style }
+        val right = StripRow(this, side = side, gap = gap)
+        fun button(row: StripRow, glyph: Glyph, description: String, gaps: Int = 1, onClick: () -> Unit) =
             StripButton(this, glyph, description).also {
+                it.showsPress = false
                 it.setOnClickListener { onClick() }
-                strip.addSquare(it, gaps)
+                row.addSquare(it, gaps)
             }
-        button(Glyph.BACK, "Back to the list", gaps = 3) { leave() }
+        button(left, Glyph.BACK, "Back to the list", gaps = 0) { leave() }
         toolButtons = mapOf(
-            Tool.PEN to button(Glyph.PEN, "Pen") { choose(Tool.PEN) },
-            Tool.HIGHLIGHTER to button(Glyph.HIGHLIGHTER, "Highlighter") { choose(Tool.HIGHLIGHTER) },
-            Tool.ERASER to button(Glyph.ERASER, "Eraser") { choose(Tool.ERASER) },
-            Tool.LASSO to button(Glyph.LASSO, "Lasso select") { choose(Tool.LASSO) },
-            Tool.SNIP to button(Glyph.SNIP, "Snip", gaps = 3) { choose(Tool.SNIP) },
+            Tool.PEN to button(island, Glyph.PEN, "Pen") { choose(Tool.PEN) },
+            Tool.HIGHLIGHTER to button(island, Glyph.HIGHLIGHTER, "Highlighter") { choose(Tool.HIGHLIGHTER) },
+            Tool.ERASER to button(island, Glyph.ERASER, "Eraser") { choose(Tool.ERASER) },
+            Tool.LASSO to button(island, Glyph.LASSO, "Lasso select") { choose(Tool.LASSO) },
+            Tool.SNIP to button(island, Glyph.SNIP, "Snip", gaps = 0) { choose(Tool.SNIP) },
         )
-        undoButton = button(Glyph.UNDO, "Undo") { undoOrRedo(undo = true) }.apply { isEnabled = false }
-        redoButton = button(Glyph.REDO, "Redo") { undoOrRedo(undo = false) }.apply { isEnabled = false }
-        pasteButton = button(Glyph.PASTE, "Paste") { togglePaste() }.apply { visibility = View.GONE }
-        menuButton = button(Glyph.MENU, "Page menu") { openPageMenu() }
-        strip.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f)) // pushes the page controls right
-        previousButton = button(Glyph.PREVIOUS, "Previous page") { turn(forward = false) }
-        strip.addView(indicator, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.MATCH_PARENT).apply { marginEnd = gap })
-        nextButton = button(Glyph.NEXT, "Next page", gaps = 0) { turn(forward = true) }
+        island.addDivider(height = side * 2 / 5, gap = gap)
+        undoButton = button(island, Glyph.UNDO, "Undo") { undoOrRedo(undo = true) }.apply { isEnabled = false }
+        redoButton = button(island, Glyph.REDO, "Redo") { undoOrRedo(undo = false) }.apply { isEnabled = false }
+        pasteButton = button(island, Glyph.PASTE, "Paste") { togglePaste() }.apply { visibility = View.GONE }
+        menuButton = button(right, Glyph.MENU, "Page menu", gaps = 2) { openPageMenu() }
+        previousButton = button(right, Glyph.PREVIOUS, "Previous page") { turn(forward = false) }
+        right.addView(indicator, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.MATCH_PARENT).apply { marginEnd = gap })
+        nextButton = button(right, Glyph.NEXT, "Next page", gaps = 0) { turn(forward = true) }
+        // The arrow's tip sits closer to its tile's edge than the chevron's does (0.28 of the
+        // tile against 0.40), so ← gets that much more room and the two marks sit evenly in from
+        // the screen's edges.
+        left.setPadding(gap + (side * 0.12f).toInt(), 0, 0, 0)
+        right.setPadding(0, 0, gap, 0)
+        val strip = CentredStrip(this, gap = gap, start = left, middle = island, end = right, middleHeight = side).apply {
+            setBackgroundColor(Color.WHITE)
+        }
+        stripView = strip
         setContentView(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.WHITE)
@@ -238,13 +259,15 @@ class WritingActivity : Activity() {
             // One hairline between the strip and the page.
             addView(View(this@WritingActivity).apply { setBackgroundColor(RULE) }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 2))
             addView(pages, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
-            // Android 15+ draws apps under the status bar. Keep the strip below it.
+            // The status bar is hidden (hideStatusBar), but a swipe can bring it back for a
+            // moment, and other bars may stay: keep the strip clear of whatever is left.
             setOnApplyWindowInsetsListener { view, insets ->
                 val bars = insets.getInsets(android.view.WindowInsets.Type.systemBars())
                 view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
                 insets
             }
         })
+        hideStatusBar()
 
         session = DocumentSession(
             pdf = File(path),
@@ -309,12 +332,14 @@ class WritingActivity : Activity() {
             if (button != hoverButton) {
                 hoverButton = button
                 publishPenChoice()
+                showStripChange(updateStrip())
             }
         }
         pages.onStylusDown = { button ->
             hoverButton = button
             publishPenChoice()
             strokeChoice = penChoice
+            showStripChange(updateStrip()) // the pen is down: shown once it lifts
         }
         // A palm that lands while the pen is writing must not pause fast-ink (that cuts the
         // stroke) or move the page. Fingers work again as soon as the pen lifts.
@@ -657,17 +682,23 @@ class WritingActivity : Activity() {
      * Never while the pen is down: then the lift does it.
      */
     private fun toolStateChanged() {
-        updateStrip()
+        val stripChanged = updateStrip()
         layer.snipping = toolState.chosen == Tool.SNIP
         layer.pasteArmed = toolState.pasteArmed
-        handler.removeCallbacks(resumeFastInk)
-        pages.invalidate()
         if (toolState.fastInkOn()) {
             pauseWhenLifted = false
+            showStripChange(stripChanged)
+            // Fast-ink on before and after (one drawing tool for another): the page has nothing
+            // new to show, and redrawing it would make the panel refresh the whole screen.
+            if (pen.drawsInk) return
+            handler.removeCallbacks(resumeFastInk)
+            pages.invalidate()
             // Once the screen has drawn the page without the box or rectangle.
             handler.postDelayed(resumeFastInk, SHOW_PAUSE_MS)
             return
         }
+        handler.removeCallbacks(resumeFastInk)
+        pages.invalidate()
         // Set before the check, so a lift from here on sees it and does the pause.
         pauseWhenLifted = true
         if (pen.isWriting) {
@@ -781,6 +812,14 @@ class WritingActivity : Activity() {
         val menu = PopupMenu(this, menuButton)
         menu.menu.add("Rotate this page").setOnMenuItemClickListener { rotate(all = false); true }
         menu.menu.add("Rotate all pages").setOnMenuItemClickListener { rotate(all = true); true }
+        // TEMPORARY, while the owner compares the two island looks; removed once one is chosen.
+        val other = if (island.style == IslandStyle.BLACK) IslandStyle.OUTLINE else IslandStyle.BLACK
+        menu.menu.add(if (other == IslandStyle.BLACK) "Toolbar: black island" else "Toolbar: outlined island")
+            .setOnMenuItemClickListener {
+                island.style = other
+                stripLook.style = other
+                true
+            }
         dialogOpen = true
         pen.pause()
         menu.setOnDismissListener {
@@ -875,11 +914,37 @@ class WritingActivity : Activity() {
         toolStateChanged()
     }
 
-    /** The chosen tool inverted, and Paste there once there's something to paste, inverted while armed. */
-    private fun updateStrip() {
-        toolButtons.forEach { (tool, button) -> button.isSelected = toolState.chosen == tool }
-        pasteButton.visibility = if (toolState.showPaste) View.VISIBLE else View.GONE
+    /**
+     * The tool the pen would use now picked out: the chosen one, or Lasso or Eraser while pen
+     * button 1 or 2 is held ([penChoice]). Paste there once there's something to paste, picked
+     * out while armed. Returns whether anything on the strip changed.
+     */
+    private fun updateStrip(): Boolean {
+        val shown = penChoice.second
+        val pasteVisibility = if (toolState.showPaste) View.VISIBLE else View.GONE
+        val changed = toolButtons.any { (tool, button) -> button.isSelected != (tool == shown) } ||
+            pasteButton.visibility != pasteVisibility || pasteButton.isSelected != toolState.pasteArmed
+        toolButtons.forEach { (tool, button) -> button.isSelected = tool == shown }
+        pasteButton.visibility = pasteVisibility
         pasteButton.isSelected = toolState.pasteArmed
+        return changed
+    }
+
+    /**
+     * The screen ignores normal drawing while fast-ink is on, so a strip that [changed] then
+     * is put on the panel by itself (owner-tested: it shows). No pause: a pause refreshes the
+     * page, and a stroke begun in it gets no live line. With fast-ink off it's on screen already.
+     */
+    private fun showStripChange(changed: Boolean) {
+        if (changed && fastInkWanted()) pen.refreshAlone(stripView)
+    }
+
+    /** Full screen while writing: the status bar comes back for a moment with a swipe down from the top. */
+    private fun hideStatusBar() {
+        window.insetsController?.let {
+            it.hide(android.view.WindowInsets.Type.statusBars())
+            it.systemBarsBehavior = android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        }
     }
 
     /**
@@ -1018,4 +1083,11 @@ class WritingActivity : Activity() {
         const val CLEAN_REFRESH_MS = 450L
         private const val TAG = "Notes"
     }
+}
+
+/** TEMPORARY, while the owner compares the two island looks; removed once one is chosen. */
+private class StripLook(private val prefs: android.content.SharedPreferences) {
+    var style: IslandStyle
+        get() = runCatching { IslandStyle.valueOf(prefs.getString("style", null) ?: "") }.getOrDefault(IslandStyle.BLACK)
+        set(value) = prefs.edit().putString("style", value.name).apply()
 }

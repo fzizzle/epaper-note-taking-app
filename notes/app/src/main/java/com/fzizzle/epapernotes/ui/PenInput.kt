@@ -99,6 +99,15 @@ class PenInput(
         EpdController.invalidate(view, UpdateMode.GC)
     }
 
+    /**
+     * Redraws [view] on the panel by itself, without pausing fast-ink and without a flash. For
+     * the strip: fast-ink ignores normal drawing, and a pause would refresh the page and drop
+     * the live line of a stroke begun in it.
+     */
+    fun refreshAlone(view: View) {
+        EpdController.invalidate(view, UpdateMode.GU)
+    }
+
     fun setLimit(limit: Rect) {
         helper?.setLimitRect(limit, emptyList())
     }

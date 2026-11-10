@@ -19,6 +19,9 @@ import android.view.View
  * glance on e-ink. The eraser, lasso and snip show what they leave or take: a tilted block, a
  * dashed loop, a dashed rectangle. Paste is inverted too while it's armed. The library's top bar
  * reuses the strip with refresh (a circling arrow) and new folder (a folder with a plus).
+ *
+ * On the writing strip's island ([island] set) there are no frames: the capsule groups the
+ * buttons, and the selected one sits in a circle of the opposite colour (see [IslandStyle]).
  */
 class StripButton(context: Context, private val glyph: Glyph, description: String) : View(context) {
 
@@ -38,6 +41,14 @@ class StripButton(context: Context, private val glyph: Glyph, description: Strin
 
     private val isTool get() = glyph in TOOLS
 
+    /** The island this button sits on, or null for a plain strip button. */
+    var island: IslandStyle? = null
+        set(value) {
+            if (value == field) return
+            field = value
+            invalidate()
+        }
+
     /** Dashes for the lasso and snip marks, sized to the tile. */
     private var dashes: DashPathEffect? = null
 
@@ -49,9 +60,15 @@ class StripButton(context: Context, private val glyph: Glyph, description: Strin
         invalidate()
     }
 
+    /**
+     * Whether a press is drawn (inverted while held). Off on the writing strip: fast-ink keeps
+     * it off the panel anyway, and each redraw there costs a full-screen e-ink update.
+     */
+    var showsPress = true
+
     override fun drawableStateChanged() {
         super.drawableStateChanged()
-        invalidate() // pressed on, pressed off
+        if (showsPress) invalidate() // pressed on, pressed off
     }
 
     /** The pen's mark: a wave that starts heavy and thins out, like a pressed pen lifting away. Built once per size. */
@@ -99,19 +116,27 @@ class StripButton(context: Context, private val glyph: Glyph, description: Strin
     }
 
     override fun onDraw(canvas: Canvas) {
-        val inverted = isEnabled && (isSelected || isPressed)
+        val inverted = isEnabled && (isSelected || (isPressed && showsPress))
+        val onBlack = island == IslandStyle.BLACK
         // Greyed out when there's nowhere to go (‹ on the first page, › on the last, undo with nothing to undo).
         val fg = when {
-            !isEnabled -> DISABLED
-            inverted -> Color.WHITE
+            !isEnabled -> if (onBlack) IslandRow.ON_BLACK_GREY else DISABLED
+            inverted != onBlack -> Color.WHITE
             else -> Color.BLACK
         }
         val s = minOf(width, height).toFloat()
         val cx = width / 2f
         val cy = height / 2f
 
-        if (inverted) canvas.drawColor(Color.BLACK)
-        if (isTool && !inverted) {
+        if (inverted && island != null) {
+            // The circle sits just inside the capsule, the same distance from its top and bottom.
+            ink.style = Paint.Style.FILL
+            ink.color = if (onBlack) Color.WHITE else Color.BLACK
+            canvas.drawCircle(cx, cy, s * 0.4f, ink)
+        } else if (inverted) {
+            canvas.drawColor(Color.BLACK)
+        }
+        if (isTool && !inverted && island == null) {
             // A thin frame marks a tool you can pick; arrows don't need one.
             ink.style = Paint.Style.STROKE
             ink.strokeWidth = 2f
