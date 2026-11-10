@@ -23,7 +23,7 @@ The four sections below come from the [project review of 2026-11-10](docs/superp
 
 [Plan](docs/superpowers/plans/2026-11-10-review-speed.md). Needs Task 5 of the bug fixes first. Every change is measured on the tablet and kept only if it gains.
 
-**In progress on the branch `review-speed` (pushed, not merged).** Code written, laptop tests pass; the tablet run and the pen checks are not finished. Start from [the results so far](docs/superpowers/review-speed-results.md), section "Still to do".
+**In progress on the branch `review-speed` (pushed, not merged).** Code written, laptop tests (287) and tablet tests (77) pass; the pen checks are not done. Start from [the results so far](docs/superpowers/review-speed-results.md), section "Still to do".
 
 - [x] Owner said "execute the speed plan" (2026-11-10), taken as approval of decisions 1 and 2.
 - [x] Measure: the "before" table (Task 1).
@@ -34,7 +34,8 @@ The four sections below come from the [project review of 2026-11-10](docs/superp
 - [ ] Dragging a selection redraws less (Task 6): built, needs the pen check.
 - [x] A snip is written to the journal once (Task 7): 5.6 MB down to 0.27 MB for a snip moved ten times.
 - [ ] Small ones (Task 8): built, needs the tablet check.
-- [ ] One complete run of the tablet tests on a free tablet, then merge.
+- [x] One complete run of the tablet tests on a free tablet (77 pass, 2026-11-10).
+- [ ] Owner pen checks (results, "Still to do" step 2), then merge.
 
 ## Review: missing against the design
 

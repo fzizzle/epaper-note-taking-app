@@ -2,7 +2,7 @@
 
 Run: 2026-11-10 on the Boox Note Air 6 C (Android 16), debug build, MuPDF 1.28.5. Plan: [review-speed](plans/2026-11-10-review-speed.md). Branch: `review-speed`.
 
-**State: all code is written, the laptop tests pass (287), but the work is not finished.** The last full run of the tablet tests was cut off when another build was installed on the tablet, and the screen-side changes have not been checked with a real pen. Do not merge until the steps under "Still to do" are done.
+**State: all code is written, the laptop tests pass (287) and the tablet tests pass (77, 2026-11-10, on a second computer). The screen-side changes have not yet been checked with a real pen.** Do not merge until steps 2 and 3 under "Still to do" are done.
 
 Continuing on another computer: set it up with [notes/SETUP.md](../../notes/SETUP.md) first, and read its step 4 before installing on the tablet.
 
@@ -44,15 +44,7 @@ On a copy of the owner's test file (14.1 MB, 125 pages), unchanged by this work 
 
 ## Still to do
 
-1. **Run the tablet tests on a free tablet.** The last run stopped during `MuPdfStressTest` with "Process crashed", at the same minute another build was installed on the tablet (its log line "strip: refresh alone" is not from this branch). The run before it, with Tasks 1–3, passed everything that is still in the branch. So the crash is probably the install, but that is not proven: Tasks 4–8 have never had a complete tablet run.
-
-   ```
-   source ~/.local/opt/android-env.sh && cd notes
-   ./gradlew :app:installDebug :app:installDebugAndroidTest
-   adb shell am instrument -w com.fzizzle.epapernotes.test/androidx.test.runner.AndroidJUnitRunner
-   ```
-
-   Tests added in this branch that have never run: `aMovedSnipIsNotEncodedAgain`, `layoutIsSizeAndTransformTogether`, `refreshDrawsTheRestOnlyWhenTheyComeOnScreen`.
+1. ~~Run the tablet tests on a free tablet.~~ **Done 2026-11-10:** all 77 pass, among them `MuPdfStressTest` (so the earlier crash was the other install) and the three tests new in this branch (`aMovedSnipIsNotEncodedAgain`, `layoutIsSizeAndTransformTogether`, `refreshDrawsTheRestOnlyWhenTheyComeOnScreen`). The speed check repeated the table above: 1,500 strokes in 5.9 s, `saveTo` 156 ms, reread 0 ms, safe-replace save 185 ms.
 
 2. **Check the screen-side changes with a pen** (Tasks 4, 5, 6, 8). With `adb logcat -s Notes` running:
    - Write a few hundred strokes on one page. `draw ms=` lines appear only after the pen rests, never between strokes. Once past 150 strokes, a line `render requested … (quiet: …)` then `rendered … (quiet)` appears, with no flash and no `show: pause fast-ink` after it.

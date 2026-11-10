@@ -42,6 +42,7 @@ On the first computer this is `~/.local/opt/android-env.sh`, and the plans and c
 ```sh
 # ~/.local/opt/android-env.sh
 export JAVA_HOME="$HOME/.local/opt/jdk-17.0.21+9"   # wherever JDK 17 is; leave out if the system's java is 17
+                                                     # on a Mac, add /Contents/Home to the unpacked folder
 export ANDROID_HOME="$HOME/Android/Sdk"
 export PATH="$JAVA_HOME/bin:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH"
 ```
