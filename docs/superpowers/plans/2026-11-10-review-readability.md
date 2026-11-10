@@ -157,6 +157,50 @@ These are new features, so each needs a yes or no. Any can be left out.
 - [ ] **Step 2: Update the spec** with what was built and which decisions were left out.
 - [ ] **Step 3: Commit, then stop.** The owner runs the checklist; results go in `docs/superpowers/readability-results.md`.
 
+### Task 7: The page drawn on whole pixels (owner, 2026-11-10: "yes do all of that")
+
+Found 2026-11-10: at normal size the page picture is rendered 1:1 (1675 px wide for an A4 page in the 1860×2369 view) but drawn into a `RectF` that starts at x = 92.47 with bitmap filtering on, so every pixel is blended half and half with its neighbour. A screenshot matched that blend (mean difference 0.02 against 1.28 for a pixel-aligned picture). It softens every edge by half a pixel.
+
+**Files:**
+- Modify: `main/ui/Viewport.kt` (`pageToScreen`, `screenToPage`), `main/ui/PageView.kt` (`onDraw`)
+- Test: `test/ui/ViewportTest.kt`
+
+**Interfaces:**
+- `Viewport` keeps `x0`, `y0` as floats (so slow one-finger moves don't lose sub-pixel motion), but `pageToScreen()` and `screenToPage()` use them rounded to whole pixels. Everything built on them (the pen's mapping, the selection layer, `visiblePagePart`, the sharp patch's place, `pageBoundsPx` and so the pen limit) then agrees with where the picture is drawn.
+
+- [ ] **Step 1: Write the failing tests** in `ViewportTest`: `thePageStartsOnAWholePixel` (an A4 page, 595.28×841.89 pt, fitted in a 1860×2369 view: `pageToScreen().map(Pt(0f, 0f))` has whole-number x and y); `screenToPageUndoesPageToScreen` (for a few points, at zoom 1 and zoom 2.3 after a pan by a fraction of a pixel); `aSlowMoveIsNotLost` (ten `panBy(0.3f, 0f)` at zoom 2 move the page 3 px, not 0).
+- [ ] **Step 2: Run and confirm they fail.**
+- [ ] **Step 3: Implement.** In `onDraw`, when the kept picture's size is within 1 px of the page's on-screen size in both directions (normal size, and any zoom that happens to match), draw it unscaled at the page's whole-pixel origin with no filtering; otherwise draw it into `dst` as today.
+- [ ] **Step 4: Run all laptop tests** — pass.
+- [ ] **Step 5: Check on the tablet** (controller): a screenshot at normal size matches a 1:1 render of the page placed on whole pixels. Owner: text is a little crisper; ink still lands under the pen, at normal size and zoomed.
+- [ ] **Step 6: Commit.** `git commit -m "notes: the page is drawn on whole pixels"`
+
+### Task 8: Dark text as black (owner, 2026-11-10: "yes do all of that")
+
+Found 2026-11-10: in the owner's workbook 90% of the text pixels are coloured: body text and headings in dark slate (43, 47, 64), formulas in green and blue; only 3% is black. The Note Air 6 C's colour screen shows black and grey at 300 ppi, but colour only at 150 ppi through its colour filter, dithered, so nearly-black tinted text looks low-resolution.
+
+**The decision (owner):** a switch under ⋯, "Dark text as black", remembered for all documents like Contrast. Pixels that are nearly grey (low colour) are shown as neutral grey of the same lightness, darkened so that dark text becomes black; clearly coloured pixels (green and blue formulas, the highlighter's yellow) keep their colour. Screen only, like Contrast: snips, thumbnails and the PDF are untouched.
+
+**Files:**
+- Modify: `main/ui/PageLook.kt`, `main/ui/ReadingPrefs.kt`, `main/ui/WritingActivity.kt` (the two render callbacks, `openPageMenu`)
+- Test: `test/ui/PageLookTest.kt`, `androidTest/ui/PageLookDeviceTest.kt`
+
+**Interfaces:**
+- `ReadingPrefs.darkTextAsBlack: Boolean` (default false), stored next to `contrast`.
+- `PageLook` gains the dark-text step, applied in the same single pass as the contrast step, on the worker, once per rendering:
+  - `chroma = max(r, g, b) - min(r, g, b)`. A pixel with `chroma <= NEARLY_GREY = 40` is nearly grey: it becomes neutral `v = (299·r + 587·g + 114·b) / 1000`, then `v' = clamp((v - DARK = 96) · 255 / (255 - 96), 0, 255)`, written to r, g and b alike. Then the contrast table, if any, applies to `v'`.
+  - Any other pixel keeps its colour; only the contrast table, if any, applies to each channel, as today.
+  - Alpha is left alone. With the switch off and Normal contrast, nothing is read or written (a no-op, as today).
+- Order in ⋯: Rotate this page, Rotate all pages, Contrast…, Dark text as black (with a tick), Trim margins (with a tick), then the temporary toolbar entry.
+
+- [ ] **Step 1: Write the failing tests** in `PageLookTest`: `darkSlateBecomesBlack` ((43, 47, 64) → (0, 0, 0)); `aTintedGreyBecomesNeutral` ((149, 151, 160) → r = g = b); `whiteStaysWhite`; `greenFormulaKeepsItsColour` ((46, 147, 102) unchanged with Normal contrast); `blueKeepsItsColour` ((62, 125, 232)); `highlighterYellowKeepsItsColour` (the highlighter over white, as the page renders it, from `StrokeStyle.kt`); `offWithNormalChangesNothing`; `contrastAppliesAfterDarkText` (a neutral pixel with both on gets the table applied to `v'`); `alphaIsLeftAlone`.
+- [ ] **Step 2: Run and confirm they fail.**
+- [ ] **Step 3: Implement** in `PageLook` and `ReadingPrefs`; both render callbacks pass the switch with the contrast (a `@Volatile` field, set from the preferences, as for contrast).
+- [ ] **Step 4: The menu.** "Dark text as black" with a tick; changing it stores it, sets the field and calls `pages.dropAllRenderings()`.
+- [ ] **Step 5: Tablet test** in `PageLookDeviceTest`: a full 1860×2480 picture with the switch on and Strongest in under 80 ms.
+- [ ] **Step 6: Check on the tablet** with the owner's workbook: headings and body text sharp and black; green and blue formulas still coloured; highlighter still yellow; a snip pasted with the switch on looks like the page with it off.
+- [ ] **Step 7: Commit.** `git commit -m "notes: dark text can be shown as black"`
+
 ## Not in this plan
 
 - Inverting dark slides, removing coloured backgrounds, or reflowing text: larger features that change what the page looks like rather than how clearly it's drawn. Worth raising only if contrast and trim aren't enough.

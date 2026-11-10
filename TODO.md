@@ -73,6 +73,8 @@ From using the app on the tablet. Worked through on the branch `owner-feedback-f
 - [x] A contrast setting (Task 3): Normal / Stronger / Strongest under ⋯, owner-checked 2026-11-10.
 - [x] Cleaner page turns and a gentler refresh after zooming (Task 4): REGAL for both, owner's choice (2026-11-10).
 - [x] Trim margins (Task 5): a tick under ⋯, owner-checked 2026-11-10.
+- [ ] The page drawn on whole pixels, not half a pixel off (Task 7; owner asked 2026-11-10).
+- [ ] Dark text as black: tinted near-black text shown black, so the colour screen draws it at 300 ppi, not 150 (Task 8; owner asked 2026-11-10).
 - [ ] Owner session (Task 6, hard stop).
 
 ## Next up
