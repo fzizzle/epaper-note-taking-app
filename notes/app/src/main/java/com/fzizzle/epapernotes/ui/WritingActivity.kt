@@ -211,6 +211,18 @@ class WritingActivity : Activity() {
         }
     }
 
+    /**
+     * The clean refresh after a zoom or a move, held for the sharp patch on its way
+     * (PageView.sharpPatchComing): it goes when the patch is shown ([PageView.onPageShown]), or
+     * after [PATCH_WAIT_MS] at the latest, so a zoom ends in one panel update, not two.
+     */
+    private var cleanRefreshHeld = false
+    private val heldCleanRefresh = Runnable {
+        cleanRefreshHeld = false
+        pen.cleanRefresh(pages)
+        handler.postDelayed(resumeFastInk, CLEAN_REFRESH_MS)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         path = intent.getStringExtra(EXTRA_PATH) ?: return finish()
@@ -308,6 +320,22 @@ class WritingActivity : Activity() {
                 }
             }
         }
+        pages.requestRegionRender = { page, part, pxPerPt, token ->
+            // Read now, on the UI thread: every stroke counted reached the PDF before this request.
+            val version = pages.inkVersion(page)
+            session.runOnDocument { pdf ->
+                try {
+                    val started = SystemClock.uptimeMillis()
+                    // Ink solid, like the page's own picture under it; snips keep theirs smoothed.
+                    val bitmap = (pdf as PdfFile).renderRegion(page, part, pxPerPt, smoothInk = false)
+                    Log.i(TAG, "region rendered page=$page ${bitmap.width}x${bitmap.height} ms=${SystemClock.uptimeMillis() - started}")
+                    runOnUiThread { pages.regionRendered(page, part, token, version, bitmap) }
+                } catch (e: Exception) {
+                    // The scaled-up page stays on show; the next zoom or move asks again.
+                    Log.w(TAG, "region render failed page=$page", e)
+                }
+            }
+        }
         pages.onViewportChanged = {
             // A pinch comes here on every finger movement, and the line width and the writing
             // area are each a call into Onyx's SDK. Fast-ink is paused while fingers are down,
@@ -366,6 +394,9 @@ class WritingActivity : Activity() {
             Log.i(TAG, "fingers down: pause fast-ink")
             fingerGesture = true
             handler.removeCallbacks(resumeFastInk) // a show's resume mustn't land mid-gesture
+            // Nor the last gesture's refresh: this one's end brings its own.
+            handler.removeCallbacks(heldCleanRefresh)
+            cleanRefreshHeld = false
             pausePenAndRedraw()
         }
         pages.onFingerGestureEnd = { moved ->
@@ -385,9 +416,15 @@ class WritingActivity : Activity() {
                 // Wipe fast-ink's leftover copy of the strokes, then hand the pen back.
                 Log.i(TAG, "fingers up after moving: clean refresh, then resume fast-ink")
                 pages.invalidate()
-                pages.post {
-                    pen.cleanRefresh(pages)
-                    handler.postDelayed(resumeFastInk, CLEAN_REFRESH_MS)
+                if (pages.sharpPatchComing) {
+                    Log.i(TAG, "clean refresh held for the sharp patch")
+                    cleanRefreshHeld = true
+                    handler.postDelayed(heldCleanRefresh, PATCH_WAIT_MS)
+                } else {
+                    pages.post {
+                        pen.cleanRefresh(pages)
+                        handler.postDelayed(resumeFastInk, CLEAN_REFRESH_MS)
+                    }
                 }
             } else {
                 Log.i(TAG, "fingers up: resume fast-ink")
@@ -398,7 +435,13 @@ class WritingActivity : Activity() {
         pages.onPageShown = { page, version ->
             if (page == pages.viewport?.page) {
                 if (version >= previewShownFrom) layer.pageRedrawn()
-                showWithoutFastInk()
+                if (cleanRefreshHeld) {
+                    // The sharp patch after a zoom: the held refresh shows it, in the same update.
+                    handler.removeCallbacks(heldCleanRefresh)
+                    heldCleanRefresh.run()
+                } else {
+                    showWithoutFastInk()
+                }
             }
         }
         choose(Tool.PEN)
@@ -1097,6 +1140,8 @@ class WritingActivity : Activity() {
         // Nothing may turn fast-ink back on in the background; onResume starts it afresh.
         handler.removeCallbacks(retryShow)
         handler.removeCallbacks(resumeFastInk)
+        handler.removeCallbacks(heldCleanRefresh) // it would resume fast-ink after its refresh
+        cleanRefreshHeld = false
         pen.off()
         // The page view's picture may lack the latest strokes ([write]). The screen can stay
         // in view after this (the tablet going to sleep, another window on top), so draw them.
@@ -1213,6 +1258,9 @@ class WritingActivity : Activity() {
 
         /** The refresh after a zoom (REGAL) takes about this long; the pen comes back after it. The owner found the wait fine (2026-11-10). */
         const val CLEAN_REFRESH_MS = 450L
+
+        /** How long the clean refresh after a zoom waits for the sharp patch (see heldCleanRefresh). */
+        const val PATCH_WAIT_MS = 300L
         private const val TAG = "Notes"
     }
 }

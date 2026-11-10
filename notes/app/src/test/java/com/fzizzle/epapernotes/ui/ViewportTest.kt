@@ -2,6 +2,7 @@ package com.fzizzle.epapernotes.ui
 
 import com.fzizzle.epapernotes.geometry.Affine
 import com.fzizzle.epapernotes.geometry.Pt
+import com.fzizzle.epapernotes.ink.Box
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -133,6 +134,30 @@ class ViewportTest {
         slide.zoomAround(1.5f, 930f, 1150f)
         val slideHeight = 540 * (1860f / 960) * 1.5f
         assertArrayEquals(floatArrayOf(0f, (2300 - slideHeight) / 2, 1860f, (2300 + slideHeight) / 2), slide.pageBoundsPx(), 0.5f)
+    }
+
+    private fun assertBox(expected: Box, actual: Box) {
+        assertArrayEquals(floatArrayOf(expected.x0, expected.y0, expected.x1, expected.y1), floatArrayOf(actual.x0, actual.y0, actual.x1, actual.y1), 0.01f)
+    }
+
+    /** The sharp patch drawn over a zoomed page is this part of it, so it must be what's on screen. */
+    @Test fun visiblePagePartMatchesTheScreen() {
+        val v = Viewport(listOf(SizePt(600f, 800f)), viewWidthPx = 1200, viewHeightPx = 1600)
+        v.zoomAround(2f, 600f, 800f)
+        assertBox(Box(150f, 200f, 450f, 600f), v.visiblePagePart()) // the middle 300 × 400 pt
+    }
+
+    /** A zoomed slide still shorter than the screen: the part stops at the page's top and bottom. */
+    @Test fun visiblePagePartIsClippedToThePage() {
+        val v = Viewport(listOf(SizePt(960f, 540f)), viewWidthPx = 1860, viewHeightPx = 2300)
+        v.zoomAround(1.5f, 930f, 1150f)
+        val pxPerPt = (1860f / 960) * 1.5f
+        val across = 1860 / pxPerPt // as wide as the screen, centred
+        assertBox(Box((960 - across) / 2, 0f, (960 + across) / 2, 540f), v.visiblePagePart())
+    }
+
+    @Test fun atNormalSizeThePartIsTheWholePage() {
+        assertBox(Box(0f, 0f, 612f, 792f), viewport().visiblePagePart())
     }
 
     @Test fun goToShowsThatPage() {

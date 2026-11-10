@@ -69,17 +69,17 @@ These are new features, so each needs a yes or no. Any can be left out.
   - `fun Viewport.visiblePagePart(): Box` — the part of the page on screen, in page-display points, clipped to the page.
   - In `PageView`: `var requestRegionRender: (page: Int, part: Box, pxPerPt: Float, token: Int) -> Unit` and `fun regionRendered(page: Int, part: Box, token: Int, version: Int, bitmap: Bitmap)`. One "sharp patch" is kept at a time: `private class Patch(val page: Int, val part: Box, val bitmap: Bitmap, val version: Int)`. A request made when the fingers lift carries a rising `token`; an answer with an old token, or for a page no longer on show, is recycled and dropped.
 
-- [ ] **Step 1: Write the failing tests** in `ViewportTest`: `visiblePagePartMatchesTheScreen` (at zoom 2 around the centre of a 600×800 pt page in a 1200×1600 view: the part is the middle 300×400 pt); `visiblePagePartIsClippedToThePage` (a short page at zoom 1.5); `atNormalSizeThePartIsTheWholePage`.
-- [ ] **Step 2: Run and confirm they fail.**
-- [ ] **Step 3: Implement.**
+- [x] **Step 1: Write the failing tests** in `ViewportTest`: `visiblePagePartMatchesTheScreen` (at zoom 2 around the centre of a 600×800 pt page in a 1200×1600 view: the part is the middle 300×400 pt); `visiblePagePartIsClippedToThePage` (a short page at zoom 1.5); `atNormalSizeThePartIsTheWholePage`.
+- [x] **Step 2: Run and confirm they fail.**
+- [x] **Step 3: Implement.**
   - Asking: when a finger gesture ends with `zoom > 1.05`, and again whenever the page's ink changes while zoomed (`pageChanged`), ask for `visiblePagePart()` at `pxPerPt()`. The size is at most the view's size in pixels, so it needs less memory than today's 1.5× whole page.
   - Drawing: `onDraw` draws the whole-page picture as today (it is what shows while fingers move), then, when the patch is for this page, this exact part and not stale (`InkOverlay.isStale`), draws the patch over it at its place with **no** bitmap filtering. Overlay strokes newer than the patch's version are drawn on top, as for the page.
   - Dropping: any zoom, move, page turn or rotation drops the patch at once and recycles it; the whole-page picture is on screen until the next one arrives.
   - `renderWidth`: zoomed in, use the fitted width (1×) instead of 1.5×; the patch now carries the sharpness. This is what pays for the patch.
   - Showing: a patch arriving calls `onPageShown`, so it reaches the panel through the existing pause. After a zoom, hold the clean refresh until the patch has arrived or 300 ms have passed, so a zoom ends in one panel update and not two (review 4.6).
-- [ ] **Step 4: Run laptop tests** — pass.
+- [x] **Step 4: Run laptop tests** — pass.
 - [ ] **Step 5: Check on the tablet.** On a text-heavy page: zoom to about 3×; small text is crisp within a moment of lifting the fingers. Write a word: it lands under the pen. Erase it: the patch redraws without it. Move the page with one finger, turn the page, zoom back out: no stale patch is ever shown in the wrong place. Logcat shows one region render per gesture, and its time (`Log.i` it) is under 300 ms on a slide.
-- [ ] **Step 6: Commit.** `git commit -m "notes: zoomed-in text is drawn at its true size"`
+- [x] **Step 6: Commit.** `git commit -m "notes: zoomed-in text is drawn at its true size"`
 
 ### Task 3: Contrast (decision 2; skip if Task 1 made it unnecessary)
 

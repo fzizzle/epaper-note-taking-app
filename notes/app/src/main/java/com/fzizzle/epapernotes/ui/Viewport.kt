@@ -2,6 +2,7 @@ package com.fzizzle.epapernotes.ui
 
 import com.fzizzle.epapernotes.geometry.Affine
 import com.fzizzle.epapernotes.geometry.Pt
+import com.fzizzle.epapernotes.ink.Box
 
 /** A page's size as shown (rotation applied), in PDF points. */
 data class SizePt(val w: Float, val h: Float)
@@ -91,6 +92,18 @@ class Viewport(private val sizes: List<SizePt>, private val viewWidthPx: Int, pr
         minOf(x0 + pageWidthPx(), viewWidthPx.toFloat()),
         minOf(y0 + pageHeightPx(), viewHeightPx.toFloat()),
     )
+
+    /**
+     * The part of the page on screen, in display points: the view cut to the page's edges.
+     * Zoomed in, this is what is drawn again at its true size once the fingers lift (PageView's
+     * sharp patch), so it is never bigger than the view in pixels.
+     */
+    fun visiblePagePart(): Box {
+        val b = pageBoundsPx()
+        val topLeft = screenToPage(b[0], b[1])
+        val bottomRight = screenToPage(b[2], b[3])
+        return Box(topLeft.x, topLeft.y, bottomRight.x, bottomRight.y)
+    }
 
     /** Display points on the page to screen pixels: what drawing the page needs. */
     fun pageToScreen(): Affine = Affine.scale(pxPerPt()).then(Affine.translate(x0, y0))
