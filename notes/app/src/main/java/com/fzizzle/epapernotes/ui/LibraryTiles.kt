@@ -111,8 +111,11 @@ class TileView(context: Context) : View(context) {
     fun show(entry: Entry, bitmap: Bitmap?, thumbnails: Boolean) {
         if (entry == this.entry && bitmap === this.bitmap && thumbnails == this.thumbnails) return
         if (entry.name != this.entry?.name) nameLayout = null
+        // A file just written (say, the document just left) keeps its old picture until the
+        // new one is drawn, rather than flashing grey for a moment on e-ink.
+        val stillThisFile = thumbnails && this.thumbnails && entry.file == this.entry?.file
         this.entry = entry
-        this.bitmap = bitmap
+        this.bitmap = bitmap ?: this.bitmap.takeIf { stillThisFile }
         this.thumbnails = thumbnails
         invalidate()
     }

@@ -23,6 +23,7 @@ import android.widget.GridView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import com.fzizzle.epapernotes.doc.DocumentSession
 import com.fzizzle.epapernotes.library.Entry
 import com.fzizzle.epapernotes.library.FolderEntry
 import com.fzizzle.epapernotes.library.FolderListing
@@ -96,8 +97,10 @@ class LibraryActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        val backFromDocument = opening
         opening = false
         resumedAt = SystemClock.uptimeMillis()
+        logFrameDrawn(resumedAt)
         if (!Environment.isExternalStorageManager()) {
             showingLibrary = false
             return setContentViewInsideBars(fileAccessPrompt(this))
@@ -122,7 +125,10 @@ class LibraryActivity : Activity() {
             folder = prefs.folderOnShow?.takeIf { it.startsWith(root) } ?: root
             shownFolder = null
         }
-        list()
+        // Back from a document, its last save is still landing (spec §7.2): list once it has,
+        // so the file's new size and date redraw its tile now, not when the folder watch
+        // notices 0.4 s later. The folder as it was stays on screen meanwhile.
+        list(afterSaveOf = if (backFromDocument && shownFolder != null) prefs.lastOpened else null)
     }
 
     override fun onStop() {
@@ -228,12 +234,13 @@ class LibraryActivity : Activity() {
     private fun columnsFor(config: Configuration) = if (config.orientation == Configuration.ORIENTATION_LANDSCAPE) 7 else 5
 
     /** Reads the folder on show on [disk], then shows it. Unchanged contents leave the screen alone (no e-ink refresh). */
-    private fun list(redrawTiles: Boolean = false) {
+    private fun list(redrawTiles: Boolean = false, afterSaveOf: File? = null) {
         val root = root ?: return
         val wanted = folder ?: root
         val ask = ++listed
         val last = prefs.lastOpened
         disk.execute {
+            afterSaveOf?.let { DocumentSession.awaitClosed(it, LEFT_SAVE_WAIT_MS) }
             val start = SystemClock.uptimeMillis()
             // The folder went away (deleted or moved on a laptop): show the nearest one left.
             var shown = wanted
@@ -278,6 +285,13 @@ class LibraryActivity : Activity() {
                 return true
             }
         })
+    }
+
+    /** "library frame": from onResume to the first frame handed to the screen (Task 6, with "library shown"). */
+    private fun logFrameDrawn(since: Long) {
+        window.decorView.viewTreeObserver.registerFrameCommitCallback {
+            Log.i(TAG, "library frame ms=${SystemClock.uptimeMillis() - since}")
+        }
     }
 
     private fun goTo(target: File) {
@@ -370,5 +384,7 @@ class LibraryActivity : Activity() {
         const val TAG = "Notes"
         /** Check hook, like `--es path`: the library folder, set without the chooser. */
         const val EXTRA_ROOT = "root"
+        /** The longest the first listing waits for a document's last save; it's usually well under a second. */
+        const val LEFT_SAVE_WAIT_MS = 3000L
     }
 }

@@ -206,7 +206,7 @@ class WritingActivity : Activity() {
                 it.setOnClickListener { onClick() }
                 strip.addSquare(it, gaps)
             }
-        button(Glyph.BACK, "Back to the list", gaps = 3) { finish() }
+        button(Glyph.BACK, "Back to the list", gaps = 3) { leave() }
         toolButtons = mapOf(
             Tool.PEN to button(Glyph.PEN, "Pen") { choose(Tool.PEN) },
             Tool.HIGHLIGHTER to button(Glyph.HIGHLIGHTER, "Highlighter") { choose(Tool.HIGHLIGHTER) },
@@ -242,7 +242,11 @@ class WritingActivity : Activity() {
             journalDir = File(filesDir, "journals"),
             open = { PdfFile.open(it) },
             scheduler = WorkerScheduler(),
-            events = { e -> runOnUiThread { show(e) } },
+            events = { e ->
+                // On the worker. After leaving, this is how a check sees the last save land.
+                if (e == SessionEvent.Saved) Log.i(TAG, "saved")
+                runOnUiThread { show(e) }
+            },
         )
         session.start()
 
@@ -837,21 +841,39 @@ class WritingActivity : Activity() {
         pen.setLiveLine(liveLine(penChoice.second), v?.pxPerPt() ?: 1f)
     }
 
+    /** ← in the strip. Leaving is timed from here or the back key (the "leave:" logs). */
+    private fun leave() {
+        Log.i(TAG, "leave: back")
+        finish()
+    }
+
+    @Deprecated("Logged for the leave timings; then the usual back.")
+    override fun onBackPressed() {
+        Log.i(TAG, "leave: back")
+        @Suppress("DEPRECATION") super.onBackPressed()
+    }
+
     override fun onPause() {
         super.onPause()
+        val start = SystemClock.uptimeMillis()
         // Nothing may turn fast-ink back on in the background; onResume starts it afresh.
         handler.removeCallbacks(retryShow)
         handler.removeCallbacks(resumeFastInk)
         pen.off()
+        val penOff = SystemClock.uptimeMillis()
         pages.viewport?.let { lastPages.set(path, it.page) }
         // Going to the background or leaving: save now, not in a few seconds (spec §7.2).
         session.saveNow()
+        val end = SystemClock.uptimeMillis()
+        Log.i(TAG, "${if (isFinishing) "leave: " else ""}pause ms=${end - start} pen-off=${penOff - start} save-request=${end - penOff}")
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        val start = SystemClock.uptimeMillis()
         handler.removeCallbacksAndMessages(null)
         if (::session.isInitialized) session.close()
+        Log.i(TAG, "leave: destroy ms=${SystemClock.uptimeMillis() - start}")
     }
 
     private fun updateIndicator() {
