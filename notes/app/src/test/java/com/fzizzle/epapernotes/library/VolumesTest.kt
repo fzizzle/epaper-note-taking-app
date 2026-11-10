@@ -53,4 +53,9 @@ class VolumesTest {
         assertEquals("SD card", Volumes.whereIs(listOf(tablet, sd), card))
         assertEquals("/storage/3331-3031/Workbooks", Volumes.whereIs(listOf(tablet), File("/storage/3331-3031/Workbooks")))
     }
+
+    @Test fun aLoneUsbDriveIsNotCalledAnSdCard() = assertEquals(
+        listOf("Tablet storage", "USB drive"),
+        Volumes.labelled(listOf(VolumeInfo(storage, true, null), VolumeInfo(card, false, "USB drive"))).map { it.label },
+    )
 }

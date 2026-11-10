@@ -9,7 +9,7 @@ sealed interface Entry {
     val name: String
 }
 
-data class FolderEntry(override val file: File, override val name: String, val pdfCount: Int) : Entry
+data class FolderEntry(override val file: File, override val name: String, val pdfCount: Int, val folderCount: Int = 0) : Entry
 
 /** [name] has no ".pdf" on the end. */
 data class PdfEntry(override val file: File, override val name: String, val size: Long, val modified: Long) : Entry
@@ -21,13 +21,14 @@ object FolderListing {
      * nor a PDF are left out. Never recursive, so it is cheap enough for one screen load.
      */
     fun list(folder: File): List<Entry> {
+        StrandedRename.recover(folder) // a case-only rename that didn't finish
         val children = folder.listFiles() ?: return emptyList() // unreadable or not a folder
         val folders = ArrayList<FolderEntry>()
         val pdfs = ArrayList<PdfEntry>()
         for (child in children) {
             if (isHidden(child.name)) continue
             if (child.isDirectory) {
-                folders += FolderEntry(child, child.name, countPdfs(child))
+                folders += FolderEntry(child, child.name, countPdfs(child), countFolders(child))
             } else if (isPdf(child.name) && child.isFile) {
                 pdfs += PdfEntry(child, child.name.dropLast(PDF_SUFFIX.length), child.length(), child.lastModified())
             }
@@ -38,6 +39,9 @@ object FolderListing {
 
     private fun countPdfs(folder: File): Int =
         folder.listFiles()?.count { !isHidden(it.name) && isPdf(it.name) && it.isFile } ?: 0
+
+    private fun countFolders(folder: File): Int =
+        folder.listFiles()?.count { !isHidden(it.name) && it.isDirectory } ?: 0
 
     private fun isHidden(name: String) = name.startsWith(".") || SafeSave.isTempFile(name)
 

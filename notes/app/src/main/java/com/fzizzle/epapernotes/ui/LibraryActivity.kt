@@ -225,8 +225,12 @@ class LibraryActivity : Activity() {
             setTextColor(LibraryLook.GRAPHITE)
             gravity = Gravity.CENTER
             visibility = View.GONE
-            // Only clickable while it says the library folder is missing: then it leads to Settings.
-            setOnClickListener { showSettings() }
+            // Only clickable while it says the library folder is missing: then it leads to Settings (or lists again if the folder is back).
+            setOnClickListener {
+                if (!tapAllowed()) return@setOnClickListener
+                // The card may be back since the last listing: look again before sending anyone to Settings.
+                if (root?.isDirectory == true) list() else showSettings()
+            }
             isClickable = false
         }
         return LinearLayout(this).apply {
@@ -287,7 +291,7 @@ class LibraryActivity : Activity() {
         emptyNote.text = when {
             !rootMissing -> "No folders or PDFs here."
             Volumes.isOnCardThatsOut(StorageVolumes.mounted(this), root ?: shown) ->
-                "The library folder is on the SD card, which isn't in. Put the card back, or tap here to choose another folder in Settings (⋯)."
+                "The library folder is on the memory card or USB drive, which isn't in. Put it back, or tap here to choose another folder in Settings (⋯)."
             else -> "The library folder isn't there. Tap here to choose another in Settings (⋯)."
         }
         emptyNote.isClickable = rootMissing

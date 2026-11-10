@@ -136,7 +136,7 @@ class FolderChooser(
     }
 
     private fun showRows(fill: ArrayAdapter<Row>.() -> Unit) {
-        dialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.isEnabled = folder != null
+        dialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.visibility = if (folder != null) View.VISIBLE else View.GONE
         rows.setNotifyOnChange(false)
         rows.clear()
         rows.fill()

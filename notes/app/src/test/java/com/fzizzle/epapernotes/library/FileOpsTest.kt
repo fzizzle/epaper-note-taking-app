@@ -355,4 +355,44 @@ class FileOpsTest {
         assertTrue(journal.exists())
         assertEquals(mapOf(a.path to 2), pages.map)
     }
+
+    /** The process died between the two renames: the file is left hidden, and the next listing puts it back. */
+    @Test fun strandedRenameIsRecovered() {
+        val a = pdf("lecture.pdf")
+        val folder = File(root, "Physics").apply { mkdir() }
+        withAppData(a, page = 2)
+        assertTrue(a.renameTo(File(root, ".lecture.pdf.pnotes-rename")))
+        assertTrue(folder.renameTo(File(root, ".Physics.pnotes-rename")))
+
+        val shown = FolderListing.list(root).map { it.name }
+
+        assertEquals(listOf("Physics", "lecture"), shown)
+        assertTrue(a.exists())
+        assertEquals(setOf("lecture.pdf", "Physics"), root.list()!!.toSet())
+        assertTrue(journalOf(a).exists())
+        assertEquals(mapOf(a.path to 2), pages.map)
+    }
+
+    /** The second rename and the put-back both fail: it stays hidden, then a listing recovers it, and a later rename works. */
+    @Test fun putBackFailureLeavesItRecoverable() {
+        var calls = 0
+        val failsAfterFirst = FileOps(root, journals, pages, moveOnDisk = { from, to -> ++calls == 1 && from.renameTo(to) })
+        val a = pdf("lecture.pdf")
+        val journal = withAppData(a, page = 2)
+
+        assertTrue(failsAfterFirst.rename(a, "Lecture") is FileOps.Result.Refused)
+        assertEquals(listOf(".lecture.pdf.pnotes-rename"), root.list()!!.toList())
+        assertTrue(journal.exists())
+
+        assertEquals(listOf("lecture"), FolderListing.list(root).map { it.name })
+        assertEquals(listOf("lecture.pdf"), root.list()!!.toList())
+        assertEquals(FileOps.Result.Done, ops.rename(a, "Week 1"))
+    }
+
+    @Test fun strandedNameDoesNotBlockTheNextRename() {
+        val a = pdf("lecture.pdf")
+        File(root, ".other.pdf.pnotes-rename").writeText("stranded")
+        assertEquals(FileOps.Result.Done, ops.rename(a, "Week 1"))
+        assertEquals(setOf("Week 1.pdf", "other.pdf"), root.list()!!.toSet())
+    }
 }

@@ -19,13 +19,16 @@ object Volumes {
 
     /**
      * The tablet's storage first, as "Tablet storage", then the others: "SD card" when there's
-     * one, or each its own description when there are several (a card and a USB drive).
+     * one (or its description if that mentions USB), or each its own description when there are several (a card and a USB drive).
      */
     fun labelled(found: List<VolumeInfo>): List<Volume> {
         val others = found.filter { !it.isPrimary }
         return found.filter { it.isPrimary }.map { Volume(PRIMARY_LABEL, it.directory, true) } +
             others.map {
-                val label = if (others.size == 1) CARD_LABEL else it.description?.takeIf(String::isNotBlank) ?: it.directory.name
+                val description = it.description?.takeIf(String::isNotBlank)
+                val label = if (others.size == 1) {
+                    if (description != null && description.contains("USB", ignoreCase = true)) description else CARD_LABEL
+                } else description ?: it.directory.name
                 Volume(label, it.directory, false)
             }
     }

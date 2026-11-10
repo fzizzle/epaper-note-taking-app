@@ -62,6 +62,7 @@ class FileOps(
     fun rename(target: File, newName: String): Result {
         val from = target.normal()
         targetProblem(from)?.let { return Result.Refused(it) }
+        StrandedRename.recover(from.parentFile!!)?.let { log("recovered $it") }
         val typed = newName.trim()
         nameProblem(typed)?.let { return Result.Refused(it) }
         val keepsPdf = from.isFile && from.extension.equals("pdf", ignoreCase = true) && !typed.endsWith(".pdf", ignoreCase = true)
@@ -69,6 +70,9 @@ class FileOps(
         if (name == from.name) return Result.Done
         // Itself excepted, so "lecture.pdf" can become "Lecture.pdf".
         if (isTaken(from.parentFile!!, name, except = from)) return Result.Refused("There's already a '$name' here.")
+        if (File(from.parentFile, StrandedRename.hiddenName(from.name)).exists()) {
+            return Result.Refused("'${from.name}' can't change case just now: a leftover '${StrandedRename.hiddenName(from.name)}' is beside it. Remove that first.")
+        }
         return carry(from, File(from.parentFile, name), failed = "'${from.name}' couldn't be renamed.")
     }
 
@@ -77,6 +81,7 @@ class FileOps(
         val folder = into.normal()
         targetProblem(from)?.let { return Result.Refused(it) }
         if (!isFolderInLibrary(folder)) return Result.Refused("That folder isn't in the library.")
+        StrandedRename.recover(folder)?.let { log("recovered $it") }
         // File.startsWith compares whole names, so "Physics Lab" isn't inside "Physics".
         if (folder.startsWith(from)) return Result.Refused("A folder can't go inside itself.")
         if (folder == from.parentFile) return Result.Done
@@ -126,10 +131,11 @@ class FileOps(
         if (from.parentFile != to.parentFile || from.name == to.name || !from.name.equals(to.name, ignoreCase = true)) {
             return moveOnDisk(from, to)
         }
-        val between = File(from.parentFile, ".${from.name}$CASE_RENAME")
+        val between = File(from.parentFile, StrandedRename.hiddenName(from.name))
         if (between.exists() || !moveOnDisk(from, between)) return false
         if (moveOnDisk(between, to)) return true
-        if (!moveOnDisk(between, from)) log("couldn't put ${from.name} back from ${between.name}")
+        // Still recoverable: the library puts it back under its own name the next time it lists the folder.
+        if (!moveOnDisk(between, from)) log("couldn't put ${from.name} back from ${between.name}; it stays under that name until the folder is listed")
         return false
     }
 
@@ -239,6 +245,34 @@ class FileOps(
     companion object {
         /** A second or two is normal; this only gives up on a session that's stuck. */
         const val SESSION_WAIT_MS = 15_000L
-        private const val CASE_RENAME = ".pnotes-rename"
+    }
+}
+
+/**
+ * A case-only rename goes by a hidden `.X.pnotes-rename` name (see FileOps). If the process died
+ * between its two steps, or the put-back failed, the file is left under that name. With no `X`
+ * beside it (ignoring case) it's renamed back to `X`, its original name, which is the key of its
+ * journal and last page.
+ */
+object StrandedRename {
+    private const val SUFFIX = ".pnotes-rename"
+
+    fun hiddenName(name: String) = ".$name$SUFFIX"
+
+    /** Puts back what is stranded in [folder]; returns the name it restored, or null. */
+    fun recover(folder: File): String? {
+        val children = folder.listFiles() ?: return null
+        var restored: String? = null
+        for (stranded in children) {
+            val n = stranded.name
+            if (!n.startsWith(".") || !n.endsWith(SUFFIX) || n.length <= 1 + SUFFIX.length) continue
+            val original = n.substring(1, n.length - SUFFIX.length)
+            if (children.any { it.name.equals(original, ignoreCase = true) }) continue
+            if (stranded.renameTo(File(folder, original))) {
+                System.err.println("FileOps: put ${stranded.name} back as $original")
+                restored = original
+            } else System.err.println("FileOps: couldn't put ${stranded.name} back as $original")
+        }
+        return restored
     }
 }

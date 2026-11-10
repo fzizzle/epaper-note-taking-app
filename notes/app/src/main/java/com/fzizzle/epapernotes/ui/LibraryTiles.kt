@@ -171,7 +171,13 @@ class TileView(context: Context) : View(context) {
         layout.draw(canvas)
         canvas.restore()
         if (entry is FolderEntry) {
-            val count = when (entry.pdfCount) { 0 -> "No PDFs"; 1 -> "1 PDF"; else -> "${entry.pdfCount} PDFs" }
+            val count = when {
+                entry.pdfCount == 1 -> "1 PDF"
+                entry.pdfCount > 1 -> "${entry.pdfCount} PDFs"
+                entry.folderCount == 1 -> "1 folder"
+                entry.folderCount > 1 -> "${entry.folderCount} folders"
+                else -> "No PDFs"
+            }
             canvas.drawText(count, width / 2f, textTop + 2 * nameLine - countPaint.fontMetrics.ascent, countPaint)
         }
     }

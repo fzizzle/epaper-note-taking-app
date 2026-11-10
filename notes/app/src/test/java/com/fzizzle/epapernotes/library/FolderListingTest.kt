@@ -49,6 +49,16 @@ class FolderListingTest {
         File(sub, "deeper").mkdir(); File(sub, "deeper/three.pdf").createNewFile()
         val e = FolderListing.list(tmp.root).single() as FolderEntry
         assertEquals(2, e.pdfCount)
+        assertEquals(1, e.folderCount)
+    }
+
+    @Test fun folderCountIsVisibleDirectSubfoldersOnly() {
+        val sub = tmp.newFolder("course")
+        File(sub, "Week 1").mkdir(); File(sub, "Week 2").mkdir(); File(sub, ".git").mkdir()
+        File(sub, "Week 1/deeper").mkdir(); File(sub, "a.txt").createNewFile()
+        val e = FolderListing.list(tmp.root).single() as FolderEntry
+        assertEquals(0, e.pdfCount)
+        assertEquals(2, e.folderCount)
     }
 
     @Test fun oddNamesAreListed() {
