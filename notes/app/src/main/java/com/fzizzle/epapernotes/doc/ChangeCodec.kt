@@ -12,31 +12,38 @@ import com.fzizzle.epapernotes.ink.ItemCodec
  *     rot <page>=<deg>,... || <page>=<deg>,...
  *
  * Items never contain `|` (see ItemCodec), so ` || ` is split first, then ` | `.
+ *
+ * A snip's picture is written in full unless the caller gives it a name (see ItemCodec). Only
+ * the journal does, and it keeps the pictures: this object holds nothing between calls.
  */
 object ChangeCodec {
     private const val SIDES = " || "
     private const val ITEMS = " | "
 
-    fun encode(c: Change): String = when (c) {
-        is AddItems -> "add ${c.page} ${items(c.items)}"
-        is RemoveItems -> "del ${c.page} ${items(c.items)}"
-        is ReplaceItems -> "put ${c.page} ${items(c.before)}$SIDES${items(c.after)}"
+    fun encode(c: Change, pictureName: (ByteArray) -> String? = { null }): String = when (c) {
+        is AddItems -> "add ${c.page} ${items(c.items, pictureName)}"
+        is RemoveItems -> "del ${c.page} ${items(c.items, pictureName)}"
+        is ReplaceItems -> "put ${c.page} ${items(c.before, pictureName)}$SIDES${items(c.after, pictureName)}"
         is RotatePages -> "rot ${rotations(c.before)}$SIDES${rotations(c.after)}"
     }
 
-    /** Returns null for anything it doesn't recognise, or any line with a damaged part. */
-    fun decode(line: String): Change? {
+    /**
+     * Returns null for anything it doesn't recognise, or any line with a damaged part: a named
+     * picture that [picture] doesn't have is one.
+     */
+    fun decode(line: String, picture: (String) -> ByteArray? = { null }): Change? {
         val parts = line.split(' ', limit = 3)
         return when (parts[0]) {
-            "add" -> pageAndItems(parts)?.let { (page, rest) -> decodeItems(rest)?.let { AddItems(page, it) } }
-            "del" -> pageAndItems(parts)?.let { (page, rest) -> decodeItems(rest)?.let { RemoveItems(page, it) } }
-            "put" -> pageAndItems(parts)?.let { (page, rest) -> decodePut(page, rest) }
+            "add" -> pageAndItems(parts)?.let { (page, rest) -> decodeItems(rest, picture)?.let { AddItems(page, it) } }
+            "del" -> pageAndItems(parts)?.let { (page, rest) -> decodeItems(rest, picture)?.let { RemoveItems(page, it) } }
+            "put" -> pageAndItems(parts)?.let { (page, rest) -> decodePut(page, rest, picture) }
             "rot" -> decodeRot(line.removePrefix("rot "))
             else -> null
         }
     }
 
-    private fun items(list: List<Item>) = list.joinToString(ITEMS) { ItemCodec.encode(it) }
+    private fun items(list: List<Item>, pictureName: (ByteArray) -> String?) =
+        list.joinToString(ITEMS) { ItemCodec.encode(it, pictureName) }
 
     private fun rotations(map: Map<Int, Int>) = map.entries.joinToString(",") { "${it.key}=${it.value}" }
 
@@ -46,16 +53,16 @@ object ChangeCodec {
         return page to parts[2]
     }
 
-    private fun decodeItems(text: String): List<Item>? {
+    private fun decodeItems(text: String, picture: (String) -> ByteArray?): List<Item>? {
         if (text.isEmpty()) return emptyList()
-        return text.split(ITEMS).map { ItemCodec.decode(it) ?: return null }
+        return text.split(ITEMS).map { ItemCodec.decode(it, picture) ?: return null }
     }
 
-    private fun decodePut(page: Int, rest: String): Change? {
+    private fun decodePut(page: Int, rest: String, picture: (String) -> ByteArray?): Change? {
         val at = rest.indexOf(SIDES)
         if (at < 0) return null
-        val before = decodeItems(rest.substring(0, at)) ?: return null
-        val after = decodeItems(rest.substring(at + SIDES.length)) ?: return null
+        val before = decodeItems(rest.substring(0, at), picture) ?: return null
+        val after = decodeItems(rest.substring(at + SIDES.length), picture) ?: return null
         return ReplaceItems(page, before, after)
     }
 

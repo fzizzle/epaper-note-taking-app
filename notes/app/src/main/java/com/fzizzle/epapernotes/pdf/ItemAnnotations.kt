@@ -38,8 +38,17 @@ internal class ItemAnnotations(private val doc: PDFDocument) {
      * the eraser and lasso read every item on the page each time, so each picture is encoded
      * once. A picture's image object is never changed, only dropped with its annotation
      * ([forget]); a pasted or moved picture gets a new image object.
+     *
+     * A picture the app itself puts in ([addImage]) is remembered with the PNG it came as, so
+     * it's never encoded at all while the file is open: pasting or moving a snip used to cost
+     * one encoding each time. It also means a snip keeps the very same bytes from move to
+     * move, which is what lets the journal write its picture only once (see ChangeJournal).
      */
     private val pngs = HashMap<Int, ByteArray>()
+
+    /** How many pictures had to be encoded from the PDF. For tests. */
+    internal var pictureEncodes = 0
+        private set
 
     /**
      * True for an annotation the app made and can edit: shaped like one of ours, with an id.
@@ -190,6 +199,8 @@ internal class ItemAnnotations(private val doc: PDFDocument) {
 
         val picture = Image(item.png)
         val image = try { doc.addImage(picture) } finally { picture.destroy() }
+        // The PNG is at hand: remember it, rather than have MuPDF make it again (see [pngs]).
+        image.asIndirect().let { number -> if (number > 0) pngs[number] = item.png }
         val xobjects = doc.newDictionary()
         xobjects.put(IMAGE_NAME, image)
         val res = doc.newDictionary()
@@ -253,6 +264,7 @@ internal class ItemAnnotations(private val doc: PDFDocument) {
     }
 
     private fun encode(image: PDFObject): ByteArray {
+        pictureEncodes++
         val loaded = doc.loadImage(image)
         try {
             val pixmap = loaded.toPixmap()

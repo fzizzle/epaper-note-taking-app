@@ -150,6 +150,9 @@ class PdfFile private constructor(private val doc: PDFDocument) : PdfPages {
     /** A page's items decoded from the PDF itself, every time. [items] is the one to use; tests compare the two. */
     internal fun readItems(page: Int): List<Item> = annotationDicts(page).mapNotNull { annotations.read(it) }
 
+    /** How many pictures had to be encoded from the PDF since it was opened. For tests. */
+    internal val pictureEncodes get() = annotations.pictureEncodes
+
     /** Next time, read this page from the PDF again. */
     private fun forgetPage(page: Int) {
         idsByPage.remove(page)

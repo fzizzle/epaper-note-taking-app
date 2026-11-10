@@ -297,6 +297,39 @@ class PdfFileItemsTest {
         assertEquals(40, back.width)
     }
 
+    /**
+     * Review 4.6: a snip the app pasted or moved is handed back with the PNG it came as. MuPDF
+     * isn't asked to make the PNG again, and the bytes stay the same from move to move, so the
+     * journal writes the picture once. Only a picture read from a saved file is encoded, once.
+     */
+    @Test fun aMovedSnipIsNotEncodedAgain() {
+        val out = File(dir, "moved-snip.pdf")
+        PdfFile.open(TestPdfs.blank(dir)).use { pdf ->
+            val pasted = picture("p")
+            assertTrue(pdf.items(0).isEmpty()) // the page is remembered from here on
+            pdf.apply(AddItems(0, listOf(pasted)))
+            var held = pdf.items(0).single() as ImageItem
+            assertTrue(pasted.png.contentEquals(held.png))
+            repeat(3) {
+                val moved = held.copy(box = Box(10f + it, 10f, 110f + it, 110f))
+                pdf.apply(ReplaceItems(0, listOf(held), listOf(moved)))
+                held = pdf.items(0).single() as ImageItem
+                assertTrue(pasted.png.contentEquals(held.png))
+            }
+            assertEquals(pdf.readItems(0), pdf.items(0))
+            assertEquals(0, pdf.pictureEncodes)
+            pdf.saveTo(out)
+        }
+        PdfFile.open(out).use { pdf ->
+            val read = pdf.items(0).single() as ImageItem
+            assertEquals(40, BitmapFactory.decodeByteArray(read.png, 0, read.png.size).width)
+            pdf.apply(ReplaceItems(0, listOf(read), listOf(read.copy(box = Box(50f, 50f, 150f, 150f)))))
+            assertTrue(read.png.contentEquals((pdf.items(0).single() as ImageItem).png))
+            pdf.readItems(0)
+            assertEquals(1, pdf.pictureEncodes)
+        }
+    }
+
     @Test fun foreignAnnotationsAreNeverTouched() {
         val source = TestPdfs.withForeignAnnotations(dir)
         val before = TestPdfs.foreignSignature(source)

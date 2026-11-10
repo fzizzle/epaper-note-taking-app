@@ -1,6 +1,8 @@
 package com.fzizzle.epapernotes.doc
 
 import com.fzizzle.epapernotes.geometry.Pt
+import com.fzizzle.epapernotes.ink.Box
+import com.fzizzle.epapernotes.ink.ImageItem
 import com.fzizzle.epapernotes.ink.InkItem
 import com.fzizzle.epapernotes.ink.Item
 import com.fzizzle.epapernotes.ink.Stroke
@@ -829,5 +831,78 @@ class DocumentSessionTest {
         assertTrue(events.contains(SessionEvent.Saved))
         assertFalse(events.contains(SessionEvent.ChangedOnDisk))
         assertEquals("items=1", pdf.readText())
+    }
+
+    /**
+     * Review 4.6: a snip's picture is in the journal once, and named after that. A snip is
+     * pasted and moved, saved part-way, moved again, undone and redone, and then the app is
+     * killed. The next opening must put back exactly what was recorded after the save.
+     */
+    @Test fun aMovedSnipComesBackAfterAKill() {
+        val png = ByteArray(5000) { (it * 13).toByte() }
+        fun at(x: Float) = ImageItem("snip", Box(x, 0f, x + 100f, 50f), 0, png)
+        val s = session()
+        s.record(AddItems(0, listOf(at(0f))))
+        s.record(ReplaceItems(0, listOf(at(0f)), listOf(at(10f))))
+        s.addStroke(0, dot)
+        s.saveNow()
+        assertEquals("items=2", pdf.readText())
+        val saved = fake.items(0)
+
+        // After the save the journal starts afresh: the picture has to be written into it again.
+        val recorded = listOf(
+            s.record(ReplaceItems(0, listOf(at(10f)), listOf(at(20f))))!!,
+            s.record(ReplaceItems(0, listOf(at(20f)), listOf(at(30f))))!!,
+            s.undo()!!,
+            s.redo()!!,
+            s.record(ReplaceItems(0, listOf(at(30f)), listOf(at(40f))))!!,
+        )
+        val expected = fake.items(0)
+        assertEquals(at(40f), expected.single { it is ImageItem })
+        val journalFile = ChangeJournal.forDocument(journals, pdf).file
+        assertEquals(1, journalFile.readLines().count { it.startsWith("img ") })
+        assertTrue("${journalFile.length()} bytes", journalFile.length() < 2 * png.size)
+
+        // Killed. The file is as the save left it.
+        events.clear()
+        fake = FakePdfPages().apply { pageItems[0] = saved.toMutableList() }
+        val next = session()
+        assertTrue(events.contains(SessionEvent.Replayed(recorded.size)))
+        assertTrue(events.none { it is SessionEvent.EarlierWritingKept })
+        assertEquals(expected, fake.items(0))
+        assertEquals(recorded, journalChanges())
+
+        // And the new session carries on in the same journal: one more move, another kill.
+        next.record(ReplaceItems(0, listOf(at(40f)), listOf(at(50f))))
+        assertEquals(1, journalFile.readLines().count { it.startsWith("img ") })
+        fake = FakePdfPages().apply { pageItems[0] = saved.toMutableList() }
+        session()
+        assertEquals(at(50f), fake.items(0).single { it is ImageItem })
+    }
+
+    /** The same, killed between the PDF being swapped in and the journal hearing of it. */
+    @Test fun aMovedSnipComesBackAfterAKillInTheMiddleOfASave() {
+        val png = ByteArray(5000) { (it * 13).toByte() }
+        fun at(x: Float) = ImageItem("snip", Box(x, 0f, x + 100f, 50f), 0, png)
+        val s = session()
+        s.record(AddItems(0, listOf(at(0f))))
+        s.record(ReplaceItems(0, listOf(at(0f)), listOf(at(10f))))
+        journals.setWritable(false) // the rewrite after the save needs a new file in the folder
+        try {
+            assumeFalse("can't lock the folder here (running as root?)", journals.canWrite())
+            s.saveNow()
+            assertEquals("items=1", pdf.readText())
+            s.record(ReplaceItems(0, listOf(at(10f)), listOf(at(20f)))) // after the save, never saved
+        } finally {
+            journals.setWritable(true)
+        }
+        events.clear()
+        fake = FakePdfPages().apply { pageItems[0] = mutableListOf(at(10f)) } // the file as saved
+        session()
+        assertTrue(events.none { it is SessionEvent.EarlierWritingKept })
+        assertTrue(events.contains(SessionEvent.Replayed(1)))
+        assertEquals(listOf<Item>(at(20f)), fake.items(0))
+        // The journal written afresh at this opening holds the picture for the one move left.
+        assertEquals(listOf<Change>(ReplaceItems(0, listOf(at(10f)), listOf(at(20f)))), journalChanges())
     }
 }
