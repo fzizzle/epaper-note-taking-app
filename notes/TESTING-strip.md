@@ -8,11 +8,11 @@ About 10 minutes. These check the redesigned strip at the top of the writing scr
 - The status bar is hidden while writing, so the strip sits at the very top with equal space above and below. Swipe down from the top edge to see the status bar for a moment.
 - Tapping Highlighter, Eraser or Lasso now picks it out on the island right away, with one quick flash. Before, the screen never showed it, because fast-ink was running. Holding a pen button doesn't change the island (it would flash at every press).
 - Button 2 now erases however you press it. Before, it only erased if it was already held as the pen came near the screen; pressed with the pen already hovering, it was ignored and the pen wrote.
-- For now, two looks: a black island, and a white island with a black outline. ⋯ → "Toolbar: …" switches between them, and the choice stays between files. Once you pick one, the other goes, and so does the menu item.
+- The island is white with a black outline; the picked tool is a black circle. (A black island was tried too; the owner chose the outlined one, 2026-11-10, and the ⋯ switch is gone.)
 
 ## Checks
 
-- [ ] **S1. Looks.** Try both looks for a while. Which one do you want to keep?
+- [x] **S1. Looks.** Which one do you want to keep? Owner: the outlined (white) island (2026-11-10).
 - [ ] **S2. Tool taps.** Tap each tool in turn. Is the tapped one picked out at once, every time, with just one quick flash? Tap the tool that's already picked: nothing should flash. Write a stroke after each tap: is it the right tool, and does nothing go missing?
 - [ ] **S3b. Button 2 erases.** Write a few words. Hover, press button 2, and drag over a word: does it go when the pen lifts? Try again pressing button 2 before bringing the pen near the screen. Let go and write: is it ink again?
 - [ ] **S4. Write straight after.** Press a pen button and touch down at once, then write normally right after letting go. Does every stroke do the right thing, with nothing cut or lost?

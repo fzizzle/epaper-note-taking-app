@@ -95,8 +95,6 @@ class WritingActivity : Activity() {
      */
     private var shownPageUntouched = false
 
-    /** TEMPORARY: which island look the owner is trying, kept between documents. */
-    private val stripLook by lazy { StripLook(getSharedPreferences("strip-look", MODE_PRIVATE)) }
     /** The file being written into. It changes once, if the owner saves a damaged file's writing to a copy. */
     private lateinit var path: String
     private var pageCount = 0
@@ -281,7 +279,7 @@ class WritingActivity : Activity() {
         val gap = stripHeight / 8
         val side = stripHeight - 2 * gap
         val left = StripRow(this, side = side, gap = gap)
-        island = IslandRow(this, side = side, gap = gap / 3).apply { style = stripLook.style }
+        island = IslandRow(this, side = side, gap = gap / 3)
         val right = StripRow(this, side = side, gap = gap)
         fun button(row: StripRow, glyph: Glyph, description: String, gaps: Int = 1, onClick: () -> Unit) =
             StripButton(this, glyph, description).also {
@@ -1151,14 +1149,6 @@ class WritingActivity : Activity() {
             .setOnMenuItemClickListener { chooseDarkTextAsBlack(!darkTextAsBlack); true }
         menu.menu.add("Trim margins").setCheckable(true).setChecked(trimMargins)
             .setOnMenuItemClickListener { chooseTrimMargins(!trimMargins); true }
-        // TEMPORARY, while the owner compares the two island looks; removed once one is chosen.
-        val other = if (island.style == IslandStyle.BLACK) IslandStyle.OUTLINE else IslandStyle.BLACK
-        menu.menu.add(if (other == IslandStyle.BLACK) "Toolbar: black island" else "Toolbar: outlined island")
-            .setOnMenuItemClickListener {
-                island.style = other
-                stripLook.style = other
-                true
-            }
         dialogOpen = true
         pausePenAndRedraw()
         menu.setOnDismissListener {
@@ -1494,11 +1484,4 @@ class WritingActivity : Activity() {
         const val PATCH_WAIT_MS = 300L
         private const val TAG = "Notes"
     }
-}
-
-/** TEMPORARY, while the owner compares the two island looks; removed once one is chosen. */
-private class StripLook(private val prefs: android.content.SharedPreferences) {
-    var style: IslandStyle
-        get() = runCatching { IslandStyle.valueOf(prefs.getString("style", null) ?: "") }.getOrDefault(IslandStyle.BLACK)
-        set(value) = prefs.edit().putString("style", value.name).apply()
 }
