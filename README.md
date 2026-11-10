@@ -10,6 +10,31 @@ Jot is a lightweight Android app that works on top of your own folders, the way 
 
 > **Status:** in use on the tablet. The writing screen, the tools, the library and the readability settings are built and merged. Owner test sessions for the tools and the library are still open, and conflict copies (plan 5) come next. See [TODO.md](TODO.md) and the [design document](docs/superpowers/specs/2026-11-07-epaper-pdf-notes-design.md).
 
+## Screenshots
+
+### One toolbar
+
+<img src="assets/screenshots/toolbar.png" alt="The toolbar strip: back, then pen, highlighter, eraser, lasso, snip, undo and redo on a centred island, then the page menu, previous page, page number and next page">
+
+Back · pen, highlighter, eraser, lasso, snip, undo, redo · page menu · ‹ page › . Nothing else covers the page.
+
+### Your own folders
+
+Jot shows the folders on disk as they are, as deep as you like. Here, courses hold topics, and topics hold PDFs. The breadcrumb goes back up.
+
+<table>
+  <tr>
+    <td width="33%" valign="top"><img src="assets/screenshots/folders-1-courses.png" alt="The library folder: one folder per course, and a Continue row for the last file"></td>
+    <td width="33%" valign="top"><img src="assets/screenshots/folders-2-topics.png" alt="A course folder: one folder per topic, each showing how many PDFs it holds"></td>
+    <td width="33%" valign="top"><img src="assets/screenshots/folders-3-pdfs.png" alt="A topic folder: its PDFs as thumbnails, with handwriting showing on the tiles"></td>
+  </tr>
+  <tr>
+    <td align="center">Courses</td>
+    <td align="center">Topics</td>
+    <td align="center">PDFs, with your ink on the thumbnails</td>
+  </tr>
+</table>
+
 ## Why
 
 The stock Boox Notes app writes well but gets in the way:
