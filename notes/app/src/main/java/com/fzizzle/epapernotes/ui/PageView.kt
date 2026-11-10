@@ -91,7 +91,12 @@ class PageView(context: Context) : View(context) {
     /** A page rendering, and the page's ink version it contains. */
     private class Rendered(val bitmap: Bitmap, val version: Int)
 
-    private val bitmaps = PageBitmaps<Rendered>(200L * 1024 * 1024) { it.bitmap.byteCount.toLong() }
+    // A picture that leaves the cache has its memory freed at once (see PageBitmaps). That is
+    // safe because the cache is the only thing that keeps page pictures, and it's only touched
+    // on the UI thread: a rendering belongs to nobody else from the moment pageRendered gets
+    // it, and onDraw takes a picture out and draws it in one go, with no put or invalidate in
+    // between, so it never holds one that has been freed.
+    private val bitmaps = PageBitmaps<Rendered>(200L * 1024 * 1024, { it.bitmap.byteCount.toLong() }) { it.bitmap.recycle() }
 
     // Renders on their way, and the ink version each will contain. A render that was on its
     // way when its page changed arrives stale (InkOverlay.isStale): it's kept for showing,
@@ -274,7 +279,11 @@ class PageView(context: Context) : View(context) {
 
     /** A rendering arrived from the worker. UI thread. */
     fun pageRendered(page: Int, widthPx: Int, bitmap: Bitmap) {
-        if (dropped.remove(page to widthPx)) return // asked for before the page was left or rotated
+        if (dropped.remove(page to widthPx)) {
+            // Asked for before the page was left or rotated: never shown, so its memory goes back at once.
+            bitmap.recycle()
+            return
+        }
         val version = inFlight.remove(page to widthPx) ?: 0
         val quiet = quietRenders.remove(page to widthPx)
         val stale = ink.isStale(page, version)
@@ -297,10 +306,14 @@ class PageView(context: Context) : View(context) {
             // The picture it was to replace has gone or is stale: this one is needed after all.
         }
         // A stale one for a page that was left may lack strokes InkOverlay.left dropped: not kept.
-        if (stale && page != viewport?.page) return
+        if (stale && page != viewport?.page) {
+            bitmap.recycle()
+            return
+        }
         // Otherwise even a stale one is kept: it's closer to the page than what's showing. Drawing asks again.
         bitmaps.put(page, widthPx, Rendered(bitmap, version))
-        invalidate()
+        // Only the page on show: a neighbour got ready for the next page turn changes nothing in view.
+        if (page == viewport?.page) invalidate()
         if (!stale) onPageShown(page, version)
     }
 
@@ -336,7 +349,16 @@ class PageView(context: Context) : View(context) {
 
         val w = renderWidth(v, page)
         // A stale rendering is still drawn: an old page for a moment is calmer than a blank one.
-        val shown = bitmaps.get(page, w) ?: bitmaps.anyFor(page)
+        // Taken from the cache and drawn straight away, and nothing below puts a picture into
+        // the cache or drops one (a render asked for here comes back later, in a message of
+        // its own), so this one can't have been freed. Checked all the same: drawing a freed
+        // picture would crash the app, and a grey page until the fresh picture comes wouldn't.
+        var shown = bitmaps.get(page, w) ?: bitmaps.anyFor(page)
+        if (shown != null && shown.bitmap.isRecycled) {
+            android.util.Log.w("Notes", "page=$page: its picture was freed while still kept; rendering it again")
+            bitmaps.invalidate(page) // so ensureRendered below asks for a fresh one
+            shown = null
+        }
         if (shown != null) canvas.drawBitmap(shown.bitmap, null, dst, pagePaint) else canvas.drawRect(dst, placeholder)
 
         // Whatever this rendering is missing, whenever it was made.
