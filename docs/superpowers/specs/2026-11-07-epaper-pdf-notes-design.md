@@ -75,6 +75,8 @@ Layout: the PDF pages fill the screen. A **thin top strip** (about 5% of the hei
 
 `← library · pen · highlighter · eraser · lasso select · snip · undo · redo · ⋯ page menu`
 
+How the strip is laid out (owner's decision, 2026-11-10): ← sits at the left edge. The tools, undo and redo sit together on a capsule (the "island") centred on the screen. ⋯ and the page indicator sit at the right edge. The island picks out the tool the pen would use now: the chosen tool, or lasso or eraser while pen button 1 or 2 is held. The status bar is hidden on the writing screen, so the strip sits at the very top with even space around it. Two looks for the island (black, or white with an outline) are being compared on the tablet.
+
 The page menu holds **rotate this page** and **rotate all pages**.
 
 Nothing else is permanently on screen except a small page indicator with **‹ and › buttons** on either side of it (for example "‹ 4 / 32 ›").
