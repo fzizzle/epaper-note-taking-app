@@ -71,7 +71,7 @@ It should be lightweight and fast, and it should do a small set of core things v
 
 ### 6.2 Writing screen
 
-Layout: the PDF pages fill the screen. A **thin top strip** (about 5% of the height, always visible, one row) holds, left to right:
+Layout: the PDF pages fill the screen. A **thin top strip** (a little under 5% of the height, 4.4% since 2026-11-10, always visible, one row) holds, left to right:
 
 `← library · pen · highlighter · eraser · lasso select · snip · undo · redo · ⋯ page menu`
 

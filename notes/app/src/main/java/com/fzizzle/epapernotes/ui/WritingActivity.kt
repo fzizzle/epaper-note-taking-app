@@ -208,8 +208,10 @@ class WritingActivity : Activity() {
             fontFeatureSettings = "tnum" // even-width digits, so the number doesn't jiggle as pages turn
             setOnClickListener { askForPage() } // tap the number to jump to a page
         }
-        val stripHeight = (resources.displayMetrics.heightPixels * 0.05f).toInt() // about 5% (spec §6.2)
-        layer = SelectionLayer(handlePx = stripHeight / 3f, listener = selectionListener) { pages.invalidate() }
+        // A little under 5% of the height (spec §6.2): the owner asked for it slightly thinner.
+        val stripHeight = (resources.displayMetrics.heightPixels * 0.044f).toInt()
+        // The selection's handles keep the size they had with the 5% strip.
+        layer = SelectionLayer(handlePx = resources.displayMetrics.heightPixels * 0.05f / 3f, listener = selectionListener) { pages.invalidate() }
         pages.selectionLayer = layer
         pages.onFingerTap = { x, y -> pages.frame()?.let { layer.onFingerTap(x, y, it) } }
         val gap = stripHeight / 8
