@@ -226,9 +226,14 @@ class FileOps(
         else -> null
     }
 
-    /** Ignoring case, as memory cards (FAT, exFAT) do. */
-    private fun isTaken(folder: File, name: String, except: File?): Boolean =
-        folder.listFiles().orEmpty().any { it.name.equals(name, ignoreCase = true) && it != except }
+    /**
+     * Ignoring case, as memory cards (FAT, exFAT) do. A folder that can't be read counts as
+     * taken (review 2.11): with no way to see a clash, nothing is put there.
+     */
+    private fun isTaken(folder: File, name: String, except: File?): Boolean {
+        val there = folder.listFiles() ?: return true
+        return there.any { it.name.equals(name, ignoreCase = true) && it != except }
+    }
 
     private fun isInLibrary(file: File) = file.startsWith(root)
 

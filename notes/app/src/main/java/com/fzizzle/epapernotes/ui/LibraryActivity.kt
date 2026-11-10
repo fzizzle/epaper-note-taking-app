@@ -24,6 +24,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import com.fzizzle.epapernotes.doc.DocumentSession
+import com.fzizzle.epapernotes.storage.SafeSave
 import com.fzizzle.epapernotes.library.Entry
 import com.fzizzle.epapernotes.library.FolderEntry
 import com.fzizzle.epapernotes.library.FolderListing
@@ -265,6 +266,12 @@ class LibraryActivity : Activity() {
             var shown = wanted
             while (shown != root && !shown.isDirectory) shown = shown.parentFile ?: root
             val entries = FolderListing.list(shown)
+            // Hidden copies a crashed save left behind (spec §7.3), never while a document in
+            // this folder is open or still saving: its save may be writing one right now.
+            if (!DocumentSession.anyOpenIn(shown)) {
+                val removed = SafeSave.cleanStale(shown)
+                if (removed > 0) Log.i(TAG, "removed $removed stale temporary file(s) in ${shown.path}")
+            }
             val rootMissing = !root.isDirectory
             val resume = if (shown == root) last?.takeIf { it.isFile } else null
             Log.i(TAG, "library listed ${shown.path} n=${entries.size} ms=${SystemClock.uptimeMillis() - start}")

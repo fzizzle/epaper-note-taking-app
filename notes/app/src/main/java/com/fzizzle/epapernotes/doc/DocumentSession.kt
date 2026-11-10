@@ -683,6 +683,16 @@ class DocumentSession(
          * mustn't rename, move or delete a file whose last changes are still being saved.
          * True when no session is open on it, or it closed within [timeoutMs].
          */
+        /**
+         * True while any session, open or still closing, is on a file directly in [folder]
+         * (its copy too, once it continues in one): one of them may be saving there, so the
+         * library leaves the folder's temporary files alone.
+         */
+        fun anyOpenIn(folder: File): Boolean {
+            val dir = folder.absoluteFile
+            return openSessions.keys.any { File(it).parentFile == dir }
+        }
+
         fun awaitClosed(pdf: File, timeoutMs: Long): Boolean {
             val closing = openSessions[pdf.absolutePath] ?: return true
             return try {
