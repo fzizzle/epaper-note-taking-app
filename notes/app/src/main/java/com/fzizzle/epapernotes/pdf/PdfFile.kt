@@ -70,6 +70,22 @@ class PdfFile private constructor(private val doc: PDFDocument) : PdfPages {
         }
     }
 
+    /**
+     * A page's size as shown and its PDF-to-display transform, the same as [displaySize] and
+     * [pdfToDisplay] give, from loading the page once instead of twice. Laying out a long
+     * document asks for both for every page.
+     */
+    fun layout(page: Int): Pair<SizeF, Affine> {
+        val p = doc.loadPage(page) as PDFPage
+        try {
+            val b = p.bounds
+            val m = p.transform
+            return SizeF(b.x1 - b.x0, b.y1 - b.y0) to Affine(m.a, m.b, m.c, m.d, m.e, m.f)
+        } finally {
+            p.destroy()
+        }
+    }
+
     /** The page with all its annotations drawn, scaled to [widthPx] pixels wide. */
     fun render(page: Int, widthPx: Int): Bitmap {
         val p = doc.loadPage(page)

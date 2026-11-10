@@ -68,5 +68,13 @@ class PdfFileOpenRenderRotateTest {
         assertEquals(742f, turned.x, 0.5f); assertEquals(50f, turned.y, 0.5f)
     }
 
+    /** Laying out the pages reads both from one page load: it must give what the two separate calls give. */
+    @Test fun layoutIsSizeAndTransformTogether() = PdfFile.open(TestPdfs.blank(dir, mediaBox = Box(100f, 100f, 712f, 892f))).use {
+        assertEquals(it.displaySize(0) to it.pdfToDisplay(0), it.layout(0))
+        it.setRotation(0, 90)
+        assertEquals(it.displaySize(0) to it.pdfToDisplay(0), it.layout(0))
+        assertEquals(792f, it.layout(0).first.width, 0.5f)
+    }
+
     @Test fun blankFileWasNotRepaired() = PdfFile.open(TestPdfs.blank(dir)).use { assertFalse(it.wasRepaired) }
 }

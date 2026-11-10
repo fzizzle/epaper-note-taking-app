@@ -120,11 +120,21 @@ class TileView(context: Context) : View(context) {
         // new one is drawn, rather than flashing grey for a moment on e-ink. Not after a
         // refresh: that's asked for when a picture looks wrong.
         val stillThisFile = thumbnails && this.thumbnails && entry.file == this.entry?.file && pictures == this.pictures
+        val newBitmap = bitmap ?: this.bitmap.takeIf { stillThisFile }
+        // Everything onDraw uses. A file just written is a new entry (new size and date) that
+        // looks the same until its new thumbnail comes: no need to draw it twice.
+        val looksTheSame = looksLike(entry, this.entry) && newBitmap === this.bitmap && thumbnails == this.thumbnails
         this.entry = entry
-        this.bitmap = bitmap ?: this.bitmap.takeIf { stillThisFile }
+        this.bitmap = newBitmap
         this.thumbnails = thumbnails
         this.pictures = pictures
-        invalidate()
+        if (!looksTheSame) invalidate()
+    }
+
+    /** Whether two entries draw the same tile, pictures aside: a PDF shows only its name, a folder its name and counts. */
+    private fun looksLike(a: Entry, b: Entry?): Boolean = when (a) {
+        is PdfEntry -> b is PdfEntry && a.name == b.name
+        is FolderEntry -> b is FolderEntry && a.name == b.name && a.pdfCount == b.pdfCount && a.folderCount == b.folderCount
     }
 
     /** A thumbnail arrived for the PDF on this tile, or null: it can't be drawn, so the grey page. */

@@ -21,8 +21,9 @@ import java.io.ByteArrayOutputStream
  *
  * In order: tiles on screen first (from the disk cache if it has them, else rendered), then
  * every other PDF in the folder is rendered into the disk cache, so scrolling to it later is
- * quick. Bitmaps for the screen are kept in memory, about [MEMORY_BYTES], least recently used
- * dropped first. Tiles ask [bitmapFor], which looks only in memory.
+ * quick. (After a refresh the others wait until they scroll into view: see [redraw].) Bitmaps
+ * for the screen are kept in memory, about [MEMORY_BYTES], least recently used dropped first.
+ * Tiles ask [bitmapFor], which looks only in memory.
  *
  * It exists only while Show thumbnails is on: with it off, the library makes none, so nothing
  * is rendered or read from the cache (decision 10). [onReady] runs on the main thread, with
@@ -38,10 +39,15 @@ class ThumbnailLoader(private val cache: ThumbnailCache, private val onReady: (P
     // All guarded by lock.
     private var folder: List<PdfEntry> = emptyList()
     private var onScreen: List<PdfEntry> = emptyList()
-    /** In the disk cache, as far as this session knows, or not renderable: nothing more to do. */
+    /**
+     * Nothing more to do in the background: in the disk cache, as far as this session knows,
+     * or not renderable, or left by a refresh until its tile comes on screen ([redraw]).
+     * A tile on screen doesn't ask this: it's drawn whenever memory hasn't got it.
+     */
     private val done = HashSet<String>()
     private val failed = HashSet<String>()
     private val drops = ArrayList<PdfEntry>()
+    private val dropsForLater = ArrayList<PdfEntry>()
     private var paused = false
     private var stopped = false
 
@@ -59,10 +65,16 @@ class ThumbnailLoader(private val cache: ThumbnailCache, private val onReady: (P
         lock.notifyAll()
     }
 
-    /** Refresh: these are drawn again, after their cached thumbnails are deleted. */
-    fun redraw(pdfs: List<PdfEntry>) = synchronized(lock) {
-        pdfs.forEach { memory.remove(key(it)) }
-        drops += pdfs
+    /**
+     * Refresh. The cached thumbnails of all of these are deleted, so none can be shown again
+     * as it was. [onScreen] are then drawn again straight away. [rest], the folder's other
+     * PDFs, are drawn again when their tiles scroll into view, and not before: drawing a
+     * whole folder of several hundred again in the background took minutes.
+     */
+    fun redraw(onScreen: List<PdfEntry>, rest: List<PdfEntry>) = synchronized(lock) {
+        (onScreen + rest).forEach { memory.remove(key(it)) }
+        drops += onScreen
+        dropsForLater += rest
         lock.notifyAll()
     }
 
@@ -81,7 +93,8 @@ class ThumbnailLoader(private val cache: ThumbnailCache, private val onReady: (P
     }
 
     private sealed interface Job
-    private class Drop(val pdfs: List<PdfEntry>) : Job
+    /** [later]: deleted like [now], but not drawn again until they come on screen. */
+    private class Drop(val now: List<PdfEntry>, val later: List<PdfEntry>) : Job
     /** For a tile on screen: into memory, rendered if the cache hasn't got it. */
     private class Show(val pdf: PdfEntry) : Job
     /** For the rest of the folder: into the disk cache only. */
@@ -106,10 +119,19 @@ class ThumbnailLoader(private val cache: ThumbnailCache, private val onReady: (P
                 next
             }
             when (job) {
-                is Drop -> job.pdfs.forEach { pdf ->
-                    cache.fileFor(pdf).delete()
-                    memory.remove(key(pdf))
-                    synchronized(lock) { done -= key(pdf); failed -= key(pdf) }
+                is Drop -> {
+                    job.now.forEach { pdf ->
+                        cache.fileFor(pdf).delete()
+                        memory.remove(key(pdf))
+                        synchronized(lock) { done -= key(pdf); failed -= key(pdf) }
+                    }
+                    // Marked done so the background pass skips them. No longer failed, and not
+                    // in memory or the cache, so each is drawn afresh once its tile is on screen.
+                    job.later.forEach { pdf ->
+                        cache.fileFor(pdf).delete()
+                        memory.remove(key(pdf))
+                        synchronized(lock) { done += key(pdf); failed -= key(pdf) }
+                    }
                 }
                 is Show -> load(job.pdf, intoMemory = true)
                 is Store -> load(job.pdf, intoMemory = false)
@@ -119,7 +141,9 @@ class ThumbnailLoader(private val cache: ThumbnailCache, private val onReady: (P
 
     /** Under lock. */
     private fun nextJob(): Job? {
-        if (drops.isNotEmpty()) return Drop(drops.toList()).also { drops.clear() }
+        if (drops.isNotEmpty() || dropsForLater.isNotEmpty()) {
+            return Drop(drops.toList(), dropsForLater.toList()).also { drops.clear(); dropsForLater.clear() }
+        }
         onScreen.firstOrNull { memory.get(key(it)) == null && key(it) !in failed }?.let { return Show(it) }
         folder.firstOrNull { key(it) !in done }?.let { return Store(it) }
         return null

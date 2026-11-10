@@ -81,6 +81,14 @@ class WritingActivity : Activity() {
     /** For each page, PDF space to display points, inverted: how a pen point finds its place in the PDF. */
     private var displayToPdf: List<Affine> = emptyList()
     private var pdfToDisplay: List<Affine> = emptyList()
+    /** Each page's size as shown, as last laid out: kept so a rotation only reads the pages that turned. */
+    private var pageSizes: List<SizePt> = emptyList()
+
+    /**
+     * The view changed while fingers were on the page, and Onyx hasn't been told the new line
+     * width and writing area yet: [PageView.onFingerGestureEnd] tells it. UI thread.
+     */
+    private var penSettingsWaiting = false
     private val handler = Handler(Looper.getMainLooper())
 
     /** True once the pages are laid out. The pen stays off until then: a stroke would have nowhere to go. */
@@ -271,11 +279,16 @@ class WritingActivity : Activity() {
             }
         }
         pages.onViewportChanged = {
+            // A pinch comes here on every finger movement, and the line width and the writing
+            // area are each a call into Onyx's SDK. Fast-ink is paused while fingers are down,
+            // so Onyx only needs them once the fingers lift: both are told then, once.
+            val fingers = pages.fingersDown
+            if (fingers) penSettingsWaiting = true
             pageMaybeTurned()
             updateIndicator()
-            updatePenWidth()
+            if (!fingers) updatePenWidth()
             publishPenMapping()
-            if (documentShown) pen.setLimit(penLimit())
+            if (!fingers && documentShown) pen.setLimit(penLimit())
         }
         layOutPages(startPage = lastPages.get(path)) {
             pages.post {
@@ -329,6 +342,12 @@ class WritingActivity : Activity() {
             // onViewportChanged (that would call Onyx on every finger movement). Fast-ink is
             // off until here anyway, so telling the pen now is in time for the next stroke.
             publishPenMapping()
+            // What onViewportChanged left out during the gesture. Still before fast-ink comes back.
+            if (penSettingsWaiting) {
+                penSettingsWaiting = false
+                updatePenWidth()
+                if (documentShown) pen.setLimit(penLimit())
+            }
             pages.viewport?.let { Log.i(TAG, "fingers up: pen mapping page=${it.page} zoom=${it.zoom}") }
             if (moved) {
                 // Wipe fast-ink's leftover copy of the strokes, then hand the pen back.
@@ -357,16 +376,33 @@ class WritingActivity : Activity() {
      * Reads every page's size and placement on the worker, then lays the pages out at
      * [startPage], or the page on show: at the start, and again once a page has turned. A
      * rotation replayed at open can come before the first layout, so then it's the last page open.
+     *
+     * [turned]: only these pages may have changed (a rotation), so only they are read again
+     * and the rest keep the size and placement they were laid out with. In a 200-page file,
+     * turning one page then loads one page, not all of them.
      */
-    private fun layOutPages(startPage: Int? = null, then: () -> Unit) {
+    private fun layOutPages(startPage: Int? = null, turned: Set<Int>? = null, then: () -> Unit) {
+        // Nothing laid out yet (that rotation replayed at open): there's nothing to keep, read them all.
+        val onlyTurned = turned != null && pdfToDisplay.isNotEmpty()
         session.runOnDocument { pdf ->
             val file = pdf as PdfFile
-            val sizes = (0 until file.pageCount).map { file.displaySize(it).let { s -> SizePt(s.width, s.height) } }
-            val transforms = (0 until file.pageCount).map { file.pdfToDisplay(it) }
+            val count = file.pageCount
+            val toRead = if (onlyTurned) turned.orEmpty().filter { it in 0 until count } else (0 until count).toList()
+            val read = toRead.associateWith { file.layout(it) }
             runOnUiThread {
+                if (onlyTurned && (pageSizes.size != count || pdfToDisplay.size != count)) {
+                    // What was kept doesn't match the file. It shouldn't happen (a document's page count never changes), but then read everything.
+                    layOutPages(startPage, turned = null, then = then)
+                    return@runOnUiThread
+                }
+                // The pages just read, and for the rest what's laid out now. "Now", not when
+                // this was asked for: a second rotation's answer builds on the first one's.
+                val sizes = List(count) { read[it]?.first?.let { s -> SizePt(s.width, s.height) } ?: pageSizes[it] }
+                val transforms = List(count) { read[it]?.second ?: pdfToDisplay[it] }
                 // A page that turned has renderings the wrong way round.
                 pdfToDisplay.indices.filter { it < transforms.size && transforms[it] != pdfToDisplay[it] }.forEach { pages.pageRotated(it) }
                 pageCount = sizes.size
+                pageSizes = sizes
                 pdfToDisplay = transforms
                 displayToPdf = transforms.map { it.inverse() }
                 pages.setPages(sizes, transforms, startPage ?: pages.viewport?.page ?: lastPages.get(path))
@@ -966,7 +1002,7 @@ class WritingActivity : Activity() {
             is SessionEvent.Replayed -> toast("Recovered ${event.count} change(s) that hadn't been saved.")
             // A page that turned has a new size and place on screen: lay the pages out again first.
             is SessionEvent.InkRedrawn -> pages.pageChanged(event.page) // drawn again if it's showing
-            is SessionEvent.PageChanged -> if (event.rotated) layOutPages { pagesChanged(event.pages) } else pagesChanged(event.pages)
+            is SessionEvent.PageChanged -> if (event.rotated) layOutPages(turned = event.pages) { pagesChanged(event.pages) } else pagesChanged(event.pages)
             is SessionEvent.HistoryChanged -> {
                 undoButton.isEnabled = event.canUndo
                 redoButton.isEnabled = event.canRedo

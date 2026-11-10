@@ -284,18 +284,24 @@ class LibraryActivity : Activity() {
             breadcrumb.show(root ?: shown, shown)
             grid.setSelection(0)
         }
-        continueRow.text = resume?.let { "▶  Continue: ${it.nameWithoutExtension}" }
+        // Texts are only set when they differ: setting one, even to the same words, draws its
+        // row again, and a listing comes after every change the folder watch sees.
+        val continueText = resume?.let { "▶  Continue: ${it.nameWithoutExtension}" }.orEmpty()
+        if (continueRow.text.toString() != continueText) continueRow.text = continueText
         continueRow.visibility = if (resume != null) View.VISIBLE else View.GONE
         val changed = redrawTiles || entries != adapter.entries || adapter.thumbnails != (thumbnails != null)
         if (changed) adapter.show(entries, thumbnails = thumbnails != null, dropPictures = redrawTiles)
-        emptyNote.text = when {
+        val emptyText = when {
             !rootMissing -> "No folders or PDFs here."
             Volumes.isOnCardThatsOut(StorageVolumes.mounted(this), root ?: shown) ->
                 "The library folder is on the memory card or USB drive, which isn't in. Put it back, or tap here to choose another folder in Settings (⋯)."
             else -> "The library folder isn't there. Tap here to choose another in Settings (⋯)."
         }
-        emptyNote.isClickable = rootMissing
-        emptyNote.background = if (rootMissing) LibraryLook.pressedFeedback() else null
+        if (emptyNote.text.toString() != emptyText) emptyNote.text = emptyText
+        if (emptyNote.isClickable != rootMissing) {
+            emptyNote.isClickable = rootMissing
+            emptyNote.background = if (rootMissing) LibraryLook.pressedFeedback() else null
+        }
         emptyNote.visibility = if (entries.isEmpty()) View.VISIBLE else View.GONE
         tilesOnScreenChanged()
         logShown(waitForDraw = changed)
@@ -334,10 +340,15 @@ class LibraryActivity : Activity() {
     /** The tiles on screen get their thumbnails first. */
     private fun tilesOnScreenChanged() {
         val loader = thumbnails ?: return
+        loader.show(adapter.entries.filterIsInstance<PdfEntry>(), pdfsOnScreen())
+    }
+
+    /** The PDFs whose tiles are on screen now. */
+    private fun pdfsOnScreen(): List<PdfEntry> {
         val entries = adapter.entries
         val first = grid.firstVisiblePosition.coerceIn(0, entries.size)
         val end = (first + grid.childCount).coerceIn(first, entries.size)
-        loader.show(entries.filterIsInstance<PdfEntry>(), entries.subList(first, end).filterIsInstance<PdfEntry>())
+        return entries.subList(first, end).filterIsInstance<PdfEntry>()
     }
 
     private fun newThumbnails() = ThumbnailLoader(thumbnailCache) { pdf, bitmap -> thumbnailReady(pdf, bitmap) }
@@ -366,8 +377,17 @@ class LibraryActivity : Activity() {
         list()
     }
 
+    /**
+     * Every thumbnail in the folder is thrown away, so no old picture comes back. The ones on
+     * screen are drawn again now; the rest when they scroll into view, rather than the whole
+     * folder at once, which in a folder of several hundred PDFs took minutes.
+     */
     private fun refresh() {
-        thumbnails?.redraw(adapter.entries.filterIsInstance<PdfEntry>())
+        thumbnails?.let { loader ->
+            val showing = pdfsOnScreen().toSet()
+            val (onScreen, rest) = adapter.entries.filterIsInstance<PdfEntry>().partition { it in showing }
+            loader.redraw(onScreen, rest)
+        }
         list(redrawTiles = true)
     }
 

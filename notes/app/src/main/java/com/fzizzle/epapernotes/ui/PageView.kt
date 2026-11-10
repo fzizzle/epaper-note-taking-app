@@ -114,7 +114,10 @@ class PageView(context: Context) : View(context) {
     private val ink = InkOverlay()
 
     private var pinching = false
-    private var fingersDown = false
+
+    /** True from the first finger landing until the last one lifts ([onFingerGestureStart] to [onFingerGestureEnd]). */
+    var fingersDown = false
+        private set
     private var pastEdge = 0f
     private var movedThisGesture = false
 
