@@ -47,28 +47,65 @@ class ThumbnailCacheTest {
         assertTrue(dir.list()!!.none { it.endsWith(".tmp") })
     }
 
-    @Test fun pruneRunsAtMostDaily() {
-        val a = pdf("/s/a.pdf")
-        cache.store(a, byteArrayOf(1))
-        cache.pruneMissing { false }
-        assertNull(cache.cached(a))
-        cache.store(a, byteArrayOf(1))
-        now += 60_000
-        cache.pruneMissing { false } // too soon
-        assertTrue(cache.cached(a) != null)
-        now += 24 * 60 * 60 * 1000L
-        cache.pruneMissing { false }
-        assertNull(cache.cached(a))
+    private fun real(name: String): PdfEntry {
+        val f = tmp.newFile(name)
+        return PdfEntry(f, f.nameWithoutExtension, 10, 5)
+    }
+
+    @Test fun pruneRemovesThumbnailsOfMissingFiles() {
+        val gone = real("gone.pdf")
+        cache.store(gone, byteArrayOf(1))
+        gone.file.delete()
+        cache.pruneMissing()
+        assertNull(cache.cached(gone))
+        assertTrue(dir.list()!!.none { it.endsWith(".path") })
     }
 
     @Test fun pruneKeepsLiveOnes() {
-        val a = pdf("/s/a.pdf")
-        val b = pdf("/s/b.pdf")
+        val live = real("live.pdf")
+        val gone = real("gone.pdf")
+        cache.store(live, byteArrayOf(1))
+        cache.store(gone, byteArrayOf(1))
+        gone.file.delete()
+        cache.pruneMissing()
+        assertTrue(cache.cached(live) != null)
+        assertNull(cache.cached(gone))
+    }
+
+    @Test fun pruneRunsAtMostDaily() {
+        val a = real("a.pdf")
         cache.store(a, byteArrayOf(1))
-        cache.store(b, byteArrayOf(1))
-        val live = prefix(cache.fileFor(a))
-        cache.pruneMissing { it == live }
+        cache.pruneMissing()
+        a.file.delete()
+        now += 60_000
+        cache.pruneMissing() // too soon
         assertTrue(cache.cached(a) != null)
-        assertFalse(cache.cached(b) != null)
+        now += 24 * 60 * 60 * 1000L
+        cache.pruneMissing()
+        assertNull(cache.cached(a))
+    }
+
+    @Test fun pruneClearsOldTempFiles() {
+        now = System.currentTimeMillis()
+        val old = File(dir, ".thumb1.tmp").apply { writeBytes(byteArrayOf(1)); setLastModified(now - 2 * 3600_000L) }
+        val fresh = File(dir, ".thumb2.tmp").apply { writeBytes(byteArrayOf(1)); setLastModified(now - 60_000L) }
+        cache.pruneMissing()
+        assertFalse(old.exists())
+        assertTrue(fresh.exists())
+    }
+
+    @Test fun twoStoresAtOnceLeaveAWholePng() {
+        val a = pdf("/s/a.pdf")
+        val x = ByteArray(200_000) { 1 }
+        val y = ByteArray(300_000) { 2 }
+        repeat(20) {
+            val go = java.util.concurrent.CountDownLatch(1)
+            val ts = listOf(x, y).map { b -> Thread { go.await(); cache.store(a, b) }.apply { start() } }
+            go.countDown()
+            ts.forEach { it.join() }
+            val got = cache.cached(a)!!.readBytes()
+            assertTrue(got.contentEquals(x) || got.contentEquals(y))
+        }
+        assertTrue(dir.list()!!.none { it.endsWith(".tmp") })
     }
 }
