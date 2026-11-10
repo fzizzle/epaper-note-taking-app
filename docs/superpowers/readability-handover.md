@@ -132,4 +132,5 @@ Task 8: WIP commit 8178ab4 finished: device test (f054c72); first tablet run 80 
 Task 8: minor (deferred): pale tints (chroma ≤ 40, e.g. formula anti-aliased edges (200, 230, 215), pastel boxes (225, 235, 250)) turn neutral grey; per the spec, but watch for it in step 6 (PageLook.kt, NEARLY_GREY ignores lightness).
 Task 8: minor (deferred): the early return in applyTo (off + Normal) has no test; needs Android.
 Task 8: minor (deferred): squash 8178ab4 ("work in progress") at merge; plan's message "notes: dark text can be shown as black".
+Task 8: on by default (owner, 2026-11-10): ReadingPrefs default true; turned off from ⋯ as before.
 Task 8: complete pending owner step 6.

@@ -14,9 +14,9 @@ class ReadingPrefs(context: Context) {
         get() = runCatching { Contrast.valueOf(prefs.getString(CONTRAST, null) ?: "") }.getOrDefault(Contrast.NORMAL)
         set(value) = prefs.edit().putString(CONTRAST, value.name).apply()
 
-    /** Whether nearly grey text is drawn black on screen (PageLook). Off until chosen. */
+    /** Whether nearly grey text is drawn black on screen (PageLook). On until turned off (owner, 2026-11-10). */
     var darkTextAsBlack: Boolean
-        get() = prefs.getBoolean(DARK_TEXT_AS_BLACK, false)
+        get() = prefs.getBoolean(DARK_TEXT_AS_BLACK, true)
         set(value) = prefs.edit().putBoolean(DARK_TEXT_AS_BLACK, value).apply()
 
     /** Whether pages are fitted to their printed area on screen, not the whole sheet (ContentBounds). Off until chosen. */

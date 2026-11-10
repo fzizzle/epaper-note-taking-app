@@ -186,7 +186,7 @@ Found 2026-11-10: in the owner's workbook 90% of the text pixels are coloured: b
 - Test: `test/ui/PageLookTest.kt`, `androidTest/ui/PageLookDeviceTest.kt`
 
 **Interfaces:**
-- `ReadingPrefs.darkTextAsBlack: Boolean` (default false), stored next to `contrast`.
+- `ReadingPrefs.darkTextAsBlack: Boolean` (default true: on until turned off, owner 2026-11-10; first planned as false), stored next to `contrast`.
 - `PageLook` gains the dark-text step, applied in the same single pass as the contrast step, on the worker, once per rendering:
   - `chroma = max(r, g, b) - min(r, g, b)`. A pixel with `chroma <= NEARLY_GREY = 40` is nearly grey: it becomes neutral `v = (299·r + 587·g + 114·b) / 1000`, then `v' = clamp((v - DARK = 96) · 255 / (255 - 96), 0, 255)`, written to r, g and b alike. Then the contrast table, if any, applies to `v'`.
   - Any other pixel keeps its colour; only the contrast table, if any, applies to each channel, as today.

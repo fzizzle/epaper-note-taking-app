@@ -72,7 +72,7 @@ class WritingActivity : Activity() {
     @Volatile private var contrast = Contrast.NORMAL
 
     /** Dark text as black (PageLook), like [contrast]: set on the UI thread, read on the worker. */
-    @Volatile private var darkTextAsBlack = false
+    @Volatile private var darkTextAsBlack = true
 
     /** Trim margins: pages fitted to their printed area, not the whole sheet. From [readingPrefs]. UI thread. */
     private var trimMargins = false
