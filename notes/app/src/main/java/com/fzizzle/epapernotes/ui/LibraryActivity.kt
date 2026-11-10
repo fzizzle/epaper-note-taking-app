@@ -2,6 +2,7 @@ package com.fzizzle.epapernotes.ui
 
 import android.app.Activity
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Color
@@ -114,16 +115,20 @@ class LibraryActivity : Activity() {
         // Started only now: its daily tidy-up, without file access, would think every PDF gone.
         if (prefs.showThumbnails && thumbnails == null) thumbnails = newThumbnails()
 
-        intent.getStringExtra(EXTRA_ROOT)?.let { raw ->
-            intent.removeExtra(EXTRA_ROOT)
-            val chosen = hookPath(raw) ?: return@let
-            prefs.root = chosen
-            prefs.folderOnShow = chosen
-            this.root = null // the folder on show starts again at this root, even if it's the root already
-        }
-        intent.getStringExtra(WritingActivity.EXTRA_PATH)?.let { raw ->
-            intent.removeExtra(WritingActivity.EXTRA_PATH)
-            hookPath(raw)?.let(::open)
+        // The adb shortcuts (--es root, --es path), for checks: only in a debug build. This
+        // screen is the launcher's, so any app could send them otherwise (decision 4).
+        if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+            intent.getStringExtra(EXTRA_ROOT)?.let { raw ->
+                intent.removeExtra(EXTRA_ROOT)
+                val chosen = hookPath(raw) ?: return@let
+                prefs.root = chosen
+                prefs.folderOnShow = chosen
+                this.root = null // the folder on show starts again at this root, even if it's the root already
+            }
+            intent.getStringExtra(WritingActivity.EXTRA_PATH)?.let { raw ->
+                intent.removeExtra(WritingActivity.EXTRA_PATH)
+                hookPath(raw)?.let(::open)
+            }
         }
         val root = prefs.root ?: return chooseFirstRoot()
         if (root != this.root) {

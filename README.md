@@ -60,4 +60,7 @@ cd notes
 ./gradlew :app:assembleDebug              # build the app
 ./gradlew :app:testDebugUnitTest          # tests that run on the laptop
 ./gradlew :app:connectedDebugAndroidTest  # tests that run on the tablet; it UNINSTALLS the app afterwards, see notes/SETUP.md
+./gradlew :app:installRelease             # the faster build, for everyday use on the tablet
 ```
+
+The release build is the one to use day to day: strokes are added in about half the time (see [the speed results](docs/superpowers/review-speed-results.md)). It's signed with the same key as the debug build, so either installs over the other and the app keeps its data. The adb shortcuts for checks (`am start … --es path` and `--es root`) only work in the debug build, so install that again before checking anything over adb.
