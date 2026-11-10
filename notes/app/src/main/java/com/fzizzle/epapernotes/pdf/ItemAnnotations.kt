@@ -23,7 +23,8 @@ import kotlin.math.min
 /**
  * How the app's items are kept as PDF annotations, for [PdfFile].
  *
- * A stroke is a standard `Ink` annotation carrying its pressure data under `/PNotesStroke`.
+ * A stroke is a standard `Ink` annotation carrying its pressure data under `/PNotesStroke`,
+ * and the version of its drawing under `/PNotesDrawing`.
  * A pasted picture is a `Stamp` carrying `/PNotesImage` (`pi1 <quarterTurns>`). Both keep the
  * item's id in `/NM`, the standard annotation-name field. Plan-2 strokes have no `/NM`, so they
  * go by their object number, as `o<n>`.
@@ -109,6 +110,9 @@ internal class ItemAnnotations(private val doc: PDFDocument) {
      * Before this, the app used MuPDF's setAppearance, which stored the page transform as the
      * form's /Matrix. Every viewer then drew the ink mirrored in its box, or turned a quarter
      * on a turned page (owner: "resized writing went upside down"). [isFaulty] finds those.
+     *
+     * It also notes which version of the drawing this is ([DRAWING_VERSION]), so a later
+     * opening can tell a stroke drawn by older code and draw it again.
      */
     private fun drawInk(dict: PDFObject, stroke: Stroke) {
         val box = StrokeOutline.bounds(stroke)
@@ -126,14 +130,19 @@ internal class ItemAnnotations(private val doc: PDFDocument) {
         dict.put("Rect", rect)
         // MuPDF's own drawing padded /Rect with /RD; ours is the outline's box exactly.
         dict.delete("RD")
+        dict.put(DRAWING_KEY, DRAWING_VERSION)
     }
 
     /**
-     * True for one of the app's strokes whose drawing has a /Matrix other than "as is" (see
-     * [drawInk]). Only one with a usable id ([isOurs]): anything else is never touched.
+     * True for one of the app's strokes whose drawing should be made again. Either it was
+     * drawn before [DRAWING_VERSION] 2 (no version noted, or a lower one), with the small
+     * holes at its ends and corners; or it has a /Matrix other than "as is" (see [drawInk]).
+     * Only one with a usable id ([isOurs]): anything else is never touched.
      */
     fun isFaulty(dict: PDFObject): Boolean {
         if (!isOurs(dict) || dict.get("Subtype").asName() != "Ink") return false
+        val version = dict.get(DRAWING_KEY)
+        if (!version.isNumber || version.asInteger() < DRAWING_VERSION) return true
         val m = dict.get("AP").get("N").get("Matrix")
         if (!m.isArray) return false
         if (m.size() != 6) return true
@@ -263,6 +272,18 @@ internal class ItemAnnotations(private val doc: PDFDocument) {
         const val IMAGE_KEY = "PNotesImage"
         private const val IMAGE_VERSION = "pi1"
         private const val IMAGE_NAME = "Img"
+
+        /** The private key a stroke's drawing version is kept under, next to its stroke data. */
+        const val DRAWING_KEY = "PNotesDrawing"
+
+        /**
+         * Which version of the stroke drawing [drawInk] writes. Raise it when the drawing
+         * changes in a way old strokes should pick up: [isFaulty] then finds every stroke
+         * drawn before, and it's drawn again when its file is next opened.
+         * 2: the round ends and corners go the same way round as the body (no holes).
+         */
+        const val DRAWING_VERSION = 2
+
         private val IDENTITY = floatArrayOf(1f, 0f, 0f, 1f, 0f, 0f)
     }
 }

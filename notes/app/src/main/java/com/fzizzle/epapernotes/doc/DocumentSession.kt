@@ -180,7 +180,8 @@ class DocumentSession(
     }
 
     /**
-     * Strokes an earlier version saved mirrored are drawn again, and saved like an edit. It
+     * Strokes an earlier version saved with a faulty drawing (mirrored, or with holes at their
+     * ends) are drawn again, and saved like an edit. It
      * starts a moment after opening, so the first page shows at once (owner's choice; about
      * 21 ms a stroke, 1.4 s for the test file), and goes at most [REDRAW_CHUNK] strokes per
      * task, each posting the next, so the screen's requests for pages, an erase, a lasso, an
@@ -190,7 +191,7 @@ class DocumentSession(
      * the next opening simply finds the rest and does it. Worker thread only.
      *
      * Changes recorded meanwhile need no special care, whichever comes first on the worker. A
-     * redraw changes only how a stroke is drawn (its /AP and /Rect): never its id, its
+     * redraw changes only how a stroke is drawn (its /AP, /Rect and drawing version): never its id, its
      * recorded points, or its place in the page's list. Applying a change reads and writes
      * only those, so it does the same before or after a redraw: an erased or moved stroke
      * goes either way (redrawn first, it just cost a moment), and anything a change adds or

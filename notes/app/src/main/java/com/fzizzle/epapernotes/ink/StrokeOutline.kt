@@ -65,12 +65,18 @@ object StrokeOutline {
             }
         }
         circle(out, pts.last().x, pts.last().y, style.widthAt(pts.last().pressure, stroke.widthScale) / 2)
-        // Non-zero fill: every piece, and every overlap, is filled exactly once.
+        // Non-zero fill: every piece, and every overlap, is filled exactly once. That only
+        // holds while all the pieces go round the same way. Where a piece going one way
+        // overlaps a piece going the other, the two cancel and the overlap is left unpainted:
+        // the circles used to go against the outline, which left a hole inside each end and corner.
         out.append("f\n")
         return out.toString()
     }
 
-    /** Forward along the left edge, back along the right, filled. Non-zero fill keeps tight curls solid. */
+    /**
+     * Forward along the left edge, back along the right, which is clockwise in PDF space (y up).
+     * Non-zero fill keeps tight curls solid.
+     */
     private fun outline(out: StringBuilder, pts: List<StrokePoint>, style: StrokeStyle, scale: Float) {
         val normals = pts.indices.map { normalAt(pts, it) }
         for (i in pts.indices) {
@@ -119,14 +125,17 @@ object StrokeOutline {
     private fun withoutRepeats(points: List<StrokePoint>): List<StrokePoint> =
         points.filterIndexed { i, p -> i == 0 || p.x != points[i - 1].x || p.y != points[i - 1].y }
 
-    /** A circle made of four Bézier curves, the standard way to draw one in PDF. */
+    /**
+     * A circle made of four Bézier curves, the standard way to draw one in PDF. It goes round
+     * clockwise (in PDF space, y up), the same way as [outline]: see the fill in [contentStream].
+     */
     private fun circle(out: StringBuilder, cx: Float, cy: Float, r: Float) {
         val k = 0.5523f * r // control-point distance that makes a quarter-circle
         out.append("${n(cx + r)} ${n(cy)} m ")
-        out.append("${n(cx + r)} ${n(cy + k)} ${n(cx + k)} ${n(cy + r)} ${n(cx)} ${n(cy + r)} c ")
-        out.append("${n(cx - k)} ${n(cy + r)} ${n(cx - r)} ${n(cy + k)} ${n(cx - r)} ${n(cy)} c ")
-        out.append("${n(cx - r)} ${n(cy - k)} ${n(cx - k)} ${n(cy - r)} ${n(cx)} ${n(cy - r)} c ")
-        out.append("${n(cx + k)} ${n(cy - r)} ${n(cx + r)} ${n(cy - k)} ${n(cx + r)} ${n(cy)} c h\n")
+        out.append("${n(cx + r)} ${n(cy - k)} ${n(cx + k)} ${n(cy - r)} ${n(cx)} ${n(cy - r)} c ")
+        out.append("${n(cx - k)} ${n(cy - r)} ${n(cx - r)} ${n(cy - k)} ${n(cx - r)} ${n(cy)} c ")
+        out.append("${n(cx - r)} ${n(cy + k)} ${n(cx - k)} ${n(cy + r)} ${n(cx)} ${n(cy + r)} c ")
+        out.append("${n(cx + k)} ${n(cy + r)} ${n(cx + r)} ${n(cy + k)} ${n(cx + r)} ${n(cy)} c h\n")
     }
 
     // Locale.ROOT: PDF needs '.' as the decimal point, whatever language the tablet uses.

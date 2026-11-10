@@ -318,6 +318,47 @@ class PdfFileStrokesTest {
         }
     }
 
+    /**
+     * Review 1.1: the round ends were drawn the opposite way round to the body, so the two
+     * cancelled where they overlapped, leaving a half-circle hole just inside each end.
+     */
+    @Test fun highlighterIsSolidJustInsideItsEnd() = PdfFile.open(TestPdfs.blank(dir)).use { pdf ->
+        pdf.add(0, Stroke(StrokeKind.HIGHLIGHTER, listOf(StrokePoint(100f, 400f, 1f), StrokePoint(300f, 400f, 1f))))
+        val half = Math.round(StrokeStyle.of(StrokeKind.HIGHLIGHTER).widthAt(1f) / 4) // half a radius
+        val bmp = pdf.render(0, 612) // 1 px per point, y down
+        assertTrue("solid just inside the start", isYellow(bmp.getPixel(100 + half, 792 - 400)))
+        assertTrue("solid just inside the end", isYellow(bmp.getPixel(300 - half, 792 - 400)))
+        assertTrue("solid in the middle", isYellow(bmp.getPixel(200, 792 - 400)))
+    }
+
+    /** A stroke drawn before the ends were fixed has no drawing version: it's drawn again, once. */
+    @Test fun oldDrawingIsRedrawnOnce() {
+        val written = File(dir, "old-drawing.pdf")
+        PdfFile.open(TestPdfs.blank(dir)).use { pdf ->
+            pdf.add(0, line)
+            assertEquals("a new stroke needs no redraw", InkRedraw(0, more = false), pdf.redrawFaultyInk(0, 25))
+            pdf.saveTo(written)
+        }
+        val old = File(dir, "old-drawing2.pdf")
+        val doc = openRaw(written)
+        try {
+            doc.findPage(0).get("Annots").get(0).delete(ItemAnnotations.DRAWING_KEY)
+            doc.save(old.path, "")
+        } finally {
+            doc.destroy()
+        }
+        val again = File(dir, "old-drawing3.pdf")
+        PdfFile.open(old).use { pdf ->
+            val ids = pdf.items(0).map { it.id }
+            assertEquals(InkRedraw(1, more = false), pdf.redrawFaultyInk(0, 25))
+            assertEquals(InkRedraw(0, more = false), pdf.redrawFaultyInk(0, 25))
+            assertEquals(ids, pdf.items(0).map { it.id })
+            pdf.saveTo(again)
+        }
+        // And it stays fixed once saved.
+        PdfFile.open(again).use { assertEquals(InkRedraw(0, more = false), it.redrawFaultyInk(0, 25)) }
+    }
+
     /** One old stroke whose points can't be read doesn't stop the others being redrawn and counted. */
     @Test fun aStrokeThatCantBeRedrawnLeavesTheRestRedrawn() {
         val file = TestPdfs.blank(dir, pages = 1)
