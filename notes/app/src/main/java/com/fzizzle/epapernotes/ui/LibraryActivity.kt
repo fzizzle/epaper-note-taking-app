@@ -97,6 +97,9 @@ class LibraryActivity : Activity() {
         super.onStart()
         started = true
         shownFolder?.let(watch::watch)
+        // The subfolders on screen too, before the listing onResume asks for: a PDF landing in
+        // one meanwhile still updates its count. The grid still holds the last entries.
+        if (shownFolder != null) watch.watchChildren(onScreen().filterIsInstance<FolderEntry>().map { it.file })
         thumbnails?.resume()
     }
 
@@ -294,7 +297,12 @@ class LibraryActivity : Activity() {
         // Another folder than was asked for (that one went away), or this one was deleted and
         // perhaps recreated by a sync app since it was watched: watched afresh.
         val rewatch = watch.needsRewatch
-        if (started && (shown != watch.watching || rewatch)) watch.watch(shown)
+        if (started && (shown != watch.watching || rewatch)) {
+            watch.watch(shown)
+            // A recreated folder was read before this watch began, so a file landing in
+            // between would go unseen: read once more. If nothing changed, nothing is redrawn.
+            if (rewatch) main.post { list() }
+        }
         if (shown != shownFolder) {
             shownFolder = shown
             prefs.folderOnShow = shown
