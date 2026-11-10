@@ -148,7 +148,7 @@ class PenInput(
             LiveLine.PEN -> {
                 h.setStrokeStyle(TouchHelper.STROKE_STYLE_FOUNTAIN) // the line follows pressure
                 h.setStrokeColor(Color.BLACK)
-                h.setStrokeWidth(StrokeStyle.of(StrokeKind.PEN).maxWidth * pxPerPt)
+                h.setStrokeWidth(StrokeStyle.of(StrokeKind.PEN).liveFountainWidth(pxPerPt)) // as wide as the saved ink
             }
             LiveLine.HIGHLIGHTER -> {
                 h.setStrokeStyle(TouchHelper.STROKE_STYLE_MARKER)

@@ -12,8 +12,32 @@ class StrokeOutlineTest {
     private fun pen(vararg p: StrokePoint) = Stroke(StrokeKind.PEN, p.toList())
 
     @Test fun penWidthFollowsPressure() {
-        assertEquals(0.6f, StrokeStyle.of(StrokeKind.PEN).widthAt(0f), 1e-4f)
-        assertEquals(2.0f, StrokeStyle.of(StrokeKind.PEN).widthAt(1f), 1e-4f)
+        assertEquals(0.8f, StrokeStyle.of(StrokeKind.PEN).widthAt(0f), 1e-4f)
+        assertEquals(3.2f, StrokeStyle.of(StrokeKind.PEN).widthAt(1f), 1e-4f)
+    }
+
+    /**
+     * Onyx's fountain pen, measured on the tablet (FountainWidthCheck, 2026-11-10), draws a
+     * point 2 + (W + 1) × pressure² pixels wide for a set width W, whatever the speed. The saved
+     * ink must match it, or the stroke changes width when the app's copy replaces the live line
+     * (owner: it got skinny after picking another tool).
+     */
+    @Test fun savedPenInkMatchesOnyxsLiveLine() {
+        val pen = StrokeStyle.of(StrokeKind.PEN)
+        fun onyx(w: Float, p: Float) = 2f + (w + 1f) * p * p
+        for (pxPerPt in listOf(1.9f, 2.5f, 3.1f, 5f, 10f)) {
+            val w = pen.liveFountainWidth(pxPerPt)
+            for (p in listOf(0f, 0.1f, 0.3f, 0.5f, 0.7f, 0.9f, 1f)) {
+                val saved = pen.widthAt(p) * pxPerPt
+                // How much wider pressure makes the line: the same at every zoom.
+                assertEquals("growth at $pxPerPt px/pt, p=$p", onyx(w, p) - onyx(w, 0f), saved - pen.widthAt(0f) * pxPerPt, 0.01f)
+                // Onyx's 2 px floor doesn't scale; at about normal size it's within half a pixel.
+                if (pxPerPt <= 3.1f) assertEquals("width at $pxPerPt px/pt, p=$p", onyx(w, p), saved, 0.5f)
+            }
+        }
+        // At 2.5 px/pt the live line is as wide as it was before this change, and matches exactly.
+        assertEquals(8f, onyx(pen.liveFountainWidth(2.5f), 1f), 0.01f)
+        assertEquals(onyx(pen.liveFountainWidth(2.5f), 0.4f), pen.widthAt(0.4f) * 2.5f, 0.01f)
     }
 
     @Test fun highlighterIsTranslucentYellow() {
@@ -24,7 +48,7 @@ class StrokeOutlineTest {
 
     @Test fun boundsPadByHalfWidth() {
         val b = StrokeOutline.bounds(pen(StrokePoint(100f, 100f, 1f), StrokePoint(200f, 100f, 1f)))
-        assertEquals(Box(99f, 99f, 201f, 101f), b)
+        assertEquals(Box(98.4f, 98.4f, 201.6f, 101.6f), b) // full pressure: 3.2 pt wide
     }
 
     @Test fun widthScaleWidensBounds() {
