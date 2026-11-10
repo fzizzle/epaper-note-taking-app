@@ -259,6 +259,8 @@ class LibraryActivity : Activity() {
         val wanted = folder ?: root
         val ask = ++listed
         val last = prefs.lastOpened
+        // Watched before it's read (review 2.10): a file landing while it's read still re-lists.
+        if (started && wanted != watch.watching) watch.watch(wanted)
         disk.execute {
             afterSaveOf?.let { DocumentSession.awaitClosed(it, LEFT_SAVE_WAIT_MS) }
             val start = SystemClock.uptimeMillis()
@@ -284,10 +286,13 @@ class LibraryActivity : Activity() {
 
     private fun showListing(shown: File, entries: List<Entry>, resume: File?, rootMissing: Boolean, redrawTiles: Boolean) {
         folder = shown
+        // Another folder than was asked for (that one went away), or this one was deleted and
+        // perhaps recreated by a sync app since it was watched: watched afresh.
+        val rewatch = watch.needsRewatch
+        if (started && (shown != watch.watching || rewatch)) watch.watch(shown)
         if (shown != shownFolder) {
             shownFolder = shown
             prefs.folderOnShow = shown
-            if (started) watch.watch(shown)
             breadcrumb.show(root ?: shown, shown)
             grid.setSelection(0)
         }
@@ -344,18 +349,22 @@ class LibraryActivity : Activity() {
     private fun showSettings() =
         showLibrarySettings(this, prefs, disk, onRootChosen = ::useRoot, onThumbnailsChanged = ::switchThumbnails)
 
-    /** The tiles on screen get their thumbnails first. */
+    /**
+     * The tiles on screen get their thumbnails first, and the folders among them are watched,
+     * so a PDF arriving inside one updates its count (spec §6.1).
+     */
     private fun tilesOnScreenChanged() {
+        if (started) watch.watchChildren(onScreen().filterIsInstance<FolderEntry>().map { it.file })
         val loader = thumbnails ?: return
-        loader.show(adapter.entries.filterIsInstance<PdfEntry>(), pdfsOnScreen())
+        loader.show(adapter.entries.filterIsInstance<PdfEntry>(), onScreen().filterIsInstance<PdfEntry>())
     }
 
-    /** The PDFs whose tiles are on screen now. */
-    private fun pdfsOnScreen(): List<PdfEntry> {
+    /** The entries whose tiles are on screen now. */
+    private fun onScreen(): List<Entry> {
         val entries = adapter.entries
         val first = grid.firstVisiblePosition.coerceIn(0, entries.size)
         val end = (first + grid.childCount).coerceIn(first, entries.size)
-        return entries.subList(first, end).filterIsInstance<PdfEntry>()
+        return entries.subList(first, end)
     }
 
     private fun newThumbnails() = ThumbnailLoader(thumbnailCache) { pdf, bitmap -> thumbnailReady(pdf, bitmap) }
@@ -391,7 +400,7 @@ class LibraryActivity : Activity() {
      */
     private fun refresh() {
         thumbnails?.let { loader ->
-            val showing = pdfsOnScreen().toSet()
+            val showing = onScreen().filterIsInstance<PdfEntry>().toSet()
             val (onScreen, rest) = adapter.entries.filterIsInstance<PdfEntry>().partition { it in showing }
             loader.redraw(onScreen, rest)
         }
