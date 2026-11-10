@@ -9,9 +9,11 @@
 
     <application
         android:name=".NotesApp"
-        android:label="E-paper Notes"
+        android:icon="@mipmap/ic_launcher"
+        android:label="Jot"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
-        tools:replace="android:label,android:theme">
+        tools:replace="android:icon,android:label,android:roundIcon,android:theme">
 
         <!-- The library (spec §6.1). Turning the tablet only changes how many tiles fit across. -->
         <activity
