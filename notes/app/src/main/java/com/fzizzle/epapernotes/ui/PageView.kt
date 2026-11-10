@@ -214,6 +214,11 @@ class PageView(context: Context) : View(context) {
     fun refitLater(fit: List<Box>?) {
         this.fit = fit
         fitWaiting = true
+        // The neighbours' pictures made ahead were for their old boxes: made again for the new
+        // ones now, so turning to one finds its picture ready and costs one panel update.
+        // Asked for here, not by a redraw, which the panel could show for nothing.
+        val v = viewport ?: return
+        if (!pinching) readyNeighbours(v)
     }
 
     /** Lays the pages out with boxes [refitLater] kept, if any, on the page just turned to. */
@@ -489,12 +494,34 @@ class PageView(context: Context) : View(context) {
      * draws the part on screen at its true size. A full page at 4x would need about 285 MB.
      *
      * Each page at its own fitted scale, so a neighbour got ready ahead is at the width it will
-     * be shown at. Fitted to a trimmed box (Trim margins) the whole page is wider than the
-     * view; it's kept to [MAX_PICTURE_WIDTH] views wide all the same, for memory, and the
-     * sharp patch makes up for it once zoomed in.
+     * be shown at: the page on show as the viewport fits it now, any other with the box it
+     * will get when turned to ([fit], which may have come since: [refitLater]). Fitted to a
+     * trimmed box (Trim margins) the whole page is wider than the view; it's kept to
+     * [MAX_PICTURE_WIDTH] views wide all the same, for memory, and the sharp patch makes up
+     * for it once zoomed in.
      */
-    private fun renderWidth(v: Viewport, page: Int): Int =
-        minOf(Math.round(sizes[page].w * v.fittedPxPerPt(page)), Math.round(width * MAX_PICTURE_WIDTH))
+    private fun renderWidth(v: Viewport, page: Int): Int {
+        val pxPerPt = if (page == v.page) v.fittedPxPerPt(page) else
+            Viewport.scaleToFit(fit?.get(page) ?: Box(0f, 0f, sizes[page].w, sizes[page].h), width, height)
+        return minOf(Math.round(sizes[page].w * pxPerPt), Math.round(width * MAX_PICTURE_WIDTH))
+    }
+
+    /** At normal size, the pages either side of the one on show are made ahead, so turning to one is instant. */
+    private fun readyNeighbours(v: Viewport) {
+        if (v.zoom > 1.05f) return
+        if (v.page + 1 < v.pageCount) ensureRendered(v.page + 1, renderWidth(v, v.page + 1))
+        if (v.page > 0) ensureRendered(v.page - 1, renderWidth(v, v.page - 1))
+    }
+
+    /**
+     * True when the page on show already has an up-to-date picture at the width it needs now,
+     * so no picture is coming whose arrival would show it ([onPageShown]). UI thread.
+     */
+    fun pictureReady(): Boolean {
+        val v = viewport ?: return false
+        val have = bitmaps.get(v.page, renderWidth(v, v.page)) ?: return false
+        return !ink.isStale(v.page, have.version)
+    }
 
     private fun ensureRendered(page: Int, widthPx: Int) {
         val have = bitmaps.get(page, widthPx)
@@ -552,11 +579,7 @@ class PageView(context: Context) : View(context) {
         // Don't render mid-pinch: the width keeps changing. It's asked for once the pinch ends.
         if (!pinching) {
             ensureRendered(page, w)
-            // Get the neighbours ready, so turning the page is instant.
-            if (v.zoom <= 1.05f) {
-                if (page + 1 < v.pageCount) ensureRendered(page + 1, renderWidth(v, page + 1))
-                if (page > 0) ensureRendered(page - 1, renderWidth(v, page - 1))
-            }
+            readyNeighbours(v)
         }
 
         // Only the slow ones, so the log shows the draws that could make the pen or a drag

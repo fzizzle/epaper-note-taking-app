@@ -496,11 +496,17 @@ class WritingActivity : Activity() {
     private fun layOutPages(startPage: Int? = null, turned: Set<Int>? = null, then: () -> Unit) {
         // Nothing laid out yet (that rotation replayed at open): there's nothing to keep, read them all.
         val onlyTurned = turned != null && pdfToDisplay.isNotEmpty()
+        // At open with Trim margins, the first page's printed area is measured with the layout,
+        // so the page is fitted to it from the first draw instead of refitting a moment later.
+        val firstPage = if (trimMargins && pdfToDisplay.isEmpty()) startPage ?: lastPages.get(path) else null
+        val firstInk = firstPage?.let { pages.inkVersion(it) } ?: 0
         session.runOnDocument { pdf ->
             val file = pdf as PdfFile
             val count = file.pageCount
             val toRead = if (onlyTurned) turned.orEmpty().filter { it in 0 until count } else (0 until count).toList()
             val read = toRead.associateWith { file.layout(it) }
+            val first = firstPage?.coerceIn(0, count - 1)
+            val firstArea = first?.let { p -> read[p]?.first?.let { s -> printedAreaOf(file, p, SizePt(s.width, s.height)) } }
             runOnUiThread {
                 if (onlyTurned && (pageSizes.size != count || pdfToDisplay.size != count)) {
                     // What was kept doesn't match the file. It shouldn't happen (a document's page count never changes), but then read everything.
@@ -518,6 +524,7 @@ class WritingActivity : Activity() {
                     printedAreas.remove(it)
                     measuring.remove(it)
                 }
+                if (first != null && firstArea != null) printedAreas[first] = PrintedArea(firstArea, firstInk)
                 pageCount = sizes.size
                 pageSizes = sizes
                 pdfToDisplay = transforms
@@ -621,25 +628,31 @@ class WritingActivity : Activity() {
         val turnedAs = pdfToDisplay[page]
         // Every stroke counted in inkVersion reached the PDF before this, as for a page picture.
         session.runOnDocument { pdf ->
-            val box = try {
-                val started = SystemClock.uptimeMillis()
-                // Smoothed, unlike the page pictures: at this size a pen stroke is under a pixel
-                // wide, and drawn solid it could vanish, where smoothed it still leaves a grey.
-                // No contrast step either: this picture is never shown.
-                val bitmap = (pdf as PdfFile).render(page, MEASURE_WIDTH_PX, smoothInk = true)
-                val w = bitmap.width
-                val h = bitmap.height
-                val pixels = IntArray(w * h).also { bitmap.getPixels(it, 0, w, 0, 0, w, h) }
-                bitmap.recycle()
-                ContentBounds.trim(size, ContentBounds.of(pixels, w, h), w / size.w).also {
-                    Log.i(TAG, "printed area page=$page box=$it ms=${SystemClock.uptimeMillis() - started}")
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "measuring the printed area failed page=$page", e)
-                null
-            }
+            val box = printedAreaOf(pdf as PdfFile, page, size)
             runOnUiThread { printedAreaFound(page, turnedAs, inkVersion, box) }
         }
+    }
+
+    /**
+     * On the worker: [page]'s box to fit (ContentBounds), [size] as shown, from one small
+     * picture of it. Null if it couldn't be drawn.
+     */
+    private fun printedAreaOf(file: PdfFile, page: Int, size: SizePt): Box? = try {
+        val started = SystemClock.uptimeMillis()
+        // Smoothed, unlike the page pictures: at this size a pen stroke is under a pixel
+        // wide, and drawn solid it could vanish, where smoothed it still leaves a grey.
+        // No contrast step either: this picture is never shown.
+        val bitmap = file.render(page, MEASURE_WIDTH_PX, smoothInk = true)
+        val w = bitmap.width
+        val h = bitmap.height
+        val pixels = IntArray(w * h).also { bitmap.getPixels(it, 0, w, 0, 0, w, h) }
+        bitmap.recycle()
+        ContentBounds.trim(size, ContentBounds.of(pixels, w, h), w / size.w).also {
+            Log.i(TAG, "printed area page=$page box=$it ms=${SystemClock.uptimeMillis() - started}")
+        }
+    } catch (e: Exception) {
+        Log.w(TAG, "measuring the printed area failed page=$page", e)
+        null
     }
 
     /**
@@ -653,16 +666,20 @@ class WritingActivity : Activity() {
         if (page !in pdfToDisplay.indices || pdfToDisplay[page] != turnedAs) return
         measuring -= page
         if (box == null) return
-        val had = printedAreas[page]?.box
+        // The box in use until now: the whole page if it hadn't been measured. A page that comes
+        // out whole (blank, full-bleed) is then no change, and costs no refit or panel update.
+        val had = printedAreas[page]?.box ?: Box(0f, 0f, pageSizes[page].w, pageSizes[page].h)
         printedAreas[page] = PrintedArea(box, inkVersion)
         if (!trimMargins || box == had) return
         val v = pages.viewport ?: return
         if (page == v.page && shownPageUntouched && !pen.isWriting && !screenPenDown) {
             Log.i(TAG, "refit page=$page to its printed area")
             fitPagesAgain()
-            // The panel ignores the view's drawing while fast-ink is on, as for a page turn.
-            // With a menu or dialog open fast-ink is paused already, and its closing resumes it.
-            if (!dialogOpen) showWithoutFastInk()
+            // The panel ignores the view's drawing while fast-ink is on. The page's picture at
+            // its new width shows it when it comes (onPageShown), in one panel update. Only if
+            // one at that width is kept already (both widths at the cap, or one from earlier)
+            // does nothing come, and it's shown here instead. With a menu or dialog open fast-ink is paused anyway.
+            if (pages.pictureReady() && !dialogOpen) showWithoutFastInk()
         } else {
             pages.refitLater(fitBoxes())
         }

@@ -60,9 +60,24 @@ class ContentBoundsTest {
     }
 
     @Test fun theBoxIsTheContentWithABorder() {
-        // 50..150 × 80..180 px is 150..450 × 240..540 pt, and 12 pt more on each side.
-        val box = ContentBounds.trim(page, Box(50f, 80f, 150f, 180f), pxPerPt)
-        assertBox(Box(138f, 228f, 462f, 552f), box)
+        // 50..150 × 60..200 px is 150..450 × 180..600 pt, and 12 pt more on each side.
+        val box = ContentBounds.trim(page, Box(50f, 60f, 150f, 200f), pxPerPt)
+        assertBox(Box(138f, 168f, 462f, 612f), box)
+    }
+
+    /**
+     * Only a page number at the foot of the page: the box is half the page each way, round it
+     * and on the page, so it shows at most twice the whole page's size, in a view of any shape.
+     */
+    @Test fun aTinyPrintedAreaIsEnlargedAtMostTwice() {
+        // 95..105 × 250..256 px is 285..315 × 750..768 pt; 273..327 × 738..780 with the border.
+        val box = ContentBounds.trim(page, Box(95f, 250f, 105f, 256f), pxPerPt)
+        assertBox(Box(150f, 400f, 450f, 800f), box) // centred across, slid up off the bottom edge
+        for ((w, h) in listOf(1860 to 2300, 2300 to 1860, 1200 to 1800)) {
+            val trimmed = Viewport(listOf(page), w, h, fit = listOf(box)).pxPerPt()
+            val whole = Viewport(listOf(page), w, h).pxPerPt()
+            assertTrue("$w × $h: ${trimmed / whole}×", trimmed <= 2 * whole + 1e-4f)
+        }
     }
 
     @Test fun aBlankPageIsNotTrimmed() {
@@ -79,8 +94,8 @@ class ContentBoundsTest {
 
     @Test fun theBorderNeverLeavesThePage() {
         // Content right in the top-left corner, and right at the bottom-right one.
-        assertBox(Box(0f, 0f, 192f, 192f), ContentBounds.trim(page, Box(1f, 1f, 60f, 60f), pxPerPt))
-        assertBox(Box(408f, 609f, 600f, 800f), ContentBounds.trim(page, Box(140f, 207f, 200f, 267f), pxPerPt))
+        assertBox(Box(0f, 0f, 372f, 492f), ContentBounds.trim(page, Box(1f, 1f, 120f, 160f), pxPerPt))
+        assertBox(Box(228f, 309f, 600f, 800f), ContentBounds.trim(page, Box(80f, 107f, 200f, 267f), pxPerPt))
     }
 
     /** The page is measured with its ink, so a note written in the margin is kept in view. */

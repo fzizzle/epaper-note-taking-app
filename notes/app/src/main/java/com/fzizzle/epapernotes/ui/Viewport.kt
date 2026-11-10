@@ -71,10 +71,7 @@ class Viewport(
     fun pxPerPt(): Float = fittedPxPerPt(page) * zoom
 
     /** Screen pixels per PDF point for [page] at normal size, on show or not: how big to draw its picture. */
-    fun fittedPxPerPt(page: Int): Float {
-        val b = box(page)
-        return minOf(viewWidthPx / (b.x1 - b.x0), viewHeightPx / (b.y1 - b.y0))
-    }
+    fun fittedPxPerPt(page: Int): Float = scaleToFit(box(page), viewWidthPx, viewHeightPx)
 
     /** Zooms by [factor], keeping the spot under the fingers ([focusX], [focusY]) where it is. */
     fun zoomAround(factor: Float, focusX: Float, focusY: Float) {
@@ -157,5 +154,9 @@ class Viewport(
 
     companion object {
         const val MAX_ZOOM = 4f
+
+        /** Screen pixels per point that make [box] fill a [viewWidthPx] × [viewHeightPx] view, whole. */
+        fun scaleToFit(box: Box, viewWidthPx: Int, viewHeightPx: Int): Float =
+            minOf(viewWidthPx / (box.x1 - box.x0), viewHeightPx / (box.y1 - box.y0))
     }
 }
