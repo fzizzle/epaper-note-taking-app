@@ -702,4 +702,38 @@ class DocumentSessionTest {
         s.saveNow()
         assertEquals("items=1", pdf.readText())
     }
+
+    /** As a full tablet does: from now on the journal can't be appended to or rewritten. */
+    private fun breakTheJournal() {
+        val journalFile = ChangeJournal.forDocument(journals, pdf).file
+        assertTrue(journalFile.delete())
+        assertTrue(journalFile.mkdir())
+    }
+
+    /** Review 1.3: with the tablet full, a stroke is kept in memory and saved at once, and nothing crashes. */
+    @Test fun strokeIsKeptWhenTheJournalCantBeWritten() {
+        val s = session()
+        breakTheJournal()
+        s.addStroke(0, dot)
+        s.addStroke(0, line)
+        s.addStroke(1, dot)
+        assertEquals(1, events.count { it == SessionEvent.JournalFailed }) // told once, not at every stroke
+        assertEquals(listOf(dot, line), strokesOn(0))
+        assertEquals(listOf(dot), strokesOn(1))
+        assertEquals("items=3", pdf.readText()) // saved without waiting for the autosave
+    }
+
+    /** The PDF was saved, so the save counts, even though the journal couldn't be brought up to date. */
+    @Test fun saveStillCountsWhenTheJournalCantBeRewritten() {
+        val s = session()
+        breakTheJournal()
+        s.addStroke(0, dot)
+        assertEquals("items=1", pdf.readText())
+        assertTrue(events.contains(SessionEvent.Saved))
+        assertTrue(events.none { it is SessionEvent.SaveFailed })
+        val saves = fake.saves
+        s.saveNow()
+        scheduler.runDelayed()
+        assertEquals(saves, fake.saves) // nothing left to save
+    }
 }

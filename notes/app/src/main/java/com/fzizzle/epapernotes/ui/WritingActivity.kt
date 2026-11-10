@@ -899,6 +899,7 @@ class WritingActivity : Activity() {
         when (event) {
             SessionEvent.Saved -> Unit // saving is silent when it works
             is SessionEvent.SaveFailed -> toast("Couldn't save: ${event.message}. Your writing is kept safe and will be saved again.")
+            SessionEvent.JournalFailed -> toast("Storage is full: writing can't be kept safe until there's room.")
             SessionEvent.ChangedOnDisk -> toast("This file was changed elsewhere, so it isn't being saved into. Your writing is kept safe.")
             SessionEvent.WritingStopped -> toast("A change couldn't be written into this file, so it isn't being saved into. Your writing is kept safe in the app.")
             SessionEvent.NeedsRepairDecision -> askAboutRepair()

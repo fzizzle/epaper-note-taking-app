@@ -12,6 +12,7 @@ import com.fzizzle.epapernotes.storage.SafeSave
 import com.fzizzle.epapernotes.tools.Eraser
 import com.fzizzle.epapernotes.tools.Lasso
 import java.io.File
+import java.io.IOException
 import java.time.LocalDateTime
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
@@ -24,6 +25,8 @@ import java.util.concurrent.TimeoutException
  *
  * - Every change (a stroke, an erase, a move, an undo...) goes into the journal before
  *   [record] returns, so it survives a crash from the moment the pen lifts.
+ * - If the journal can't be written (a full tablet), the change is still kept: in memory, and
+ *   saved to the PDF at once. The owner is told that writing isn't safe from a crash for now.
  * - The PDF is saved in the background a few seconds after the pen stops, and at once when
  *   the owner leaves the document or the app goes to the background.
  * - A save never writes over a file that something else has changed, or over a damaged file
@@ -65,6 +68,9 @@ class DocumentSession(
     private val unsaved = ArrayList<Change>()
     private val undoable = ArrayDeque<Change>()
     private val redoable = ArrayDeque<Change>()
+    // Guarded by lock too. The last journal write failed, and the owner has been told. Cleared
+    // when the journal is next rewritten whole, so the message isn't shown at every stroke.
+    private var journalBroken = false
 
     /** Opened once the journal is ready, so no stroke can be written before its header. */
     private val journalReady = CountDownLatch(1)
@@ -197,14 +203,15 @@ class DocumentSession(
         scheduler.post { redrawFaultyInkFrom(page + 1) }
     }
 
-    /** A finished stroke, from the pen's thread. Safe in the journal when this returns. */
+    /** A finished stroke, from the pen's thread. Safe in the journal when this returns (see [commit] for a full tablet). */
     fun addStroke(page: Int, stroke: Stroke) {
         record(AddItems(page, listOf(InkItem(ItemIds.next(), stroke))))
     }
 
     /**
      * A new change, from any thread. Safe in the journal when this returns; it reaches the PDF
-     * when the worker gets to it. It can be undone, and it clears what could be redone.
+     * when the worker gets to it. It can be undone, and it clears what could be redone. (The
+     * one exception is a journal that can't be written: see [commit].)
      *
      * The ordering rule: a change is journaled, appended to `unsaved`, and posted to the worker
      * inside one `synchronized(lock)` block (see [commit]). So the order in the journal, in
@@ -267,18 +274,34 @@ class DocumentSession(
     }
 
     /**
-     * Called with [lock] held: the ordering rule. The journal comes first, so if writing it
-     * fails nothing else changes; [updateHistory] runs only once the change is safe.
+     * Called with [lock] held: the ordering rule. The journal comes first, then `unsaved` and
+     * the history, then the worker.
+     *
+     * A journal that can't be written (the tablet's own storage is full) doesn't stop the
+     * change. The rule used to be "journal first, or nothing", which lost the stroke the owner
+     * had just written and crashed the app, at every stroke. Now the change is kept in memory
+     * like any other and the PDF is saved at once, rather than in a few seconds: until that
+     * save lands, memory is the only place the change is. The owner is told once.
      */
     private fun commit(change: Change, updateHistory: () -> Unit) {
-        journal.append(change)
+        val journaled = try {
+            journal.append(change)
+            true
+        } catch (e: IOException) {
+            System.err.println("DocumentSession: the journal couldn't be written: $e")
+            false
+        }
+        val tellOwner = !journaled && !journalBroken
+        if (!journaled) journalBroken = true
         unsaved.add(change)
         updateHistory()
         val history = SessionEvent.HistoryChanged(canUndo = undoable.isNotEmpty(), canRedo = redoable.isNotEmpty())
         scheduler.post {
+            if (tellOwner) events(SessionEvent.JournalFailed) // posted, so it arrives on the worker like every event
             applyPending()
             events(history)
         }
+        if (!journaled) scheduler.post { save() }
     }
 
     /**
@@ -476,15 +499,31 @@ class DocumentSession(
         }
     }
 
-    /** After a successful save: a fresh journal holding only the changes the save didn't include. */
+    /**
+     * After a successful save: a fresh journal holding only the changes the save didn't include.
+     *
+     * The PDF holds the saved changes whether or not the journal can be rewritten, so they are
+     * dropped from `unsaved` either way: counting the save as failed would save the same
+     * changes again and again. A journal that couldn't be rewritten still holds the old
+     * version of the file and its changes; the next opening sorts that out, losing nothing.
+     */
     private fun restartJournal(base: FileIdentity, saved: Int) {
+        var tellOwner = false
         synchronized(lock) {
             val remaining = unsaved.drop(saved)
-            journal.rewrite(base, remaining)
+            try {
+                journal.rewrite(base, remaining)
+                journalBroken = false // whole again, with everything unsaved in it
+            } catch (e: IOException) {
+                System.err.println("DocumentSession: the journal couldn't be rewritten: $e")
+                tellOwner = !journalBroken
+                journalBroken = true
+            }
             unsaved.clear()
             unsaved.addAll(remaining)
             applied -= saved
         }
+        if (tellOwner) events(SessionEvent.JournalFailed)
     }
 
     /** Worker thread only. Continue in [copy], which has just been saved with everything applied. */
