@@ -343,6 +343,7 @@ class WritingActivity : Activity() {
                 resumeFastInk.run()
             }
         }
+        pages.quietTime = { pen.drawsInk && !pen.isWriting }
         pages.onPageShown = { page, version ->
             if (page == pages.viewport?.page) {
                 if (version >= previewShownFrom) layer.pageRedrawn()
@@ -433,8 +434,8 @@ class WritingActivity : Activity() {
      * A finished pen stroke, on Onyx's thread. What it does depends on the tool it got at
      * touch-down. Ink goes into the journal straight away (spec §7.3). The page isn't redrawn:
      * Onyx's ink stays on screen, and the page view keeps its own copy of the stroke for
-     * whenever it redraws. Redrawing here used to pause fast-ink and cut off the next stroke
-     * (owner's first writing session).
+     * whenever it redraws ([write]). Redrawing here used to pause fast-ink and cut off the next
+     * stroke (owner's first writing session).
      */
     private fun onPenStroke(points: List<FloatArray>) {
         val (page, screenToPdf) = strokeMapping ?: penMapping ?: return
@@ -457,12 +458,18 @@ class WritingActivity : Activity() {
     /**
      * A pen or highlighter stroke, `[x, y, rawPressure]` in screen pixels, recorded as ink: into
      * the journal straight away, then onto the page view's own copy. Any thread.
+     *
+     * The page view only draws itself again for it when the panel is showing the view, that is
+     * when Onyx isn't drawing the ink (asked on the UI thread, where fast-ink is paused and
+     * resumed). With fast-ink on, that draw would show nothing new on the panel and would take
+     * longer with every stroke on the page. So everything that turns fast-ink off must redraw
+     * the page view: [pausePenAndRedraw], [toolStateChanged], [onPause].
      */
     private fun write(page: Int, screenToPdf: Affine, tool: Tool, points: List<FloatArray>) {
         val kind = if (tool == Tool.HIGHLIGHTER) StrokeKind.HIGHLIGHTER else StrokeKind.PEN
         val (_, stroke) = PenPoints.toStroke(kind, points) { x, y -> page to screenToPdf.map(Pt(x, y)) } ?: return
         session.addStroke(page, stroke)
-        runOnUiThread { pages.addStroke(page, stroke) }
+        runOnUiThread { pages.addStroke(page, stroke, redraw = !pen.drawsInk) }
     }
 
     /** Button 2's trail, from Onyx's erase callbacks, on Onyx's thread. */
@@ -747,7 +754,7 @@ class WritingActivity : Activity() {
             .create()
         // Fast-ink would freeze the dialog on screen, so it's off while the dialog is open.
         dialogOpen = true
-        pen.pause()
+        pausePenAndRedraw()
         dialog.setOnDismissListener {
             dialogOpen = false
             // After the usual pause, not at once: the screen must first draw the page without
@@ -782,7 +789,7 @@ class WritingActivity : Activity() {
         menu.menu.add("Rotate this page").setOnMenuItemClickListener { rotate(all = false); true }
         menu.menu.add("Rotate all pages").setOnMenuItemClickListener { rotate(all = true); true }
         dialogOpen = true
-        pen.pause()
+        pausePenAndRedraw()
         menu.setOnDismissListener {
             dialogOpen = false
             // After the usual pause, as for "Go to page".
@@ -853,8 +860,10 @@ class WritingActivity : Activity() {
 
     /**
      * Pausing fast-ink hands the screen back to normal drawing, which shows the page view's
-     * last picture. That picture may be from before the latest strokes, because the screen
-     * ignores normal drawing while fast-ink is on. So draw it again right away, with the strokes.
+     * last picture. That picture is from before the latest strokes: the page view doesn't
+     * draw itself for a new stroke while fast-ink is on ([write]), and the screen ignores normal
+     * drawing then anyway. So draw it again right away, with the strokes. Everything that
+     * pauses fast-ink comes through here or redraws the page view itself.
      */
     private fun pausePenAndRedraw() {
         pen.pause()
@@ -911,6 +920,9 @@ class WritingActivity : Activity() {
         handler.removeCallbacks(retryShow)
         handler.removeCallbacks(resumeFastInk)
         pen.off()
+        // The page view's picture may lack the latest strokes ([write]). The screen can stay
+        // in view after this (the tablet going to sleep, another window on top), so draw them.
+        pages.invalidate()
         val penOff = SystemClock.uptimeMillis()
         pages.viewport?.let { lastPages.set(path, it.page) }
         // Going to the background or leaving: save now, not in a few seconds (spec §7.2).
@@ -987,7 +999,7 @@ class WritingActivity : Activity() {
         // As for "Go to page": fast-ink would freeze the question on screen, and pen taps on its
         // buttons would mark the page underneath.
         dialogOpen = true
-        pen.pause()
+        pausePenAndRedraw()
         dialog.setOnDismissListener {
             dialogOpen = false
             handler.removeCallbacks(resumeFastInk)

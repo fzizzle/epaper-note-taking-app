@@ -63,4 +63,19 @@ class InkOverlay {
     /** The strokes a rendering made at [version] doesn't have. */
     fun newerThan(page: Int, version: Int): List<Stroke> =
         pages[page]?.strokes?.filter { it.first > version }?.map { it.second }.orEmpty()
+
+    /**
+     * How many strokes a rendering made at [sinceVersion] doesn't have: how many the page view
+     * draws by hand each time it redraws. Without a version, every stroke held for the page.
+     */
+    fun count(page: Int, sinceVersion: Int = 0): Int = pages[page]?.strokes?.count { it.first > sinceVersion } ?: 0
+
+    companion object {
+        /**
+         * Past this many strokes drawn by hand on top of a page's picture, the page view asks
+         * for a fresh picture with them in it (PageView.bakeWhenIdle), so a redraw of a full
+         * page of writing doesn't get slower and slower.
+         */
+        const val BAKE_AFTER = 150
+    }
 }
