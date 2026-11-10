@@ -71,9 +71,11 @@ It should be lightweight and fast, and it should do a small set of core things v
 
 ### 6.2 Writing screen
 
-Layout: the PDF pages fill the screen. A **thin top strip** (about 5% of the height, always visible, one row) holds, left to right:
+Layout: the PDF pages fill the screen. A **thin top strip** (a little under 5% of the height, 4.4% since 2026-11-10, always visible, one row) holds, left to right:
 
 `← library · pen · highlighter · eraser · lasso select · snip · undo · redo · ⋯ page menu`
+
+How the strip is laid out (owner's decision, 2026-11-10): ← sits at the left edge. The tools, undo and redo sit together on a capsule (the "island") centred on the screen. ⋯ and the page indicator sit at the right edge. The island picks out the chosen tool. Tapping a tool shows it at once, with one quick flash, because fast-ink is on. Holding a pen button doesn't change the island: that would flash the screen at every press (owner's choice). The status bar is hidden on the writing screen, so the strip sits at the very top with even space around it. Two looks for the island (black, or white with an outline) are being compared on the tablet.
 
 The page menu holds **rotate this page** and **rotate all pages**.
 

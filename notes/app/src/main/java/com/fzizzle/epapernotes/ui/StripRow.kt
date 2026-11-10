@@ -11,7 +11,7 @@ import android.widget.LinearLayout
  * the squares and their gaps shrink together until they do: every button is always on screen,
  * in one row. Text keeps its size.
  */
-class StripRow(context: Context, private val side: Int, private val gap: Int) : LinearLayout(context) {
+open class StripRow(context: Context, private val side: Int, private val gap: Int) : LinearLayout(context) {
 
     /** Each square's gap after it at full size. */
     private val gapAfter = HashMap<View, Int>()
@@ -23,7 +23,7 @@ class StripRow(context: Context, private val side: Int, private val gap: Int) : 
     }
 
     /** Adds a square button, followed by [gaps] gaps. */
-    fun addSquare(button: StripButton, gaps: Int = 1) {
+    open fun addSquare(button: StripButton, gaps: Int = 1) {
         gapAfter[button] = gap * gaps
         // rightMargin, not marginEnd: a relative margin set after layout would be resolved over
         // what sizeSquares sets. The app is left-to-right only.

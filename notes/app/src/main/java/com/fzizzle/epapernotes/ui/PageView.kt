@@ -477,7 +477,7 @@ class PageView(context: Context) : View(context) {
     // pen leave the screen's range, and how late do finger touches arrive?
     override fun onHoverEvent(event: MotionEvent): Boolean {
         if (event.actionMasked == MotionEvent.ACTION_HOVER_ENTER || event.actionMasked == MotionEvent.ACTION_HOVER_EXIT) {
-            android.util.Log.i("Notes", "pen ${MotionEvent.actionToString(event.actionMasked)} tool=${event.getToolType(0)}")
+            android.util.Log.i("Notes", "pen ${MotionEvent.actionToString(event.actionMasked)} tool=${event.getToolType(0)} button=${penButtonOf(event)}")
         }
         // Not on exit: the pen leaves hover just as it lands, and a missing button there must
         // not turn a grey lasso line back into ink.
@@ -544,11 +544,14 @@ class PageView(context: Context) : View(context) {
         private const val PEN_REST_MS = 500L
 
         /**
-         * Button 2 makes the pen report as an eraser; button 1 is an ordinary button flag
-         * (probe results §1). Button 1's flag is ignored on the eraser, which wins.
+         * Button 1 is an ordinary button flag. Button 2 is too while it's pressed with the pen
+         * already in range; held as the pen comes into range, it makes the pen report as an
+         * eraser instead (probe results §1, a two-button pen with no eraser end). Either way
+         * button 2 means the eraser, and it wins over button 1.
          */
         fun penButtonOf(event: MotionEvent): PenButton = when {
             event.getToolType(0) == MotionEvent.TOOL_TYPE_ERASER -> PenButton.ERASER_END
+            event.isButtonPressed(MotionEvent.BUTTON_STYLUS_SECONDARY) -> PenButton.ERASER_END
             event.isButtonPressed(MotionEvent.BUTTON_STYLUS_PRIMARY) -> PenButton.LASSO_BUTTON
             else -> PenButton.NONE
         }
