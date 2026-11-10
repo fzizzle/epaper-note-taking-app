@@ -73,6 +73,9 @@ class PageView(context: Context) : View(context) {
     /** A one-finger tap, in view pixels. */
     var onFingerTap: (x: Float, y: Float) -> Unit = { _, _ -> }
 
+    /** A finger held still on the page for about half a second, in view pixels. */
+    var onFingerLongPress: (x: Float, y: Float) -> Unit = { _, _ -> }
+
     /** The selection box, snip rectangle and so on, drawn on top of the page. */
     var selectionLayer: SelectionLayer? = null
 
@@ -358,8 +361,10 @@ class PageView(context: Context) : View(context) {
 
     override fun onDraw(canvas: Canvas) {
         val started = System.nanoTime()
-        canvas.drawColor(Color.WHITE)
-        val v = viewport ?: return
+        val v = viewport ?: return canvas.drawColor(Color.WHITE)
+        // Beside the page is shaded, so it's clear where the page, and writing, ends (owner,
+        // 2026-11-10: the white band at the sides looked like page the pen wouldn't write on).
+        canvas.drawColor(BESIDE_PAGE)
         val page = v.page
         val toScreen = v.pageToScreen()
         val topLeft = toScreen.map(Pt(0f, 0f))
@@ -456,6 +461,8 @@ class PageView(context: Context) : View(context) {
             onFingerTap(e.x, e.y)
             return true
         }
+
+        override fun onLongPress(e: MotionEvent) = onFingerLongPress(e.x, e.y)
 
         override fun onScroll(e1: MotionEvent?, e2: MotionEvent, dx: Float, dy: Float): Boolean {
             val v = viewport ?: return true
@@ -564,6 +571,9 @@ class PageView(context: Context) : View(context) {
     }
 
     companion object {
+        /** Beside the page: a light grey, darker than [placeholder]'s page-not-drawn-yet grey. */
+        private val BESIDE_PAGE = Color.rgb(215, 215, 215)
+
         /** A draw is only logged when it takes longer than this: half of a 60-a-second frame. */
         private const val SLOW_DRAW_MS = 8L
 
