@@ -65,8 +65,10 @@ class ViewportTest {
         val before = v.screenToPage(600f, 900f)
         v.zoomAround(2f, 600f, 900f)
         val after = v.screenToPage(600f, 900f)
-        assertEquals(before.x, after.x, 0.01f)
-        assertEquals(before.y, after.y, 0.01f)
+        // The page is drawn on whole pixels, so the focus may move by up to half a pixel.
+        val halfAPixel = 0.5f / v.pxPerPt()
+        assertEquals(before.x, after.x, halfAPixel)
+        assertEquals(before.y, after.y, halfAPixel)
     }
 
     @Test fun zoomIsClampedTo1And4() {

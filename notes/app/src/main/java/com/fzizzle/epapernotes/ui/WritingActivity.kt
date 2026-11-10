@@ -374,6 +374,7 @@ class WritingActivity : Activity() {
                 } catch (e: Exception) {
                     // The scaled-up page stays on show; the next zoom or move asks again.
                     Log.w(TAG, "region render failed page=$page", e)
+                    runOnUiThread { pages.regionFailed(token) }
                 }
             }
         }
@@ -459,15 +460,17 @@ class WritingActivity : Activity() {
                 // Wipe fast-ink's leftover copy of the strokes, then hand the pen back.
                 Log.i(TAG, "fingers up after moving: clean refresh, then resume fast-ink")
                 pages.invalidate()
+                // Fast-ink stays off until the refresh is done, up to PATCH_WAIT_MS +
+                // CLEAN_REFRESH_MS: as for a show, the screen takes the pen meanwhile, so a
+                // stroke begun then is traced and kept, not lost (resumeFastInk waits for its lift).
+                pages.penHandler = screenPen
+                screenHasPen = true
                 if (pages.sharpPatchComing) {
                     Log.i(TAG, "clean refresh held for the sharp patch")
                     cleanRefreshHeld = true
                     handler.postDelayed(heldCleanRefresh, PATCH_WAIT_MS)
                 } else {
-                    pages.post {
-                        pen.cleanRefresh(pages)
-                        handler.postDelayed(resumeFastInk, CLEAN_REFRESH_MS)
-                    }
+                    handler.post(heldCleanRefresh) // on the handler, so a new gesture or leaving cancels it
                 }
             } else {
                 Log.i(TAG, "fingers up: resume fast-ink")
@@ -481,9 +484,13 @@ class WritingActivity : Activity() {
             if (page == pages.viewport?.page) {
                 if (version >= previewShownFrom) layer.pageRedrawn()
                 if (cleanRefreshHeld) {
-                    // The sharp patch after a zoom: the held refresh shows it, in the same update.
-                    handler.removeCallbacks(heldCleanRefresh)
-                    heldCleanRefresh.run()
+                    // The sharp patch after a zoom: the held refresh shows it, in the same
+                    // update. A page picture coming first is drawn under the patch still on its
+                    // way, and waits with it: showing it now would make the patch a second update.
+                    if (!pages.sharpPatchComing) {
+                        handler.removeCallbacks(heldCleanRefresh)
+                        heldCleanRefresh.run()
+                    }
                 } else {
                     showWithoutFastInk()
                 }
@@ -601,13 +608,12 @@ class WritingActivity : Activity() {
 
     /**
      * Lays the pages out again with the boxes there are now, on the page on show at normal
-     * size. Like every layout it tells the pen the new mapping, limit and line width (see
-     * onViewportChanged); the mapping once more here, since the pen's stroke depends on it.
+     * size. Like every layout it tells the pen the new mapping, limit and line width
+     * (setPages calls onViewportChanged).
      */
     private fun fitPagesAgain() {
         val v = pages.viewport ?: return
         pages.setPages(pageSizes, pdfToDisplay, v.page, fitBoxes())
-        publishPenMapping()
     }
 
     /** UI thread. [page] is on show anew: turned to, or laid out again. Nothing has touched it yet. */

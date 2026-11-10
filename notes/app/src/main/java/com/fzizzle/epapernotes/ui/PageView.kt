@@ -175,6 +175,10 @@ class PageView(context: Context) : View(context) {
     // token was asked for a view that has gone, and is thrown away.
     private var patchToken = 0
 
+    // The token of a quiet patch on its way ([bakeIfFull]): when it comes, it replaces the patch
+    // on show without a redraw and without telling the screen. NO_QUIET_PATCH when none is.
+    private var quietPatchToken = NO_QUIET_PATCH
+
     /**
      * True from asking for a sharp patch until it arrives or is dropped. The screen holds the
      * clean refresh after a zoom for it, so the zoom ends in one panel update, not two.
@@ -372,6 +376,10 @@ class PageView(context: Context) : View(context) {
         val v = viewport ?: return
         if (pinching || fingersDown || !quietTime()) return
         val page = v.page
+        // Zoomed in and still, the sharp patch is what's on top, and strokes are drawn by hand
+        // over it from its version (onDraw), so it's baked too. The page picture under it still
+        // is as well: it's what's drawn the moment the page moves and the patch goes.
+        bakePatchIfFull(v)
         val w = renderWidth(v, page)
         // No picture at this width, a stale one, or one on its way: the usual path has it in hand.
         val have = bitmaps.get(page, w) ?: return
@@ -383,6 +391,32 @@ class PageView(context: Context) : View(context) {
         quietRenders += page to w
         android.util.Log.i("Notes", "render requested page=$page width=$w version=${ink.version(page)} (quiet: $byHand strokes drawn by hand)")
         requestRender(page, w)
+    }
+
+    /**
+     * [bakeIfFull] for the sharp patch on show: when more than [InkOverlay.BAKE_AFTER] strokes
+     * are drawn by hand over it, a fresh one with them in it is asked for, quietly.
+     */
+    private fun bakePatchIfFull(v: Viewport) {
+        val p = patch ?: return
+        val part = v.visiblePagePart()
+        if (!patchCovers(v.page) || p.part != part) return
+        if (sharpPatchComing || quietPatchToken == patchToken) return // one on its way
+        val byHand = ink.count(v.page, p.version)
+        if (byHand <= InkOverlay.BAKE_AFTER) return
+        patchToken++ // the patch on show stays; anything that drops it drops this one too
+        quietPatchToken = patchToken
+        android.util.Log.i("Notes", "patch requested page=${v.page} (quiet: $byHand strokes drawn by hand)")
+        requestRegionRender(v.page, part, v.pxPerPt(), patchToken)
+    }
+
+    /**
+     * The patch asked for with [token] couldn't be made. It's no longer on its way, so the
+     * next rest or gesture can ask again; the scaled-up page, or the patch on show, stays. UI thread.
+     */
+    fun regionFailed(token: Int) {
+        if (token != patchToken) return // asked for a view that has gone anyway
+        if (token == quietPatchToken) quietPatchToken = NO_QUIET_PATCH else sharpPatchComing = false
     }
 
     override fun onDetachedFromWindow() {
@@ -509,6 +543,14 @@ class PageView(context: Context) : View(context) {
         // Under a good sharp patch this picture isn't seen (onDraw), so nothing in view changes:
         // showing it would be a second panel update after the patch's own. Used once the patch goes.
         if (!stale && patchCovers(page)) return
+        // A picture at a width the page no longer has (one asked for before a refit, say), while
+        // a good one at today's width is kept: it isn't drawn (onDraw takes today's), so it
+        // isn't shown either, which would cost a panel update for nothing.
+        val v = viewport
+        if (v != null && page == v.page && widthPx != renderWidth(v, page)) {
+            val current = bitmaps.get(page, renderWidth(v, page))
+            if (current != null && !ink.isStale(page, current.version)) return
+        }
         // Only the page on show: a neighbour got ready for the next page turn changes nothing in view.
         if (page == viewport?.page) invalidate()
         if (!stale) onPageShown(page, version)
@@ -526,6 +568,20 @@ class PageView(context: Context) : View(context) {
         // Asked for a view that has gone since (a zoom, a move, a turn, a change): never shown.
         if (token != patchToken || v == null || page != v.page || part != v.visiblePagePart()) {
             bitmap.recycle()
+            return
+        }
+        if (token == quietPatchToken) {
+            quietPatchToken = NO_QUIET_PATCH
+            // As a quiet page picture (pageRendered): the same view plus the strokes drawn by
+            // hand, swapped in without a redraw, and only while Onyx has the panel. Otherwise
+            // the view is what the panel shows: thrown away, asked for again at a later rest.
+            val old = patch
+            if (quietTime() && old != null && patchCovers(page)) {
+                patch = Patch(page, part, bitmap, version)
+                old.bitmap.recycle()
+            } else {
+                bitmap.recycle()
+            }
             return
         }
         sharpPatchComing = false
@@ -557,6 +613,7 @@ class PageView(context: Context) : View(context) {
         patch?.bitmap?.recycle()
         patch = null
         patchToken++
+        quietPatchToken = NO_QUIET_PATCH
         sharpPatchComing = false
     }
 
@@ -849,6 +906,9 @@ class PageView(context: Context) : View(context) {
 
     companion object {
         private const val NO_REFIT = -1
+
+        /** No quiet patch on its way (see quietPatchToken); tokens start at 0 and only go up. */
+        private const val NO_QUIET_PATCH = -1
 
         /** A page's picture is at most this many times the view's width (see renderWidth). */
         private const val MAX_PICTURE_WIDTH = 1.5f

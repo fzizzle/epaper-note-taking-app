@@ -31,6 +31,9 @@ class PageLookTest {
         val strongest = PageLook.table(Contrast.STRONGEST)[128]
         assertTrue("Stronger: $stronger", stronger < 128)
         assertTrue("Strongest $strongest below Stronger $stronger", strongest < stronger)
+        // The curves the owner approved (2026-11-10): 255 × (128 / 255) ^ 1.5 and ^ 2.2.
+        assertEquals(91, stronger)
+        assertEquals(56, strongest)
     }
 
     @Test fun tablesNeverGoBackwards() {

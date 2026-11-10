@@ -80,6 +80,13 @@ class ContentBoundsTest {
         }
     }
 
+    /** A tiny printed area at the top left corner: the enlarged box slides back onto the page, not off its top or left. */
+    @Test fun aTinyPrintedAreaInTheCornerStaysOnThePage() {
+        // 0..4 × 0..3 px is 0..12 × 0..9 pt; with the border, clipped at the page: 0..24 × 0..21.
+        val box = ContentBounds.trim(page, Box(0f, 0f, 4f, 3f), pxPerPt)
+        assertBox(Box(0f, 0f, 300f, 400f), box) // half the page each way, from its corner
+    }
+
     @Test fun aBlankPageIsNotTrimmed() {
         assertBox(Box(0f, 0f, 600f, 800f), ContentBounds.trim(page, null, pxPerPt))
     }
