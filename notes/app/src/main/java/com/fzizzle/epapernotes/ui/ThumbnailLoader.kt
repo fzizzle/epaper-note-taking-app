@@ -24,9 +24,10 @@ import java.io.ByteArrayOutputStream
  * dropped first. Tiles ask [bitmapFor], which looks only in memory.
  *
  * It exists only while Show thumbnails is on: with it off, the library makes none, so nothing
- * is rendered or read from the cache (decision 10). [onReady] runs on the main thread.
+ * is rendered or read from the cache (decision 10). [onReady] runs on the main thread, with
+ * null for a tile on screen whose PDF can't be drawn: its tile drops any old picture.
  */
-class ThumbnailLoader(private val cache: ThumbnailCache, private val onReady: (PdfEntry, Bitmap) -> Unit) {
+class ThumbnailLoader(private val cache: ThumbnailCache, private val onReady: (PdfEntry, Bitmap?) -> Unit) {
     private val memory = object : LruCache<String, Bitmap>(MEMORY_BYTES) {
         override fun sizeOf(key: String, value: Bitmap) = value.byteCount
     }
@@ -132,13 +133,20 @@ class ThumbnailLoader(private val cache: ThumbnailCache, private val onReady: (P
         val bitmap = decoded ?: try {
             render(pdf, forScreen = intoMemory)
         } catch (e: Exception) {
-            // Damaged, password-protected, or gone: the tile keeps what it shows (a grey page, or the old picture).
+            // Damaged, password-protected, or gone: a tile on screen goes to the grey page,
+            // rather than keep a picture of what the file used to be.
             Log.w(TAG, "thumbnail ${pdf.name} failed: ${e.message}")
-            return finished(key, ok = false)
+            finished(key, ok = false)
+            if (intoMemory) tell(pdf, null)
+            return
         }
         finished(key, ok = true)
         if (bitmap == null) return
         memory.put(key, bitmap)
+        tell(pdf, bitmap)
+    }
+
+    private fun tell(pdf: PdfEntry, bitmap: Bitmap?) {
         main.post { if (!synchronized(lock) { stopped }) onReady(pdf, bitmap) }
     }
 

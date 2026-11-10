@@ -56,10 +56,14 @@ class LibraryAdapter(private val bitmapFor: (PdfEntry) -> Bitmap?) : BaseAdapter
         private set
     var thumbnails = true
         private set
+    /** Goes up on each refresh: tiles bound before it don't keep their old pictures. */
+    private var pictures = 0
 
-    fun show(entries: List<Entry>, thumbnails: Boolean) {
+    /** [dropPictures]: refresh, so tiles waiting for a new thumbnail show the grey page meanwhile. */
+    fun show(entries: List<Entry>, thumbnails: Boolean, dropPictures: Boolean = false) {
         this.entries = entries
         this.thumbnails = thumbnails
+        if (dropPictures) pictures++
         notifyDataSetChanged()
     }
 
@@ -72,7 +76,7 @@ class LibraryAdapter(private val bitmapFor: (PdfEntry) -> Bitmap?) : BaseAdapter
             layoutParams = AbsListView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
         val entry = entries[position]
-        tile.show(entry, if (thumbnails && entry is PdfEntry) bitmapFor(entry) else null, thumbnails)
+        tile.show(entry, if (thumbnails && entry is PdfEntry) bitmapFor(entry) else null, thumbnails, pictures)
         return tile
     }
 }
@@ -88,6 +92,7 @@ class TileView(context: Context) : View(context) {
         private set
     private var bitmap: Bitmap? = null
     private var thumbnails = true
+    private var pictures = 0 // the adapter's count when this tile was bound
 
     private val pad = LibraryLook.dp(context, 8)
     private val namePaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -108,20 +113,22 @@ class TileView(context: Context) : View(context) {
     private val page = RectF()
     private val path = Path()
 
-    fun show(entry: Entry, bitmap: Bitmap?, thumbnails: Boolean) {
-        if (entry == this.entry && bitmap === this.bitmap && thumbnails == this.thumbnails) return
+    fun show(entry: Entry, bitmap: Bitmap?, thumbnails: Boolean, pictures: Int) {
+        if (entry == this.entry && bitmap === this.bitmap && thumbnails == this.thumbnails && pictures == this.pictures) return
         if (entry.name != this.entry?.name) nameLayout = null
         // A file just written (say, the document just left) keeps its old picture until the
-        // new one is drawn, rather than flashing grey for a moment on e-ink.
-        val stillThisFile = thumbnails && this.thumbnails && entry.file == this.entry?.file
+        // new one is drawn, rather than flashing grey for a moment on e-ink. Not after a
+        // refresh: that's asked for when a picture looks wrong.
+        val stillThisFile = thumbnails && this.thumbnails && entry.file == this.entry?.file && pictures == this.pictures
         this.entry = entry
         this.bitmap = bitmap ?: this.bitmap.takeIf { stillThisFile }
         this.thumbnails = thumbnails
+        this.pictures = pictures
         invalidate()
     }
 
-    /** A thumbnail arrived for the PDF on this tile. */
-    fun showBitmap(bitmap: Bitmap) {
+    /** A thumbnail arrived for the PDF on this tile, or null: it can't be drawn, so the grey page. */
+    fun showBitmap(bitmap: Bitmap?) {
         if (bitmap === this.bitmap) return
         this.bitmap = bitmap
         invalidate()

@@ -280,7 +280,7 @@ class LibraryActivity : Activity() {
         continueRow.text = resume?.let { "▶  Continue: ${it.nameWithoutExtension}" }
         continueRow.visibility = if (resume != null) View.VISIBLE else View.GONE
         val changed = redrawTiles || entries != adapter.entries || adapter.thumbnails != (thumbnails != null)
-        if (changed) adapter.show(entries, thumbnails = thumbnails != null)
+        if (changed) adapter.show(entries, thumbnails = thumbnails != null, dropPictures = redrawTiles)
         emptyNote.text = if (rootMissing) "The library folder isn't there. Choose another in Settings (⋯)." else "No folders or PDFs here."
         emptyNote.visibility = if (entries.isEmpty()) View.VISIBLE else View.GONE
         tilesOnScreenChanged()
@@ -325,7 +325,7 @@ class LibraryActivity : Activity() {
 
     private fun newThumbnails() = ThumbnailLoader(thumbnailCache) { pdf, bitmap -> thumbnailReady(pdf, bitmap) }
 
-    private fun thumbnailReady(pdf: PdfEntry, bitmap: Bitmap) {
+    private fun thumbnailReady(pdf: PdfEntry, bitmap: Bitmap?) {
         for (i in 0 until grid.childCount) {
             val tile = grid.getChildAt(i) as? TileView ?: continue
             if (tile.entry == pdf) tile.showBitmap(bitmap)
