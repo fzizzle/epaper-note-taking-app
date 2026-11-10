@@ -7,6 +7,7 @@ import java.nio.file.Files
 
 /** Where each PDF's last page is remembered, by path. LastPageStore keeps it in preferences. */
 interface PageMemory {
+    /** [to] gets [from]'s page, or none if [from] had none. */
     fun move(from: String, to: String)
     fun remove(path: String)
 }

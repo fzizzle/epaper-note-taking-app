@@ -34,7 +34,8 @@ class FileOpsTest {
     class MapMemory : PageMemory {
         val map = mutableMapOf<String, Int>()
         override fun move(from: String, to: String) {
-            map.remove(from)?.let { map[to] = it }
+            val page = map.remove(from)
+            if (page != null) map[to] = page else map.remove(to)
         }
         override fun remove(path: String) {
             map.remove(path)
@@ -102,6 +103,18 @@ class FileOpsTest {
         assertEquals(1, ChangeJournal.forDocument(journals, renamed).read()!!.changes.size)
         assertEquals("earlier writing", File(journals, journalOf(renamed).name + ".kept-123").readText())
         assertEquals(mapOf(renamed.path to 7), pages.map)
+    }
+
+    /**
+     * Review: a file never opened, renamed to the name of one deleted outside the app, mustn't
+     * open at the old file's page. (MapMemory follows LastPageStore's rule; LastPageStore
+     * itself needs Android preferences, so it's checked on the tablet, LastPageStoreTest.)
+     */
+    @Test fun renameOfAFileWithNoPageDropsAStalePageForTheNewName() {
+        val a = pdf("Lecture.pdf")
+        pages.map[File(root, "Week 1.pdf").path] = 9 // left by an earlier "Week 1.pdf"
+        assertEquals(FileOps.Result.Done, ops.rename(a, "Week 1"))
+        assertTrue(pages.map.isEmpty())
     }
 
     @Test fun moveFolderMovesEveryJournalInside() {

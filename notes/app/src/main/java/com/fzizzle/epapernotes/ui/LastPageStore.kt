@@ -13,9 +13,12 @@ class LastPageStore(context: Context) : PageMemory {
         prefs.edit().putInt(path, page).apply()
     }
 
-    /** A renamed or moved file keeps its page. */
+    /**
+     * A renamed or moved file keeps its page. One that had none (never opened) takes none: a
+     * page left over for an earlier file of that name (deleted outside the app, say) is dropped.
+     */
     override fun move(from: String, to: String) {
-        if (!prefs.contains(from)) return
+        if (!prefs.contains(from)) return prefs.edit().remove(to).apply()
         prefs.edit().putInt(to, prefs.getInt(from, 0)).remove(from).apply()
     }
 
