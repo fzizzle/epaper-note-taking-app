@@ -27,6 +27,10 @@ import kotlin.math.abs
  * New strokes are drawn here too, on top of any page rendering that doesn't contain them yet
  * (see InkOverlay). That keeps them on screen whenever the view redraws, at any zoom, without
  * re-rendering while the owner is writing.
+ *
+ * While fast-ink is on, the view isn't redrawn for each new stroke ([addStroke]): the panel
+ * shows Onyx's ink, not this view. It catches up when the pen rests ([whenPenRests]), and
+ * whoever pauses fast-ink redraws it first.
  */
 class PageView(context: Context) : View(context) {
 
@@ -72,6 +76,13 @@ class PageView(context: Context) : View(context) {
     /** Asks for [page] to be drawn [widthPx] wide. The answer comes back through [pageRendered]. */
     var requestRender: (page: Int, widthPx: Int) -> Unit = { _, _ -> }
 
+    /**
+     * True while Onyx has the panel (fast-ink is on) and the pen is up. Only then may a page's
+     * picture be swapped for a fresher one without anyone seeing ([bakeIfFull]): the panel isn't
+     * showing this view, and no stroke is under way. The screen says; until it does, never.
+     */
+    var quietTime: () -> Boolean = { false }
+
     var viewport: Viewport? = null
         private set
     private var sizes: List<SizePt> = emptyList()
@@ -80,7 +91,12 @@ class PageView(context: Context) : View(context) {
     /** A page rendering, and the page's ink version it contains. */
     private class Rendered(val bitmap: Bitmap, val version: Int)
 
-    private val bitmaps = PageBitmaps<Rendered>(200L * 1024 * 1024) { it.bitmap.byteCount.toLong() }
+    // A picture that leaves the cache has its memory freed at once (see PageBitmaps). That is
+    // safe because the cache is the only thing that keeps page pictures, and it's only touched
+    // on the UI thread: a rendering belongs to nobody else from the moment pageRendered gets
+    // it, and onDraw takes a picture out and draws it in one go, with no put or invalidate in
+    // between, so it never holds one that has been freed.
+    private val bitmaps = PageBitmaps<Rendered>(200L * 1024 * 1024, { it.bitmap.byteCount.toLong() }) { it.bitmap.recycle() }
 
     // Renders on their way, and the ink version each will contain. A render that was on its
     // way when its page changed arrives stale (InkOverlay.isStale): it's kept for showing,
@@ -91,16 +107,24 @@ class PageView(context: Context) : View(context) {
     // The worker answers in order, so each comes before any asked for again at that width.
     private val dropped = mutableListOf<Pair<Int, Int>>()
 
+    // Renders on their way that nothing on screen is waiting for (see bakeIfFull): when one
+    // comes, the view isn't redrawn and the screen isn't told.
+    private val quietRenders = HashSet<Pair<Int, Int>>()
+
     private val ink = InkOverlay()
 
     private var pinching = false
-    private var fingersDown = false
+
+    /** True from the first finger landing until the last one lifts ([onFingerGestureStart] to [onFingerGestureEnd]). */
+    var fingersDown = false
+        private set
     private var pastEdge = 0f
     private var movedThisGesture = false
 
     private val placeholder = Paint().apply { color = Color.rgb(235, 235, 235) }
     private val pagePaint = Paint(Paint.FILTER_BITMAP_FLAG)
     private val inkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeCap = Paint.Cap.ROUND }
+    private val inkPath = Path() // used again for each see-through stroke, rather than made anew
 
     /** Lays out the document. [pdfToDisplay] is each page's PDF-to-display transform. UI thread. */
     fun setPages(pageSizes: List<SizePt>, pdfToDisplay: List<Affine>, startPage: Int) {
@@ -155,6 +179,7 @@ class PageView(context: Context) : View(context) {
         bitmaps.invalidate(page)
         inFlight.keys.filter { it.first == page }.forEach {
             inFlight.remove(it)
+            quietRenders.remove(it)
             dropped += it
         }
     }
@@ -162,10 +187,63 @@ class PageView(context: Context) : View(context) {
     /** The page's ink version now (see InkOverlay): a rendering asked for from now on contains everything up to it. */
     fun inkVersion(page: Int): Int = ink.version(page)
 
-    /** A stroke just written on [page]: show it until the page's rendering includes it. UI thread. */
-    fun addStroke(page: Int, stroke: Stroke) {
+    /**
+     * A stroke just written on [page]: show it until the page's rendering includes it. UI thread.
+     *
+     * [redraw] is false while Onyx draws the pen's ink on the panel itself (fast-ink is on).
+     * The panel doesn't show this view then, so drawing the page again, with every stroke
+     * written on it so far, after each new stroke was work nobody saw, and it got slower the
+     * fuller the page was. The stroke is kept and drawn the next time the view draws:
+     *  - whoever pauses fast-ink must call invalidate(), or the panel would show the page
+     *    without the newest strokes (WritingActivity.pausePenAndRedraw and toolStateChanged do);
+     *  - and the view catches up by itself once the pen has rested ([whenPenRests]).
+     */
+    fun addStroke(page: Int, stroke: Stroke, redraw: Boolean) {
         ink.add(page, stroke)
+        if (redraw) invalidate()
+        removeCallbacks(whenPenRests)
+        postDelayed(whenPenRests, PEN_REST_MS)
+    }
+
+    /**
+     * No new stroke for [PEN_REST_MS]. The view draws itself again, so its own picture has the
+     * strokes it skipped ([addStroke]) even if nothing pauses fast-ink for a long while: should
+     * the tablet ever show this view without the app pausing fast-ink first (a system panel
+     * sliding over it, say), the strokes are there. With fast-ink on the panel ignores this
+     * draw, as it ignored the one after every stroke before.
+     */
+    private val whenPenRests = Runnable {
         invalidate()
+        bakeIfFull()
+    }
+
+    /**
+     * The page on show has more than [InkOverlay.BAKE_AFTER] strokes drawn by hand on top of
+     * its picture: ask for a fresh picture with them in it, so later redraws (a pinch, a
+     * dragged selection) don't draw them one by one. Unlike [pageChanged], nothing is waiting
+     * to see this picture, so it's a quiet render: see [pageRendered] for why its arrival
+     * neither redraws the view nor pauses fast-ink.
+     */
+    private fun bakeIfFull() {
+        val v = viewport ?: return
+        if (pinching || fingersDown || !quietTime()) return
+        val page = v.page
+        val w = renderWidth(v, page)
+        // No picture at this width, a stale one, or one on its way: the usual path has it in hand.
+        val have = bitmaps.get(page, w) ?: return
+        if (ink.isStale(page, have.version) || inFlight.containsKey(page to w)) return
+        val byHand = ink.count(page, have.version)
+        if (byHand <= InkOverlay.BAKE_AFTER) return
+        // As in ensureRendered: every stroke counted now reached the PDF before this request.
+        inFlight[page to w] = ink.version(page)
+        quietRenders += page to w
+        android.util.Log.i("Notes", "render requested page=$page width=$w version=${ink.version(page)} (quiet: $byHand strokes drawn by hand)")
+        requestRender(page, w)
+    }
+
+    override fun onDetachedFromWindow() {
+        super.onDetachedFromWindow()
+        removeCallbacks(whenPenRests)
     }
 
     /**
@@ -181,7 +259,9 @@ class PageView(context: Context) : View(context) {
 
     /** Rendering failed (a damaged page, say). Forget it, so it's asked for again next time. UI thread. */
     fun renderFailed(page: Int, widthPx: Int) {
-        if (!dropped.remove(page to widthPx)) inFlight.remove(page to widthPx)
+        if (dropped.remove(page to widthPx)) return
+        inFlight.remove(page to widthPx)
+        quietRenders.remove(page to widthPx)
     }
 
     /** Where the page on show is, for the selection layer. Null until the pages are laid out. */
@@ -202,15 +282,41 @@ class PageView(context: Context) : View(context) {
 
     /** A rendering arrived from the worker. UI thread. */
     fun pageRendered(page: Int, widthPx: Int, bitmap: Bitmap) {
-        if (dropped.remove(page to widthPx)) return // asked for before the page was left or rotated
+        if (dropped.remove(page to widthPx)) {
+            // Asked for before the page was left or rotated: never shown, so its memory goes back at once.
+            bitmap.recycle()
+            return
+        }
         val version = inFlight.remove(page to widthPx) ?: 0
+        val quiet = quietRenders.remove(page to widthPx)
         val stale = ink.isStale(page, version)
-        android.util.Log.i("Notes", "rendered page=$page width=$widthPx version=$version of ${ink.version(page)}${if (stale) " (stale, asking again)" else ""}")
+        android.util.Log.i("Notes", "rendered page=$page width=$widthPx version=$version of ${ink.version(page)}${if (stale) " (stale, asking again)" else ""}${if (quiet) " (quiet)" else ""}")
+        if (quiet && !stale && page == viewport?.page) {
+            val have = bitmaps.get(page, widthPx)
+            if (have != null && !ink.isStale(page, have.version)) {
+                // A quiet render (bakeIfFull), and the picture it was to replace is still good,
+                // so nothing on screen waits for this one. It shows the same page as that
+                // picture plus the strokes drawn by hand, so it's swapped in without a redraw
+                // and without telling the screen: no pause of fast-ink, nothing new on the
+                // panel. The next draw, whenever something else asks for one, uses it.
+                // Only while Onyx still has the panel, though. If fast-ink has gone off since
+                // (a selection, a dialog), the view is what the panel shows, and its strokes
+                // must not change their look under the owner's eyes: thrown away, asked for
+                // again at a later rest.
+                if (quietTime()) bitmaps.put(page, widthPx, Rendered(bitmap, version)) else bitmap.recycle()
+                return
+            }
+            // The picture it was to replace has gone or is stale: this one is needed after all.
+        }
         // A stale one for a page that was left may lack strokes InkOverlay.left dropped: not kept.
-        if (stale && page != viewport?.page) return
+        if (stale && page != viewport?.page) {
+            bitmap.recycle()
+            return
+        }
         // Otherwise even a stale one is kept: it's closer to the page than what's showing. Drawing asks again.
         bitmaps.put(page, widthPx, Rendered(bitmap, version))
-        invalidate()
+        // Only the page on show: a neighbour got ready for the next page turn changes nothing in view.
+        if (page == viewport?.page) invalidate()
         if (!stale) onPageShown(page, version)
     }
 
@@ -235,6 +341,7 @@ class PageView(context: Context) : View(context) {
     }
 
     override fun onDraw(canvas: Canvas) {
+        val started = System.nanoTime()
         canvas.drawColor(Color.WHITE)
         val v = viewport ?: return
         val page = v.page
@@ -245,12 +352,23 @@ class PageView(context: Context) : View(context) {
 
         val w = renderWidth(v, page)
         // A stale rendering is still drawn: an old page for a moment is calmer than a blank one.
-        val shown = bitmaps.get(page, w) ?: bitmaps.anyFor(page)
+        // Taken from the cache and drawn straight away, and nothing below puts a picture into
+        // the cache or drops one (a render asked for here comes back later, in a message of
+        // its own), so this one can't have been freed. Checked all the same: drawing a freed
+        // picture would crash the app, and a grey page until the fresh picture comes wouldn't.
+        var shown = bitmaps.get(page, w) ?: bitmaps.anyFor(page)
+        if (shown != null && shown.bitmap.isRecycled) {
+            android.util.Log.w("Notes", "page=$page: its picture was freed while still kept; rendering it again")
+            bitmaps.invalidate(page) // so ensureRendered below asks for a fresh one
+            shown = null
+        }
         if (shown != null) canvas.drawBitmap(shown.bitmap, null, dst, pagePaint) else canvas.drawRect(dst, placeholder)
 
         // Whatever this rendering is missing, whenever it was made.
         val missing = ink.newerThan(page, shown?.version ?: 0)
-        missing.forEach { drawStroke(canvas, it, toDisplay[page].then(toScreen), v.pxPerPt()) }
+        val pdfToScreen = toDisplay[page].then(toScreen)
+        val pxPerPt = v.pxPerPt()
+        missing.forEach { drawStroke(canvas, it, pdfToScreen, pxPerPt) }
 
         selectionLayer?.draw(canvas, PageFrame(toDisplay[page], toScreen, sizes[page], width, height))
 
@@ -263,31 +381,57 @@ class PageView(context: Context) : View(context) {
                 if (page > 0) ensureRendered(page - 1, renderWidth(v, page - 1))
             }
         }
+
+        // Only the slow ones, so the log shows the draws that could make the pen or a drag
+        // stutter. "overlay" is how many strokes were drawn here on top of the page's picture.
+        val ms = (System.nanoTime() - started) / 1_000_000
+        if (ms > SLOW_DRAW_MS) android.util.Log.i("Notes", "draw ms=$ms overlay=${missing.size}")
     }
 
-    /** A close version of the saved ink, standing in until the page re-renders. */
+    /**
+     * A close version of the saved ink, standing in until the page re-renders. Each point is
+     * mapped to the screen as it's drawn (the same sum as Affine.map), with no list of mapped
+     * points made first: on a full page this runs for thousands of points per redraw.
+     */
     private fun drawStroke(canvas: Canvas, stroke: Stroke, pdfToScreen: Affine, pxPerPt: Float) {
+        val points = stroke.points
+        if (points.isEmpty()) return
+        val t = pdfToScreen
         val style = StrokeStyle.of(stroke.kind)
         inkPaint.color = Color.rgb((style.rgb[0] * 255).toInt(), (style.rgb[1] * 255).toInt(), (style.rgb[2] * 255).toInt())
         inkPaint.alpha = (style.opacity * 255).toInt()
-        val pts = stroke.points.map { pdfToScreen.map(Pt(it.x, it.y)) }
         if (style.opacity < 1f) {
             // See-through ink is drawn as one path, once: overlapping pieces would show darker.
-            val path = Path()
-            path.moveTo(pts[0].x, pts[0].y)
-            pts.drop(1).forEach { path.lineTo(it.x, it.y) }
-            if (pts.size == 1) path.lineTo(pts[0].x + 0.01f, pts[0].y)
+            val path = inkPath
+            path.reset()
+            for (i in points.indices) {
+                val p = points[i]
+                val x = t.a * p.x + t.c * p.y + t.e
+                val y = t.b * p.x + t.d * p.y + t.f
+                if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                if (points.size == 1) path.lineTo(x + 0.01f, y)
+            }
             inkPaint.strokeWidth = style.maxWidth * pxPerPt
             inkPaint.style = Paint.Style.STROKE
             inkPaint.strokeJoin = Paint.Join.ROUND
             canvas.drawPath(path, inkPaint)
             return
         }
-        for (i in pts.indices) {
-            val a = pts[if (i == 0) 0 else i - 1]
-            val b = pts[i]
-            inkPaint.strokeWidth = style.widthAt(stroke.points[i].pressure, stroke.widthScale) * pxPerPt
-            canvas.drawLine(a.x, a.y, b.x, b.y, inkPaint)
+        var fromX = 0f
+        var fromY = 0f
+        for (i in points.indices) {
+            val p = points[i]
+            val x = t.a * p.x + t.c * p.y + t.e
+            val y = t.b * p.x + t.d * p.y + t.f
+            // The first point is drawn as a dot: a line from itself to itself.
+            if (i == 0) {
+                fromX = x
+                fromY = y
+            }
+            inkPaint.strokeWidth = style.widthAt(p.pressure, stroke.widthScale) * pxPerPt
+            canvas.drawLine(fromX, fromY, x, y, inkPaint)
+            fromX = x
+            fromY = y
         }
     }
 
@@ -393,6 +537,12 @@ class PageView(context: Context) : View(context) {
     }
 
     companion object {
+        /** A draw is only logged when it takes longer than this: half of a 60-a-second frame. */
+        private const val SLOW_DRAW_MS = 8L
+
+        /** How long after the last new stroke the pen counts as resting (see [whenPenRests]). */
+        private const val PEN_REST_MS = 500L
+
         /**
          * Button 1 is an ordinary button flag. Button 2 is too while it's pressed with the pen
          * already in range; held as the pen comes into range, it makes the pen report as an

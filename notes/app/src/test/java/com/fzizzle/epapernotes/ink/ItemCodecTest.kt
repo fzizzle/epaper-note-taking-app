@@ -15,6 +15,20 @@ class ItemCodecTest {
 
     @Test fun imageRoundTrips() = assertEquals(image, ItemCodec.decode(ItemCodec.encode(image)))
 
+    /** The journal writes a picture once and names it afterwards (see ChangeJournal). */
+    @Test fun imageRoundTripsByName() {
+        val text = ItemCodec.encode(image) { "abc" }
+        assertTrue(text, text.endsWith(" @abc"))
+        assertEquals(image, ItemCodec.decode(text) { name -> image.png.takeIf { name == "abc" } })
+    }
+
+    /** A name nobody can turn back into a picture: no item, rather than one without its picture. */
+    @Test fun aNameWithoutItsPictureIsRejected() {
+        val text = ItemCodec.encode(image) { "abc" }
+        assertNull(ItemCodec.decode(text))
+        assertNull(ItemCodec.decode(text) { null })
+    }
+
     @Test fun rejectsGarbage() = assertNull(ItemCodec.decode("img x"))
 
     @Test fun neverContainsSeparators() {

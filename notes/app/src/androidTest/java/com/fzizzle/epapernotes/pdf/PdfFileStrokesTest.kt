@@ -13,7 +13,9 @@ import com.artifex.mupdf.fitz.Rect
 import com.fzizzle.epapernotes.doc.AddItems
 import com.fzizzle.epapernotes.doc.InkRedraw
 import com.fzizzle.epapernotes.doc.RemoveItems
+import com.fzizzle.epapernotes.doc.ReplaceItems
 import com.fzizzle.epapernotes.ink.Box
+import com.fzizzle.epapernotes.ink.ImageItem
 import com.fzizzle.epapernotes.ink.InkItem
 import com.fzizzle.epapernotes.ink.ItemIds
 import com.fzizzle.epapernotes.ink.Stroke
@@ -73,6 +75,47 @@ class PdfFileStrokesTest {
             val bmp = it.render(0, 2448) // 4 px per point
             assertTrue(darkHeightAt(bmp, x = 480 * 4) > darkHeightAt(bmp, x = 120 * 4) * 2) // thick end is thicker
         }
+    }
+
+    /**
+     * Strokes added on their own skip MuPDF's drawing step (ItemAnnotations.addInk). If MuPDF
+     * ever drew over one after all, it would come out as a line of one width. So: wedges
+     * added alone, before and after a picture, together with a picture, and moved, all still
+     * get thicker along their length, at once and after a save.
+     */
+    @Test fun strokesKeepTheirOwnDrawingWhateverIsAddedNext() {
+        val out = File(dir, "own-drawing.pdf")
+        fun wedge(y: Float) = Stroke(StrokeKind.PEN, listOf(StrokePoint(100f, y, 0f), StrokePoint(500f, y, 1f)))
+        fun picture(id: String) = ImageItem(id, Box(200f, 600f, 300f, 650f), 0, TestPdfs.redBluePng(40, 20))
+        // Dark pixels of column [x] within 20 pt of PDF height [y], at 4 px per point.
+        fun thickness(bmp: android.graphics.Bitmap, x: Int, y: Float): Int {
+            val middle = ((792f - y) * 4).toInt()
+            return (middle - 80..middle + 80).count { isDark(bmp.getPixel(x * 4, it)) }
+        }
+        fun assertWedges(pdf: PdfFile, ys: List<Float>) {
+            val bmp = pdf.render(0, 2448)
+            for (y in ys) {
+                val thin = thickness(bmp, 120, y)
+                val thick = thickness(bmp, 480, y)
+                assertTrue("the stroke at y=$y: $thin px at its thin end, $thick px at its thick end", thick > thin * 2 && thick > 0)
+            }
+        }
+        PdfFile.open(TestPdfs.blank(dir)).use { pdf ->
+            pdf.add(0, wedge(300f))
+            assertWedges(pdf, listOf(300f))
+            pdf.apply(AddItems(0, listOf(picture("p1")))) // MuPDF updates the page for a picture
+            assertWedges(pdf, listOf(300f))
+            pdf.apply(AddItems(0, listOf(InkItem("two", wedge(360f)), InkItem("three", wedge(420f))))) // two at once
+            pdf.apply(AddItems(0, listOf(InkItem("four", wedge(480f)), picture("p2")))) // a stroke and a picture together
+            val moved = InkItem("three", wedge(540f))
+            pdf.apply(ReplaceItems(0, listOf(InkItem("three", wedge(420f))), listOf(moved))) // a move
+            val ys = listOf(300f, 360f, 480f, 540f)
+            assertWedges(pdf, ys)
+            assertEquals(0, thickness(pdf.render(0, 2448), 480, 420f)) // and nothing is left where it was
+            pdf.saveTo(out)
+            assertWedges(pdf, ys)
+        }
+        PdfFile.open(out).use { assertWedges(it, listOf(300f, 360f, 480f, 540f)) }
     }
 
     @Test fun highlighterIsTranslucent() {

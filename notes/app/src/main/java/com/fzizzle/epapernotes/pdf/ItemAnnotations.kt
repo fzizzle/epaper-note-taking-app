@@ -38,8 +38,17 @@ internal class ItemAnnotations(private val doc: PDFDocument) {
      * the eraser and lasso read every item on the page each time, so each picture is encoded
      * once. A picture's image object is never changed, only dropped with its annotation
      * ([forget]); a pasted or moved picture gets a new image object.
+     *
+     * A picture the app itself puts in ([addImage]) is remembered with the PNG it came as, so
+     * it's never encoded at all while the file is open: pasting or moving a snip used to cost
+     * one encoding each time. It also means a snip keeps the very same bytes from move to
+     * move, which is what lets the journal write its picture only once (see ChangeJournal).
      */
     private val pngs = HashMap<Int, ByteArray>()
+
+    /** How many pictures had to be encoded from the PDF. For tests. */
+    internal var pictureEncodes = 0
+        private set
 
     /**
      * True for an annotation the app made and can edit: shaped like one of ours, with an id.
@@ -78,12 +87,35 @@ internal class ItemAnnotations(private val doc: PDFDocument) {
         }
     }
 
-    fun add(p: PDFPage, item: Item) = when (item) {
-        is InkItem -> addInk(p, item)
+    /**
+     * Writes [item] as a new annotation at the end of the page, and returns that annotation's
+     * dictionary.
+     *
+     * [pageWontBeUpdated] is the caller's promise that, until this loaded page [p] is let go,
+     * nothing asks MuPDF to update it or any annotation on it: no `p.update()`, no
+     * `annot.update()` (so no picture added alongside, see [addImage]), no drawing of it. A
+     * stroke is then written without MuPDF's own drawing step; see [addInk].
+     */
+    fun add(p: PDFPage, item: Item, pageWontBeUpdated: Boolean = false): PDFObject = when (item) {
+        is InkItem -> addInk(p, item, pageWontBeUpdated)
         is ImageItem -> addImage(p, item)
     }
 
-    private fun addInk(p: PDFPage, item: InkItem) {
+    /**
+     * MuPDF wants to draw every ink annotation itself, as a line of one width. Setting the ink
+     * list, colour and so on marks the annotation "to be drawn", and the next update of
+     * anything in the document draws all that are marked, over whatever drawing they have.
+     *
+     * The usual way round that: `annot.update()` here, so MuPDF draws its line now, and then
+     * [drawInk] puts the app's drawing in its place. But that update looks at every annotation
+     * on every loaded page, twice (MuPDF 1.28.5, pdf_update_annot), and makes a drawing that is
+     * thrown away at once: it was a good part of what a stroke costs on a full page.
+     *
+     * With [pageWontBeUpdated] it is left out. The mark stays on, which is safe only because
+     * the mark lives in the loaded page, not in the PDF: when the page is let go the mark is
+     * gone, and a page loaded later finds a stroke that has a drawing and leaves it alone.
+     */
+    private fun addInk(p: PDFPage, item: InkItem, pageWontBeUpdated: Boolean): PDFObject {
         val stroke = item.stroke
         val style = StrokeStyle.of(stroke.kind)
         val annot = p.createAnnotation(PDFAnnotation.TYPE_INK)
@@ -98,8 +130,9 @@ internal class ItemAnnotations(private val doc: PDFDocument) {
         annot.getObject().put("NM", item.id)
         annot.getObject().put(StrokeCodec.KEY, StrokeCodec.encode(stroke))
         // Let MuPDF finish its own drawing now, or it would redraw over ours on the page update.
-        annot.update()
+        if (!pageWontBeUpdated) annot.update()
         drawInk(annot.getObject(), stroke)
+        return annot.getObject()
     }
 
     /**
@@ -156,7 +189,7 @@ internal class ItemAnnotations(private val doc: PDFDocument) {
         return true
     }
 
-    private fun addImage(p: PDFPage, item: ImageItem) {
+    private fun addImage(p: PDFPage, item: ImageItem): PDFObject {
         val annot = p.createAnnotation(PDFAnnotation.TYPE_STAMP)
         // Let MuPDF draw its default stamp now, so it doesn't redraw it over ours later.
         annot.update()
@@ -166,6 +199,8 @@ internal class ItemAnnotations(private val doc: PDFDocument) {
 
         val picture = Image(item.png)
         val image = try { doc.addImage(picture) } finally { picture.destroy() }
+        // The PNG is at hand: remember it, rather than have MuPDF make it again (see [pngs]).
+        image.asIndirect().let { number -> if (number > 0) pngs[number] = item.png }
         val xobjects = doc.newDictionary()
         xobjects.put(IMAGE_NAME, image)
         val res = doc.newDictionary()
@@ -185,6 +220,7 @@ internal class ItemAnnotations(private val doc: PDFDocument) {
         ap.put("N", doc.addStream(buffer(contents), form))
         dict.put("AP", ap)
         dict.put("Rect", rectArray(item.box))
+        return dict
     }
 
     /**
@@ -228,6 +264,7 @@ internal class ItemAnnotations(private val doc: PDFDocument) {
     }
 
     private fun encode(image: PDFObject): ByteArray {
+        pictureEncodes++
         val loaded = doc.loadImage(image)
         try {
             val pixmap = loaded.toPixmap()
