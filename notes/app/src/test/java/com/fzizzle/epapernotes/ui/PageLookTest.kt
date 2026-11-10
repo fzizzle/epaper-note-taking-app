@@ -74,4 +74,59 @@ class PageLookTest {
         assertEquals(argb(255, 128, 128, 128), pixels[2])
         assertEquals(argb(255, 128, 128, 128), pixels[3])
     }
+    // Dark text as black: nearly grey pixels go neutral and darker, coloured ones keep their colour.
+
+    private fun darkText(pixel: Int, contrast: Contrast = Contrast.NORMAL): Int {
+        val pixels = intArrayOf(pixel)
+        PageLook.apply(pixels, PageLook.table(contrast), darkTextAsBlack = true)
+        return pixels[0]
+    }
+
+    /** The workbook's body text and headings (owner, 2026-11-10): luma 47, below DARK, so black. */
+    @Test fun darkSlateBecomesBlack() {
+        assertEquals(argb(255, 0, 0, 0), darkText(argb(255, 43, 47, 64)))
+    }
+
+    /** Luma (299·149 + 587·151 + 114·160) / 1000 = 151, then (151 − 96) · 255 / 159 = 88. */
+    @Test fun aTintedGreyBecomesNeutral() {
+        assertEquals(argb(255, 88, 88, 88), darkText(argb(255, 149, 151, 160)))
+    }
+
+    @Test fun whiteStaysWhite() {
+        assertEquals(argb(255, 255, 255, 255), darkText(argb(255, 255, 255, 255)))
+    }
+
+    @Test fun greenFormulaKeepsItsColour() {
+        assertEquals(argb(255, 46, 147, 102), darkText(argb(255, 46, 147, 102)))
+    }
+
+    @Test fun blueKeepsItsColour() {
+        assertEquals(argb(255, 62, 125, 232), darkText(argb(255, 62, 125, 232)))
+    }
+
+    /** StrokeStyle's HIGHLIGHTER over white, as in aPaleHighlightStaysLighterThanTheText: (255, 247, 176). */
+    @Test fun highlighterYellowKeepsItsColour() {
+        assertEquals(argb(255, 255, 247, 176), darkText(argb(255, 255, 247, 176)))
+    }
+
+    @Test fun offWithNormalChangesNothing() {
+        val pixels = intArrayOf(argb(255, 43, 47, 64), argb(255, 149, 151, 160), argb(255, 46, 147, 102))
+        val before = pixels.copyOf()
+        PageLook.apply(pixels, PageLook.table(Contrast.NORMAL), darkTextAsBlack = false)
+        assertArrayEquals(before, pixels)
+    }
+
+    /** The tinted grey's 88 (above), then Strongest: 255 × (88 / 255) ^ 2.2 = 24.5, so 25. */
+    @Test fun contrastAppliesAfterDarkText() {
+        assertEquals(25, PageLook.table(Contrast.STRONGEST)[88])
+        assertEquals(argb(255, 25, 25, 25), darkText(argb(255, 149, 151, 160), Contrast.STRONGEST))
+        // A coloured pixel gets the table on each channel, as without the switch.
+        val t = PageLook.table(Contrast.STRONGEST)
+        assertEquals(argb(255, t[46], t[147], t[102]), darkText(argb(255, 46, 147, 102), Contrast.STRONGEST))
+    }
+
+    @Test fun darkTextLeavesAlphaAlone() {
+        assertEquals(argb(0, 0, 0, 0), darkText(argb(0, 43, 47, 64)))
+        assertEquals(argb(77, 88, 88, 88), darkText(argb(77, 149, 151, 160)))
+    }
 }

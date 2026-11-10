@@ -71,6 +71,9 @@ class WritingActivity : Activity() {
      */
     @Volatile private var contrast = Contrast.NORMAL
 
+    /** Dark text as black (PageLook), like [contrast]: set on the UI thread, read on the worker. */
+    @Volatile private var darkTextAsBlack = false
+
     /** Trim margins: pages fitted to their printed area, not the whole sheet. From [readingPrefs]. UI thread. */
     private var trimMargins = false
 
@@ -257,6 +260,7 @@ class WritingActivity : Activity() {
         path = intent.getStringExtra(EXTRA_PATH) ?: return finish()
         lastPages = LastPageStore(this)
         contrast = readingPrefs.contrast
+        darkTextAsBlack = readingPrefs.darkTextAsBlack
         trimMargins = readingPrefs.trimMargins
 
         pages = PageView(this)
@@ -345,7 +349,9 @@ class WritingActivity : Activity() {
                 try {
                     val bitmap = (pdf as PdfFile).render(page, width)
                     // Here, once per picture: on screen only. The PDF and snips keep their true colours.
-                    PageLook.applyTo(bitmap, contrast)
+                    // A picture made while either setting changes is dropped when it comes
+                    // (dropAllRenderings), so reading the two one after the other is enough.
+                    PageLook.applyTo(bitmap, contrast, darkTextAsBlack)
                     runOnUiThread { pages.pageRendered(page, width, bitmap) }
                 } catch (e: Exception) {
                     Log.w(TAG, "render failed page=$page", e)
@@ -362,7 +368,7 @@ class WritingActivity : Activity() {
                     // Ink solid, like the page's own picture under it; snips keep theirs smoothed.
                     val bitmap = (pdf as PdfFile).renderRegion(page, part, pxPerPt, smoothInk = false)
                     // Like the page's picture under it (requestRender), or the patch would stand out.
-                    PageLook.applyTo(bitmap, contrast)
+                    PageLook.applyTo(bitmap, contrast, darkTextAsBlack)
                     Log.i(TAG, "region rendered page=$page ${bitmap.width}x${bitmap.height} ms=${SystemClock.uptimeMillis() - started}")
                     runOnUiThread { pages.regionRendered(page, part, token, version, bitmap) }
                 } catch (e: Exception) {
@@ -1135,6 +1141,8 @@ class WritingActivity : Activity() {
             looks.add(c.label()).setChecked(c == contrast).setOnMenuItemClickListener { chooseContrast(c); true }
         }
         looks.setGroupCheckable(0, true, true) // the one in use is ticked
+        menu.menu.add("Dark text as black").setCheckable(true).setChecked(darkTextAsBlack)
+            .setOnMenuItemClickListener { chooseDarkTextAsBlack(!darkTextAsBlack); true }
         menu.menu.add("Trim margins").setCheckable(true).setChecked(trimMargins)
             .setOnMenuItemClickListener { chooseTrimMargins(!trimMargins); true }
         // TEMPORARY, while the owner compares the two island looks; removed once one is chosen.
@@ -1162,6 +1170,14 @@ class WritingActivity : Activity() {
         Log.i(TAG, "contrast $chosen")
         readingPrefs.contrast = chosen
         contrast = chosen // before asking again, so every picture asked for from now on has it
+        pages.dropAllRenderings()
+    }
+
+    /** The page pictures are made again with dark text as black ([on]) or not, which is kept for next time. */
+    private fun chooseDarkTextAsBlack(on: Boolean) {
+        Log.i(TAG, "dark text as black $on")
+        readingPrefs.darkTextAsBlack = on
+        darkTextAsBlack = on // before asking again, as for contrast
         pages.dropAllRenderings()
     }
 

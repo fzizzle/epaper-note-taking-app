@@ -14,6 +14,11 @@ class ReadingPrefs(context: Context) {
         get() = runCatching { Contrast.valueOf(prefs.getString(CONTRAST, null) ?: "") }.getOrDefault(Contrast.NORMAL)
         set(value) = prefs.edit().putString(CONTRAST, value.name).apply()
 
+    /** Whether nearly grey text is drawn black on screen (PageLook). Off until chosen. */
+    var darkTextAsBlack: Boolean
+        get() = prefs.getBoolean(DARK_TEXT_AS_BLACK, false)
+        set(value) = prefs.edit().putBoolean(DARK_TEXT_AS_BLACK, value).apply()
+
     /** Whether pages are fitted to their printed area on screen, not the whole sheet (ContentBounds). Off until chosen. */
     var trimMargins: Boolean
         get() = prefs.getBoolean(TRIM_MARGINS, false)
@@ -21,6 +26,7 @@ class ReadingPrefs(context: Context) {
 
     private companion object {
         const val CONTRAST = "contrast"
+        const val DARK_TEXT_AS_BLACK = "darkTextAsBlack"
         const val TRIM_MARGINS = "trimMargins"
     }
 }
