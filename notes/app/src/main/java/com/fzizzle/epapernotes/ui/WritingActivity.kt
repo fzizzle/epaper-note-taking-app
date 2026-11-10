@@ -63,6 +63,14 @@ class WritingActivity : Activity() {
     private lateinit var indicator: TextView
     private lateinit var lastPages: LastPageStore
 
+    private val readingPrefs by lazy { ReadingPrefs(this) }
+
+    /**
+     * How much darker page pictures are drawn ([Contrast]). Set on the UI thread from
+     * [readingPrefs], read on the worker as each picture is made.
+     */
+    @Volatile private var contrast = Contrast.NORMAL
+
     /** TEMPORARY: which island look the owner is trying, kept between documents. */
     private val stripLook by lazy { StripLook(getSharedPreferences("strip-look", MODE_PRIVATE)) }
     /** The file being written into. It changes once, if the owner saves a damaged file's writing to a copy. */
@@ -227,6 +235,7 @@ class WritingActivity : Activity() {
         super.onCreate(savedInstanceState)
         path = intent.getStringExtra(EXTRA_PATH) ?: return finish()
         lastPages = LastPageStore(this)
+        contrast = readingPrefs.contrast
 
         pages = PageView(this)
         indicator = TextView(this).apply {
@@ -313,6 +322,8 @@ class WritingActivity : Activity() {
             session.runOnDocument { pdf ->
                 try {
                     val bitmap = (pdf as PdfFile).render(page, width)
+                    // Here, once per picture: on screen only. The PDF and snips keep their true colours.
+                    PageLook.applyTo(bitmap, contrast)
                     runOnUiThread { pages.pageRendered(page, width, bitmap) }
                 } catch (e: Exception) {
                     Log.w(TAG, "render failed page=$page", e)
@@ -328,6 +339,8 @@ class WritingActivity : Activity() {
                     val started = SystemClock.uptimeMillis()
                     // Ink solid, like the page's own picture under it; snips keep theirs smoothed.
                     val bitmap = (pdf as PdfFile).renderRegion(page, part, pxPerPt, smoothInk = false)
+                    // Like the page's picture under it (requestRender), or the patch would stand out.
+                    PageLook.applyTo(bitmap, contrast)
                     Log.i(TAG, "region rendered page=$page ${bitmap.width}x${bitmap.height} ms=${SystemClock.uptimeMillis() - started}")
                     runOnUiThread { pages.regionRendered(page, part, token, version, bitmap) }
                 } catch (e: Exception) {
@@ -954,6 +967,13 @@ class WritingActivity : Activity() {
         val menu = PopupMenu(this, menuButton)
         menu.menu.add("Rotate this page").setOnMenuItemClickListener { rotate(all = false); true }
         menu.menu.add("Rotate all pages").setOnMenuItemClickListener { rotate(all = true); true }
+        // A submenu, not a second menu: it stays one menu to Android, so the dismiss below
+        // comes once, when the last of it closes, and fast-ink stays paused in between.
+        val looks = menu.menu.addSubMenu("Contrast: ${contrast.label()}")
+        Contrast.values().forEach { c ->
+            looks.add(c.label()).setChecked(c == contrast).setOnMenuItemClickListener { chooseContrast(c); true }
+        }
+        looks.setGroupCheckable(0, true, true) // the one in use is ticked
         // TEMPORARY, while the owner compares the two island looks; removed once one is chosen.
         val other = if (island.style == IslandStyle.BLACK) IslandStyle.OUTLINE else IslandStyle.BLACK
         menu.menu.add(if (other == IslandStyle.BLACK) "Toolbar: black island" else "Toolbar: outlined island")
@@ -972,6 +992,17 @@ class WritingActivity : Activity() {
         }
         menu.show()
     }
+
+    /** The page pictures are made again with [chosen], which is kept for next time. */
+    private fun chooseContrast(chosen: Contrast) {
+        if (chosen == contrast) return
+        Log.i(TAG, "contrast $chosen")
+        readingPrefs.contrast = chosen
+        contrast = chosen // before asking again, so every picture asked for from now on has it
+        pages.dropAllRenderings()
+    }
+
+    private fun Contrast.label() = name.lowercase().replaceFirstChar { it.uppercase() }
 
     /** Turns the page on show, or every page, 90° clockwise from where it is (spec §6.4), as one undo step. */
     private fun rotate(all: Boolean) {

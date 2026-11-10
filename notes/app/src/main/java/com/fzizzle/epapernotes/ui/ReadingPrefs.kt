@@ -1,0 +1,26 @@
+package com.fzizzle.epapernotes.ui
+
+import android.content.Context
+
+/**
+ * How the owner likes pages shown, kept between documents in the app's own preferences.
+ * These are the only reading settings stored; nothing here touches the PDF.
+ */
+class ReadingPrefs(context: Context) {
+    private val prefs = context.getSharedPreferences("reading", Context.MODE_PRIVATE)
+
+    /** How much darker the page is drawn on screen ([Contrast]). Normal until chosen. */
+    var contrast: Contrast
+        get() = runCatching { Contrast.valueOf(prefs.getString(CONTRAST, null) ?: "") }.getOrDefault(Contrast.NORMAL)
+        set(value) = prefs.edit().putString(CONTRAST, value.name).apply()
+
+    /** Whether the page's empty margins are cut off on screen (Task 5). Off until chosen. */
+    var trimMargins: Boolean
+        get() = prefs.getBoolean(TRIM_MARGINS, false)
+        set(value) = prefs.edit().putBoolean(TRIM_MARGINS, value).apply()
+
+    private companion object {
+        const val CONTRAST = "contrast"
+        const val TRIM_MARGINS = "trimMargins"
+    }
+}

@@ -96,13 +96,13 @@ These are new features, so each needs a yes or no. Any can be left out.
   - `class ReadingPrefs(context: Context) { var contrast: Contrast; var trimMargins: Boolean }` over `getSharedPreferences("reading", MODE_PRIVATE)`.
   - `fun PageView.dropAllRenderings()`: forgets every page picture and the sharp patch, and asks for the page on show again.
 
-- [ ] **Step 1: Write the failing tests** in `PageLookTest`: `whiteStaysWhiteAndBlackStaysBlack` (for every step: entry 0 is 0, entry 255 is 255); `normalChangesNothing`; `strongerDarkensMidGrey` (128 maps below 128, and Strongest below Stronger); `tablesNeverGoBackwards` (each table is non-decreasing); `aPaleHighlightStaysLighterThanTheText` (highlighter yellow over white, as the page renders it, maps to a value at least 100 levels above black); `alphaIsLeftAlone`.
-- [ ] **Step 2: Run and confirm they fail.**
-- [ ] **Step 3: Implement** `PageLook` and `ReadingPrefs`. In `WritingActivity`, both render paths call `PageLook.applyTo(bitmap, contrast)` on the worker, right after MuPDF returns and before the picture is posted to the UI thread; `contrast` is read from a `@Volatile` field set from the preferences. The snip path is left exactly as it is.
-- [ ] **Step 4: The menu.** In `openPageMenu`, add "Contrast: <current>" which opens a three-entry submenu; choosing one stores it, sets the field, and calls `pages.dropAllRenderings()`. (If decision 5 chose the library's Settings instead, add the row there and read the preference in `onResume`.)
+- [x] **Step 1: Write the failing tests** in `PageLookTest`: `whiteStaysWhiteAndBlackStaysBlack` (for every step: entry 0 is 0, entry 255 is 255); `normalChangesNothing`; `strongerDarkensMidGrey` (128 maps below 128, and Strongest below Stronger); `tablesNeverGoBackwards` (each table is non-decreasing); `aPaleHighlightStaysLighterThanTheText` (highlighter yellow over white, as the page renders it, maps to a value at least 100 levels above black); `alphaIsLeftAlone`.
+- [x] **Step 2: Run and confirm they fail.**
+- [x] **Step 3: Implement** `PageLook` and `ReadingPrefs`. In `WritingActivity`, both render paths call `PageLook.applyTo(bitmap, contrast)` on the worker, right after MuPDF returns and before the picture is posted to the UI thread; `contrast` is read from a `@Volatile` field set from the preferences. The snip path is left exactly as it is.
+- [x] **Step 4: The menu.** In `openPageMenu`, add "Contrast: <current>" which opens a three-entry submenu; choosing one stores it, sets the field, and calls `pages.dropAllRenderings()`. (If decision 5 chose the library's Settings instead, add the row there and read the preference in `onResume`.)
 - [ ] **Step 5: Tablet test** `PageLookDeviceTest.aFullPageTakesUnderAFrameOrTwo`: `applyTo` on a 1860×2480 picture at `STRONGEST` in under 80 ms. If it's slower, skip pixels that are pure white (most of a slide) before the table lookup, and measure again. A colour filter on the paint is not an option: it can't do a gamma curve, and it would run on every redraw.
 - [ ] **Step 6: Check on the tablet** with the owner's hard-to-read deck: each step is visibly darker; the highlighter is still clearly yellow; a snip taken at Strongest and pasted looks like the page beside it, not darker.
-- [ ] **Step 7: Commit.** `git commit -m "notes: a contrast setting for the page on screen"`
+- [x] **Step 7: Commit.** `git commit -m "notes: a contrast setting for the page on screen"`
 
 ### Task 4: Cleaner page turns, and a gentler refresh after zooming (decision 4)
 

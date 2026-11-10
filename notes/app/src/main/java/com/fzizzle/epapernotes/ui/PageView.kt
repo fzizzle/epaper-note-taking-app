@@ -322,6 +322,21 @@ class PageView(context: Context) : View(context) {
         if (!pinching) ensureRendered(page, renderWidth(v, page))
     }
 
+    /**
+     * Every page now looks different (the contrast changed): forget every page picture and the
+     * sharp patch, and ask again for what's on show, as [pageChanged] does. Renders already on
+     * their way were made the old way: dropped when they come (see [pageRendered], and the
+     * patch's token). Nothing is redrawn now: the panel keeps the old look until the new one
+     * arrives and goes to it the usual way ([onPageShown]). UI thread.
+     */
+    fun dropAllRenderings() {
+        sizes.indices.forEach { dropRenderings(it) }
+        dropPatch()
+        val v = viewport ?: return
+        if (!fingersDown) askForPatch()
+        if (!pinching) ensureRendered(v.page, renderWidth(v, v.page))
+    }
+
     /** Rendering failed (a damaged page, say). Forget it, so it's asked for again next time. UI thread. */
     fun renderFailed(page: Int, widthPx: Int) {
         if (dropped.remove(page to widthPx)) return
