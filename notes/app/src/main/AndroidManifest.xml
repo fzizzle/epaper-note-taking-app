@@ -13,8 +13,10 @@
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         tools:replace="android:label,android:theme">
 
+        <!-- The library (spec §6.1). Turning the tablet only changes how many tiles fit across. -->
         <activity
-            android:name=".ui.DevStartActivity"
+            android:name=".ui.LibraryActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

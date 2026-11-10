@@ -97,10 +97,16 @@ class ChangeJournal(val file: File) {
         private const val OLD_HEADER = "pnj1"
 
         /** One journal per PDF, named after a fingerprint of its full path. */
-        fun forDocument(journalDir: File, pdf: File): ChangeJournal {
+        fun forDocument(journalDir: File, pdf: File): ChangeJournal = ChangeJournal(journalFileFor(journalDir, pdf))
+
+        /**
+         * The journal file for [pdf]. Every other file of the PDF's in [journalDir] starts with
+         * this name too: the temporary `.new` of a rewrite, and journals set aside as `.kept-<time>`.
+         */
+        fun journalFileFor(journalDir: File, pdf: File): File {
             val digest = MessageDigest.getInstance("SHA-256").digest(pdf.absolutePath.toByteArray(Charsets.UTF_8))
             val name = digest.joinToString("") { "%02x".format(it) }
-            return ChangeJournal(File(journalDir, "$name.journal"))
+            return File(journalDir, "$name.journal")
         }
     }
 }

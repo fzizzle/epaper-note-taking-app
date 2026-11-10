@@ -17,11 +17,12 @@ import android.view.View
  * highlighter a short yellow band, the only colour in the strip. The selected tool, and any
  * button while it's pressed, is drawn inverted (black tile, white mark), which reads at a
  * glance on e-ink. The eraser, lasso and snip show what they leave or take: a tilted block, a
- * dashed loop, a dashed rectangle. Paste is inverted too while it's armed.
+ * dashed loop, a dashed rectangle. Paste is inverted too while it's armed. The library's top bar
+ * reuses the strip with refresh (a circling arrow) and new folder (a folder with a plus).
  */
 class StripButton(context: Context, private val glyph: Glyph, description: String) : View(context) {
 
-    enum class Glyph { BACK, PREVIOUS, NEXT, PEN, HIGHLIGHTER, ERASER, LASSO, SNIP, UNDO, REDO, PASTE, MENU }
+    enum class Glyph { BACK, PREVIOUS, NEXT, PEN, HIGHLIGHTER, ERASER, LASSO, SNIP, UNDO, REDO, PASTE, MENU, REFRESH, NEW_FOLDER }
 
     init {
         contentDescription = description
@@ -229,6 +230,45 @@ class StripButton(context: Context, private val glyph: Glyph, description: Strin
                 // ⋯
                 ink.style = Paint.Style.FILL
                 for (i in -1..1) canvas.drawCircle(cx + i * s * 0.2f, cy, s * 0.055f, ink)
+            }
+            Glyph.REFRESH -> {
+                // A circle with a gap at the top, and an arrowhead where it ends, pointing on round.
+                ink.style = Paint.Style.STROKE
+                ink.strokeWidth = s * 0.07f
+                val r = s * 0.2f
+                canvas.drawArc(cx - r, cy - r, cx + r, cy + r, -60f, 285f, false, ink)
+                // The end of the arc at -135°, and the way it travels there (clockwise on screen).
+                val end = Math.toRadians(-135.0)
+                val ex = cx + r * kotlin.math.cos(end).toFloat()
+                val ey = cy + r * kotlin.math.sin(end).toFloat()
+                val tx = -kotlin.math.sin(end).toFloat()
+                val ty = kotlin.math.cos(end).toFloat()
+                val h = s * 0.12f
+                path.reset()
+                path.moveTo(ex + tx * h, ey + ty * h)
+                path.lineTo(ex - ty * h, ey + tx * h)
+                path.lineTo(ex + ty * h, ey - tx * h)
+                path.close()
+                ink.style = Paint.Style.FILL
+                canvas.drawPath(path, ink)
+            }
+            Glyph.NEW_FOLDER -> {
+                // A folder: its body and the tab on top, with a plus inside.
+                ink.style = Paint.Style.STROKE
+                ink.strokeWidth = s * 0.05f
+                path.reset()
+                path.moveTo(cx - s * 0.3f, cy - s * 0.15f)
+                path.lineTo(cx - s * 0.3f, cy - s * 0.24f)
+                path.lineTo(cx - s * 0.08f, cy - s * 0.24f)
+                path.lineTo(cx - s * 0.02f, cy - s * 0.15f)
+                path.lineTo(cx + s * 0.3f, cy - s * 0.15f)
+                path.lineTo(cx + s * 0.3f, cy + s * 0.25f)
+                path.lineTo(cx - s * 0.3f, cy + s * 0.25f)
+                path.close()
+                canvas.drawPath(path, ink)
+                val py = cy + s * 0.05f
+                canvas.drawLine(cx - s * 0.1f, py, cx + s * 0.1f, py, ink)
+                canvas.drawLine(cx, py - s * 0.1f, cx, py + s * 0.1f, ink)
             }
         }
     }

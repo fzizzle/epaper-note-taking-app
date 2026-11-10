@@ -7,12 +7,12 @@ import com.artifex.mupdf.fitz.PDFDocument
 import com.artifex.mupdf.fitz.PDFObject
 import com.artifex.mupdf.fitz.PDFPage
 import com.artifex.mupdf.fitz.Point
-import com.artifex.mupdf.fitz.Rect
 import com.fzizzle.epapernotes.ink.Box
 import com.fzizzle.epapernotes.ink.ImageItem
 import com.fzizzle.epapernotes.ink.InkItem
 import com.fzizzle.epapernotes.ink.Item
 import com.fzizzle.epapernotes.ink.ItemIds
+import com.fzizzle.epapernotes.ink.Stroke
 import com.fzizzle.epapernotes.ink.StrokeCodec
 import com.fzizzle.epapernotes.ink.StrokeOutline
 import com.fzizzle.epapernotes.ink.StrokeStyle
@@ -98,12 +98,53 @@ internal class ItemAnnotations(private val doc: PDFDocument) {
         annot.getObject().put(StrokeCodec.KEY, StrokeCodec.encode(stroke))
         // Let MuPDF finish its own drawing now, or it would redraw over ours on the page update.
         annot.update()
+        drawInk(annot.getObject(), stroke)
+    }
 
-        // Replace MuPDF's fixed-width drawing with the pressure outline. The outline is in
-        // PDF space, and setAppearance expects page space, so the page transform maps it there.
+    /**
+     * Gives an ink annotation the pressure outline as its drawing, written straight into the
+     * dictionary as for a picture. The outline, its box and /Rect are all in PDF space, so the
+     * form needs no /Matrix.
+     *
+     * Before this, the app used MuPDF's setAppearance, which stored the page transform as the
+     * form's /Matrix. Every viewer then drew the ink mirrored in its box, or turned a quarter
+     * on a turned page (owner: "resized writing went upside down"). [isFaulty] finds those.
+     */
+    private fun drawInk(dict: PDFObject, stroke: Stroke) {
         val box = StrokeOutline.bounds(stroke)
         val contents = "/GS0 gs\n" + StrokeOutline.contentStream(stroke)
-        annot.setAppearance(toPageSpace, rect(box), opacityResources(style.opacity), buffer(contents))
+        val form = doc.newDictionary()
+        form.put("Type", doc.newName("XObject"))
+        form.put("Subtype", doc.newName("Form"))
+        form.put("BBox", rectArray(box))
+        form.put("Resources", opacityResources(StrokeStyle.of(stroke.kind).opacity))
+        val ap = doc.newDictionary()
+        ap.put("N", doc.addStream(buffer(contents), form))
+        // Everything is made before the annotation is touched, so a failure above leaves it as it was.
+        val rect = rectArray(box)
+        dict.put("AP", ap)
+        dict.put("Rect", rect)
+        // MuPDF's own drawing padded /Rect with /RD; ours is the outline's box exactly.
+        dict.delete("RD")
+    }
+
+    /**
+     * True for one of the app's strokes whose drawing has a /Matrix other than "as is" (see
+     * [drawInk]). Only one with a usable id ([isOurs]): anything else is never touched.
+     */
+    fun isFaulty(dict: PDFObject): Boolean {
+        if (!isOurs(dict) || dict.get("Subtype").asName() != "Ink") return false
+        val m = dict.get("AP").get("N").get("Matrix")
+        if (!m.isArray) return false
+        if (m.size() != 6) return true
+        return (0 until 6).any { m.get(it).asFloat() != IDENTITY[it] }
+    }
+
+    /** Draws a faulty stroke ([isFaulty]) again from its recorded points, in place. False if its points can't be read. */
+    fun redraw(dict: PDFObject): Boolean {
+        val stroke = StrokeCodec.decode(dict.get(StrokeCodec.KEY).asString()) ?: return false
+        drawInk(dict, stroke)
+        return true
     }
 
     private fun addImage(p: PDFPage, item: ImageItem) {
@@ -215,8 +256,6 @@ internal class ItemAnnotations(private val doc: PDFDocument) {
         return res
     }
 
-    private fun rect(b: Box) = Rect(b.x0, b.y0, b.x1, b.y1)
-
     private fun buffer(text: String) = Buffer().apply { writeBytes(text.toByteArray(Charsets.US_ASCII)) }
 
     companion object {
@@ -224,5 +263,6 @@ internal class ItemAnnotations(private val doc: PDFDocument) {
         const val IMAGE_KEY = "PNotesImage"
         private const val IMAGE_VERSION = "pi1"
         private const val IMAGE_NAME = "Img"
+        private val IDENTITY = floatArrayOf(1f, 0f, 0f, 1f, 0f, 0f)
     }
 }

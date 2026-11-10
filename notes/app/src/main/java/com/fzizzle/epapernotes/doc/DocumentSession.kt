@@ -17,6 +17,7 @@ import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 
 /**
  * One open document, and the rules that keep its writing safe (spec §7.2, §7.3):
@@ -71,11 +72,14 @@ class DocumentSession(
     /** Completed when this session has saved and closed, for the next session on the file. */
     private val closed = CompletableFuture<Unit>()
     private val gateKey = pdf.absolutePath
+    /** Worker thread only. The copy's path after a "save to a copy": the session gates that file too. */
+    private var copyGateKey: String? = null
 
     // Worker thread only.
     private var pages: PdfPages? = null
     private var applied = 0 // how many of `unsaved` are in `pages`: always the first ones, in order
     private var applyFailed = false // the PDF no longer matches the journal, so it's never saved
+    private var inkRedrawn = false // strokes were drawn again (redrawFaultyInk) since the last save: save even with nothing journaled
     private var known: FileIdentity? = null // the file as it was when opened or last saved
     private var repairDecided = false
     private var waitingForRepairDecision = false
@@ -144,10 +148,53 @@ class DocumentSession(
         // The replayed changes, and any the pen has added since the journal opened.
         applyPending()
         checkRepair(opened)
+        scheduler.postDelayed(REDRAW_INK, REDRAW_INK_DELAY_MS) { redrawFaultyInkFrom(0) }
         if (replay.isNotEmpty() && !applyFailed) {
             events(SessionEvent.Replayed(replay.size))
             scheduleAutosave()
         }
+    }
+
+    /**
+     * Strokes an earlier version saved mirrored are drawn again, and saved like an edit. It
+     * starts a moment after opening, so the first page shows at once (owner's choice; about
+     * 21 ms a stroke, 1.4 s for the test file), and goes at most [REDRAW_CHUNK] strokes per
+     * task, each posting the next, so the screen's requests for pages, an erase, a lasso, an
+     * autosave or [close] get in between (a full page could hold the worker for seconds). A
+     * page on show is drawn again once all its strokes are fixed ([SessionEvent.InkRedrawn]).
+     * A save in the middle keeps what's fixed so far; if the app stops before the last save,
+     * the next opening simply finds the rest and does it. Worker thread only.
+     *
+     * Changes recorded meanwhile need no special care, whichever comes first on the worker. A
+     * redraw changes only how a stroke is drawn (its /AP and /Rect): never its id, its
+     * recorded points, or its place in the page's list. Applying a change reads and writes
+     * only those, so it does the same before or after a redraw: an erased or moved stroke
+     * goes either way (redrawn first, it just cost a moment), and anything a change adds or
+     * puts back is drawn the new way already. And a save in between holds whole strokes,
+     * since each is redrawn within one task. So `applied`, and the ordering rule, are untouched.
+     *
+     * [redrawnHere] counts this page's strokes fixed by earlier chunks, for the one InkRedrawn.
+     */
+    private fun redrawFaultyInkFrom(page: Int, redrawnHere: Int = 0) {
+        val p = pages ?: return // closed
+        if (page >= p.pageCount) {
+            if (inkRedrawn) scheduleAutosave()
+            return
+        }
+        var redrawn = redrawnHere
+        var more = false
+        try {
+            val chunk = p.redrawFaultyInk(page, REDRAW_CHUNK)
+            if (chunk.redrawn > 0) inkRedrawn = true
+            redrawn += chunk.redrawn
+            more = chunk.more
+        } catch (e: Exception) {
+            // Never a reason to stop: the strokes just stay as they were.
+            System.err.println("DocumentSession: redrawing ink on page $page failed: $e")
+        }
+        if (more) return scheduler.post { redrawFaultyInkFrom(page, redrawn) }
+        if (redrawn > 0) events(SessionEvent.InkRedrawn(page))
+        scheduler.post { redrawFaultyInkFrom(page + 1) }
     }
 
     /** A finished stroke, from the pen's thread. Safe in the journal when this returns. */
@@ -356,6 +403,7 @@ class DocumentSession(
             try {
                 SafeSave.replace(copy) { p.saveTo(it) }
                 switchTo(copy)
+                inkRedrawn = false // the redrawn strokes are in the copy, which is now the file
             } catch (e: Exception) {
                 events(SessionEvent.SaveFailed(e.message ?: "The copy couldn't be saved."))
                 return@post
@@ -369,6 +417,7 @@ class DocumentSession(
     /** Saves anything unsaved, then closes the PDF and stops the worker. */
     fun close() {
         scheduler.cancel(AUTOSAVE)
+        scheduler.cancel(REDRAW_INK) // what's done so far is saved; the rest waits for the next opening
         scheduler.post {
             try {
                 save()
@@ -377,6 +426,7 @@ class DocumentSession(
             } finally {
                 closed.complete(Unit)
                 openSessions.remove(gateKey, closed)
+                copyGateKey?.let { openSessions.remove(it, closed) }
             }
         }
         scheduler.shutdown()
@@ -400,7 +450,7 @@ class DocumentSession(
     private fun save() {
         val p = pages ?: return
         val inThisSave = applied
-        if (inThisSave == 0) return
+        if (inThisSave == 0 && !inkRedrawn) return
         if (applyFailed || stoppedBecauseChanged || checkRepair(p)) return
 
         try {
@@ -416,6 +466,7 @@ class DocumentSession(
 
             SafeSave.replace(file) { p.saveTo(it) }
             known = FileIdentity.of(file)
+            inkRedrawn = false
             restartJournal(known!!, inThisSave)
             events(SessionEvent.Saved)
         } catch (e: Exception) {
@@ -443,6 +494,9 @@ class DocumentSession(
             val remaining = unsaved.drop(applied)
             val oldJournal = journal
             journal = ChangeJournal.forDocument(journalDir, copy)
+            // From now on this session saves into the copy, so the library must wait for it
+            // before renaming, moving or deleting the copy, as it does for the original.
+            copyGateKey = copy.absolutePath.also { openSessions[it] = closed }
             journal.rewrite(base, remaining)
             file = copy
             known = base
@@ -491,11 +545,33 @@ class DocumentSession(
         const val HISTORY_LIMIT = 200
         const val RETRY_DELAY_MS = 30_000L
         private const val AUTOSAVE = "autosave"
+        private const val REDRAW_INK = "redraw-ink"
+
+        /** Long enough for the first page to be drawn before old strokes are fixed. */
+        const val REDRAW_INK_DELAY_MS = 1500L
+
+        /** Strokes redrawn per worker task: about half a second of work at most. */
+        const val REDRAW_CHUNK = 25
 
         /** How long a new session waits for the previous one on the same file to close. */
         private const val PREVIOUS_SESSION_WAIT_MS = 15_000L
 
         /** Open sessions by file, so a new one can wait for the previous one to close. */
         private val openSessions = ConcurrentHashMap<String, CompletableFuture<Unit>>()
+
+        /**
+         * Waits for the session on [pdf], if there is one, to save and close: the library
+         * mustn't rename, move or delete a file whose last changes are still being saved.
+         * True when no session is open on it, or it closed within [timeoutMs].
+         */
+        fun awaitClosed(pdf: File, timeoutMs: Long): Boolean {
+            val closing = openSessions[pdf.absolutePath] ?: return true
+            return try {
+                closing.get(timeoutMs, TimeUnit.MILLISECONDS)
+                true
+            } catch (e: TimeoutException) {
+                false
+            }
+        }
     }
 }
