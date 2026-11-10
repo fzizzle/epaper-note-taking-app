@@ -12,6 +12,8 @@ import com.fzizzle.epapernotes.ink.StrokeKind
 import com.fzizzle.epapernotes.ink.StrokePoint
 import com.fzizzle.epapernotes.pdf.PdfFile
 import com.fzizzle.epapernotes.pdf.TestPdfs
+import com.fzizzle.epapernotes.storage.FileIdentity
+import com.fzizzle.epapernotes.storage.FileStamp
 import com.fzizzle.epapernotes.storage.SafeSave
 import java.io.File
 import java.util.Locale
@@ -55,6 +57,11 @@ class SpeedCheck {
         pdf.use {
             report("pages: ${it.pageCount}")
             report("open: $openMs ms")
+            // What a save's "is the file still ours?" check costs: reading it all, or just looking at it.
+            report("fingerprint: ${timed { FileIdentity.of(copy) }.second} ms")
+            val stampStarted = System.nanoTime()
+            FileStamp.of(copy)
+            report("stamp: ${ms(System.nanoTime() - stampStarted)} ms")
 
             val renders = (0 until minOf(10, it.pageCount)).map { page -> timed { it.render(page, SCREEN_WIDTH_PX) }.second }
             report("render page 1 (cold): ${renders.first()} ms")
