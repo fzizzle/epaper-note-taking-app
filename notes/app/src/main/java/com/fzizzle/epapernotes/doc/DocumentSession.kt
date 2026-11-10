@@ -17,6 +17,7 @@ import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 
 /**
  * One open document, and the rules that keep its writing safe (spec §7.2, §7.3):
@@ -497,5 +498,20 @@ class DocumentSession(
 
         /** Open sessions by file, so a new one can wait for the previous one to close. */
         private val openSessions = ConcurrentHashMap<String, CompletableFuture<Unit>>()
+
+        /**
+         * Waits for the session on [pdf], if there is one, to save and close: the library
+         * mustn't rename, move or delete a file whose last changes are still being saved.
+         * True when no session is open on it, or it closed within [timeoutMs].
+         */
+        fun awaitClosed(pdf: File, timeoutMs: Long): Boolean {
+            val closing = openSessions[pdf.absolutePath] ?: return true
+            return try {
+                closing.get(timeoutMs, TimeUnit.MILLISECONDS)
+                true
+            } catch (e: TimeoutException) {
+                false
+            }
+        }
     }
 }
