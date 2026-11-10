@@ -2,11 +2,16 @@ package com.fzizzle.epapernotes.pdf
 
 import android.graphics.Bitmap
 import android.util.SizeF
+import com.artifex.mupdf.fitz.ColorSpace
 import com.artifex.mupdf.fitz.Document
+import com.artifex.mupdf.fitz.DrawDevice
 import com.artifex.mupdf.fitz.Matrix
 import com.artifex.mupdf.fitz.PDFDocument
+import com.artifex.mupdf.fitz.PDFAnnotation
 import com.artifex.mupdf.fitz.PDFObject
 import com.artifex.mupdf.fitz.PDFPage
+import com.artifex.mupdf.fitz.Pixmap
+import com.artifex.mupdf.fitz.RectI
 import com.artifex.mupdf.fitz.android.AndroidDrawDevice
 import com.fzizzle.epapernotes.doc.AddItems
 import com.fzizzle.epapernotes.doc.Change
@@ -86,13 +91,91 @@ class PdfFile private constructor(private val doc: PDFDocument) : PdfPages {
         }
     }
 
-    /** The page with all its annotations drawn, scaled to [widthPx] pixels wide. */
-    fun render(page: Int, widthPx: Int): Bitmap {
-        val p = doc.loadPage(page)
+    /**
+     * The page with all its annotations drawn, scaled to [widthPx] pixels wide.
+     *
+     * Ink at full strength, the owner's pen among it, has a hard edge unless [smoothInk]:
+     * solid with no grey rim, like Onyx's live ink. A second or so after the pen lifts, Onyx
+     * hands the panel back to the app's drawing, and a smoothed stroke, whose rim was 45% of
+     * its pixels, looked thinner than the live ink it replaced (owner, 2026-11-10). Everything
+     * else (the page, the highlighter, other annotations) stays smoothed, and so do thumbnails:
+     * scaled down, a hard edge looks ragged.
+     */
+    fun render(page: Int, widthPx: Int, smoothInk: Boolean = false): Bitmap {
+        val p = doc.loadPage(page) as PDFPage
         try {
-            return AndroidDrawDevice.drawPageFitWidth(p, widthPx)
+            if (smoothInk) return AndroidDrawDevice.drawPageFitWidth(p, widthPx)
+            val annots = p.annotations ?: emptyArray()
+            val isSolid = BooleanArray(annots.size) { annots[it].type == PDFAnnotation.TYPE_INK && annots[it].opacity >= 0.99f }
+            if (!isSolid.any { it }) return AndroidDrawDevice.drawPageFitWidth(p, widthPx)
+            val ctm = AndroidDrawDevice.fitPageWidth(p, widthPx)
+            val box = RectI(p.bounds.transform(ctm))
+            val bmp = Bitmap.createBitmap(box.x1 - box.x0, box.y1 - box.y0, Bitmap.Config.ARGB_8888)
+            // The usual order, with the solid ink left out: the page, annotations, form fields.
+            val dev = AndroidDrawDevice(bmp, box.x0, box.y0)
+            try {
+                p.runPageContents(dev, ctm, null)
+                annots.forEachIndexed { i, a -> if (!isSolid[i]) a.run(dev, ctm, null) }
+                p.runPageWidgets(dev, ctm, null)
+                dev.close()
+            } finally {
+                dev.destroy()
+            }
+            drawSolid(bmp, box, annots.filterIndexed { i, _ -> isSolid[i] }, ctm)
+            return bmp
         } finally {
             p.destroy()
+        }
+    }
+
+    /**
+     * Draws [ink] over [bmp] with a hard edge. MuPDF in this build always smooths (its
+     * smoothing level can't be changed), so the ink is drawn on its own onto a clear picture
+     * of the area it covers, and every pixel it covers at least half of is painted in full,
+     * in the ink's own colour; the rest is left as the page. Half is where a hard-edged line
+     * of the same width would put its edge, so the ink keeps its width.
+     */
+    private fun drawSolid(bmp: Bitmap, box: RectI, ink: List<PDFAnnotation>, ctm: Matrix) {
+        val area = ink[0].bounds.transform(ctm)
+        for (i in 1 until ink.size) area.union(ink[i].bounds.transform(ctm))
+        val r = RectI(area)
+        val x0 = maxOf(r.x0, box.x0)
+        val y0 = maxOf(r.y0, box.y0)
+        val w = minOf(r.x1, box.x1) - x0
+        val h = minOf(r.y1, box.y1) - y0
+        if (w <= 0 || h <= 0) return
+        val layer = Pixmap(ColorSpace.DeviceRGB, x0, y0, w, h, true)
+        try {
+            layer.clear() // transparent
+            val dev = DrawDevice(layer)
+            try {
+                ink.forEach { it.run(dev, ctm, null) }
+                dev.close()
+            } finally {
+                dev.destroy()
+            }
+            val s = layer.samples // r, g, b, alpha per pixel, colour multiplied by alpha
+            val stride = layer.stride
+            val px = IntArray(w * h)
+            bmp.getPixels(px, 0, w, x0 - box.x0, y0 - box.y0, w, h)
+            for (y in 0 until h) {
+                var o = y * stride
+                var i = y * w
+                for (x in 0 until w) {
+                    val a = s[o + 3].toInt() and 0xff
+                    if (a >= HALF) {
+                        px[i] = (0xff shl 24) or
+                            (((s[o].toInt() and 0xff) * 255 / a) shl 16) or
+                            (((s[o + 1].toInt() and 0xff) * 255 / a) shl 8) or
+                            ((s[o + 2].toInt() and 0xff) * 255 / a)
+                    }
+                    o += 4
+                    i++
+                }
+            }
+            bmp.setPixels(px, 0, w, x0 - box.x0, y0 - box.y0, w, h)
+        } finally {
+            layer.destroy()
         }
     }
 
@@ -341,6 +424,9 @@ class PdfFile private constructor(private val doc: PDFDocument) : PdfPages {
     }
 
     companion object {
+        /** Half covered, out of 255: from here a pixel of solid ink is painted in full ([drawSolid]). */
+        private const val HALF = 128
+
         /** What an edit tells [onPage]: whether MuPDF may update the loaded page afterwards. */
         private const val UPDATE_PAGE = true
         private const val LEAVE_PAGE_ALONE = false

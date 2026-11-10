@@ -67,6 +67,42 @@ class PdfFileStrokesTest {
         }
     }
 
+    /** Pixels neither near white nor near black: a smoothed edge. */
+    private fun greys(bmp: android.graphics.Bitmap): Int {
+        val px = IntArray(bmp.width * bmp.height).also { bmp.getPixels(it, 0, bmp.width, 0, 0, bmp.width, bmp.height) }
+        return px.count { Color.red(it) in 40..215 }
+    }
+
+    private fun darks(bmp: android.graphics.Bitmap): Int {
+        val px = IntArray(bmp.width * bmp.height).also { bmp.getPixels(it, 0, bmp.width, 0, 0, bmp.width, bmp.height) }
+        return px.count { Color.red(it) < 128 }
+    }
+
+    /**
+     * Ink is drawn solid, like Onyx's live ink (owner, 2026-11-10: a stroke looked thinner once
+     * the app's drawing replaced it), and as wide as before. The page's own drawing is still
+     * smoothed, and so are thumbnails (smoothInk).
+     */
+    @Test fun inkIsSolidButThePageStaysSmooth() {
+        val wavy = Stroke(StrokeKind.PEN, (0..80).map { StrokePoint(100f + it * 5, 400f + 30f * kotlin.math.sin(it / 6f), 0.5f) })
+        PdfFile.open(TestPdfs.blank(dir)).use { pdf ->
+            pdf.add(0, wavy)
+            val solid = pdf.render(0, 1700)
+            val smooth = pdf.render(0, 1700, smoothInk = true)
+            assertEquals(smooth.width, solid.width)
+            assertEquals(smooth.height, solid.height)
+            assertEquals(0, greys(solid))
+            assertTrue("smoothed ink has a grey edge", greys(smooth) > 500)
+            val ratio = darks(solid).toFloat() / darks(smooth)
+            assertTrue("as wide as before: $ratio", ratio in 0.9f..1.15f)
+        }
+        // A page whose own drawing is a slanted black wedge: its edge stays smoothed.
+        val doc = PDFDocument()
+        doc.insertPage(-1, doc.addPage(Rect(0f, 0f, 612f, 792f), 0, doc.newDictionary(), "0 0 0 rg 100 100 m 500 160 l 500 100 l f"))
+        val file = File.createTempFile("wedge", ".pdf", dir).also { doc.save(it.path, ""); doc.destroy() }
+        PdfFile.open(file).use { assertTrue("the page is still smoothed", greys(it.render(0, 1700)) > 100) }
+    }
+
     @Test fun appearanceKeepsPressureAfterSave() {
         val out = File(dir, "ap.pdf")
         val wedge = Stroke(StrokeKind.PEN, listOf(StrokePoint(100f, 400f, 0f), StrokePoint(500f, 400f, 1f)))

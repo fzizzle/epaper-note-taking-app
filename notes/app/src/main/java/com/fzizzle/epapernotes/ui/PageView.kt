@@ -142,7 +142,9 @@ class PageView(context: Context) : View(context) {
 
     private val placeholder = Paint().apply { color = Color.rgb(235, 235, 235) }
     private val pagePaint = Paint(Paint.FILTER_BITMAP_FLAG)
-    private val inkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeCap = Paint.Cap.ROUND }
+    // Not smoothed: solid, like Onyx's live ink and the page's renderings of it (PdfFile.render).
+    // This is what the panel shows of a new stroke once Onyx hands it back after a pause.
+    private val inkPaint = Paint().apply { strokeCap = Paint.Cap.ROUND }
     private val inkPath = Path() // used again for each see-through stroke, rather than made anew
 
     /** Lays out the document. [pdfToDisplay] is each page's PDF-to-display transform. UI thread. */
