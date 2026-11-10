@@ -13,12 +13,12 @@ Branch `review-readability`, merged 2026-11-10 after the owner's "it looks good"
 | 5. Trim margins | Done, reviewed (2 fix rounds), owner-checked. |
 | 7. Page drawn on whole pixels | Done, reviewed (approved), tablet suite passes (85/85, 2026-11-10). Controller screenshot check passed. **Owner check still to do.** |
 | 8. Dark text as black | Done, reviewed (no Critical/Important), laptop 326 and tablet 85/85 pass; a full page with Strongest takes 20 ms (limit 80). **Owner check (step 6) still to do.** |
-| 6. Owner session | Checklist `notes/TESTING-readability.md` and spec §6.2 written (555ff79). Whole-branch review done and its fixes in (8f6571e). **Owner session is the hard stop: then results, squash, merge.** |
+| 6. Owner session | Checklist `notes/TESTING-readability.md` and spec §6.2 written (174a4f5). Whole-branch review done and its fixes in (e021417). **Owner session is the hard stop: then results, squash, merge.** |
 
 ## Next steps
 
-1. The owner works through `notes/TESTING-readability.md` (the build on the tablet is 8f6571e's). Results go in `docs/superpowers/readability-results.md`.
-2. Merge: squash the work-in-progress commit 8178ab4 into the Task 8 commits (message "notes: dark text can be shown as black"), open the PR, merge after the owner's go.
+1. Owner session: done, "it looks good" ([results](readability-results.md)).
+2. Merge: done: 8178ab4 squashed into 1d30eee, "notes: dark text can be shown as black"; merged.
 
 If a build fails on a file named "… 2.xml" (or any "* 2.*") under `notes/app/build/`, those are duplicates made by file sync: `rm -rf notes/app/build` and build again.
 
@@ -128,15 +128,15 @@ Task 7: minor (deferred): zoomed and pushed to the right/bottom edge, rounding l
 Task 7: minor (deferred): 1 px check lets a stale anyFor picture 1 px wider draw unscaled; tighten width check to < 1f (PageView.kt:637).
 Task 7: complete pending tablet check (commits 0abec69..74d1c57, review clean)
 Task 7: step 5 controller check (2026-11-10): PWT test copy page 1 at normal size (Strongest, trim on), screenshot vs a poppler 1:1 render with the Strongest curve: mean difference 1.53 placed on a whole pixel, 2.03 / 1.91 for half-pixel blends up / down. The rest is poppler vs MuPDF. Owner part still to do.
-Task 8: WIP commit 8178ab4 finished: device test (f054c72); first tablet run 80 ms, failing the < 80 ms limit; the pixel step now reuses the last pixel's answer for runs of one colour and builds its grey table once per picture: 20 ms. Review: matches the plan, 0 Critical/Important.
+Task 8: WIP commit 8178ab4 (squashed into 1d30eee at merge) finished: device test (1d30eee); first tablet run 80 ms, failing the < 80 ms limit; the pixel step now reuses the last pixel's answer for runs of one colour and builds its grey table once per picture: 20 ms. Review: matches the plan, 0 Critical/Important.
 Task 8: minor (deferred): pale tints (chroma ≤ 40, e.g. formula anti-aliased edges (200, 230, 215), pastel boxes (225, 235, 250)) turn neutral grey; per the spec, but watch for it in step 6 (PageLook.kt, NEARLY_GREY ignores lightness).
 Task 8: minor (deferred): the early return in applyTo (off + Normal) has no test; needs Android.
-Task 8: minor (deferred): squash 8178ab4 ("work in progress") at merge; plan's message "notes: dark text can be shown as black".
+Task 8: squashed at merge: 8178ab4 ("work in progress") and its two follow-ups are now 1d30eee, "notes: dark text can be shown as black".
 Task 8: on by default (owner, 2026-11-10): ReadingPrefs default true; turned off from ⋯ as before.
 Task 8: complete pending owner step 6.
 
 #### Whole-branch review (2026-11-10)
-Review: 0 Critical, 2 Important, both fixed (8f6571e), with a re-review of the fixes (1 Important regression in the first fix, fixed in the same commit):
+Review: 0 Critical, 2 Important, both fixed (e021417), with a re-review of the fixes (1 Important regression in the first fix, fixed in the same commit):
 - Zoomed in, strokes drawn over the sharp patch were never baked (bakeIfFull baked only the page picture under it). Now the patch is baked quietly too, and the page picture still is.
 - The held after-zoom refresh went off when a page picture arrived before the patch, so the patch cost a second update. Now only the patch (or the 300 ms limit) releases it.
 - New minor, left: strokes drawn by hand skip the page look, so under Strongest a fresh highlight shows paler until baked. Mapping the stroke colour before it's blended over the page wouldn't match a curve applied after, so it's left for the owner to judge (R2).

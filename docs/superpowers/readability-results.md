@@ -1,6 +1,6 @@
 # Easier-to-read pages: results
 
-The owner session (Task 6) of the [readability plan](plans/2026-11-10-review-readability.md), on the build of 8f6571e, with the [checklist](../../notes/TESTING-readability.md). Branch `review-readability`, merged 2026-11-10.
+The owner session (Task 6) of the [readability plan](plans/2026-11-10-review-readability.md), on the build of e021417, with the [checklist](../../notes/TESTING-readability.md). Branch `review-readability`, merged 2026-11-10.
 
 ## Verdict
 
