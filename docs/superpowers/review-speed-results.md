@@ -4,6 +4,8 @@ Run: 2026-11-10 on the Boox Note Air 6 C (Android 16), debug build, MuPDF 1.28.5
 
 **State: all code is written, the laptop tests pass (287), but the work is not finished.** The last full run of the tablet tests was cut off when another build was installed on the tablet, and the screen-side changes have not been checked with a real pen. Do not merge until the steps under "Still to do" are done.
 
+Continuing on another computer: set it up with [notes/SETUP.md](../../notes/SETUP.md) first, and read its step 4 before installing on the tablet.
+
 ## Measured on the tablet
 
 From `SpeedCheck` (`notes/app/src/androidTest/.../check/SpeedCheck.kt`). The full-page test adds 1,500 short strokes to one blank page, one at a time.
