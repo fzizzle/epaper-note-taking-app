@@ -1,6 +1,6 @@
 # Readability plan: handover (2026-11-10)
 
-Branch `review-readability`, not merged. [Plan](plans/2026-11-10-review-readability.md).
+Branch `review-readability`, merged 2026-11-10 after the owner's "it looks good" ([results](readability-results.md)). Kept as the review record. [Plan](plans/2026-11-10-review-readability.md).
 
 ## Where it stands
 
