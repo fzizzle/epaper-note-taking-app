@@ -120,6 +120,10 @@ class SpeedCheck {
                 val (again, againMs) = timed { pdf.items(0) }
                 log("items(0) again: $againMs ms")
                 assertEquals(items, again)
+                // Of the first read, how much is parsing the stroke text alone (the rest is MuPDF).
+                val texts = items.map { com.fzizzle.epapernotes.ink.StrokeCodec.encode((it as com.fzizzle.epapernotes.ink.InkItem).stroke) }
+                val (_, decodeMs) = timed { texts.forEach { com.fzizzle.epapernotes.ink.StrokeCodec.decode(it) } }
+                log("decode $FULL_PAGE_STROKES stroke texts alone: $decodeMs ms")
 
                 // Review speed, focus 1 (addingAStrokeDoesNotGrowWithThePage): on a full page a
                 // stroke may cost up to three times what it does on a nearly empty one, no more.

@@ -6,13 +6,14 @@ The four sections below come from the [project review of 2026-11-10](docs/superp
 
 From using the app on the tablet. Not yet triaged or planned.
 
-- [ ] The writable area stops about 1 cm before the page edge: a strip of white you can't write on. Possibly the "pen can't write beside the page" limit (bug fixes, Task 7) cutting too far in.
-- [ ] Ink changes after it's written: a stroke thins out once you've finished it. Likely the fast-ink stroke being replaced by the app's own drawing at a different width.
+- [ ] The writable area stops about 1 cm before the page edge. Found: at the bottom it reaches the edge; at the sides the page is narrower than the screen (93 px each side at normal size), so that band is beside the page, where ink can't be saved. Needs a decision: shade the band, or a fit-to-width view.
+- [ ] Ink changes after it's written: a stroke thins out once you've finished it. Found: not the width (the saved width matches Onyx's own fountain width within 5%). Likely the saved stroke's smoothed grey edges, which look lighter on e-ink than Onyx's hard black line.
 - [ ] Paste a copied item with a finger press, not only from the strip.
-- [ ] Turn the page with the volume buttons.
-- [ ] Palm presses cause screen refreshes, which is nauseating. See the palm rules (bug fixes, Task 8).
-- [ ] Tool icons still don't respond to every tap.
+- [x] Turn the page with the volume buttons (also Page Up/Down).
+- [x] Palm presses cause screen refreshes. Fixed: a touch only pauses fast-ink once it pinches or moves a zoomed page, and fingers are ignored while the pen is near.
+- [x] Tool icons still don't respond to every tap. Fixed: Onyx stops passing the app's drawing to the panel while fast-ink is on; the strip now lets it through for a moment, with one flash per tap (owner's choice over no flash). Switching to the eraser no longer refreshes the screen.
 - [ ] The battery level can't be checked in the app, because the system status bar is hidden.
+- [x] The eraser is slow (owner, 2026-11-10): the first erase or lasso on a page read all its strokes, 1 s for 1,500. Stroke text is now parsed in one pass: 131 ms.
 - [ ] Far too many refreshes overall. See the speed plan (Task 4) and the readability plan (Task 4).
 
 ## Review: bugs to fix first
