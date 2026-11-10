@@ -24,11 +24,14 @@ Only the picture on screen changes. The PDF, your ink, snips and the library's t
 - [ ] **R7. Trim, zoomed, turned.** With Trim on and zoomed in, turn the tablet, then rotate a page from ⋯. Does the page refit with no leftover offset, and does your writing stay in place?
 - [ ] **R8. Page turns.** Turn pages on a text slide and on a dark slide. Is there a ghost of the last page, or a flash that bothers you? Can you write straight away after the turn?
 - [ ] **R9. Whole pixels.** At normal size, is text as crisp as you'd expect? Does ink land under the pen at normal size and zoomed in?
-- [ ] **R10. The PDF is unchanged.** Open the same test copy on the laptop afterwards. Does it look as before, apart from your ink? (No contrast, no darker text, no trimming.)
+- [ ] **R10. Zoomed writing.** Zoom in, write a lot (half a page), then move the page with one finger and zoom out. Does it stay smooth, with every stroke there? Zoom, and start writing the moment your fingers lift: is that first stroke kept?
+- [ ] **R11. The PDF is unchanged.** Open the same test copy on the laptop afterwards. Does it look as before, apart from your ink? (No contrast, no darker text, no trimming.)
 
 When done, the results go in `docs/superpowers/readability-results.md`.
 
 ## Known (2026-11-10)
+
+- Under Strongest, a highlight you've just drawn looks a little paler than it will a moment later, once the page picture is redrawn with it.
 
 - At Trim margins with a heavy trim, the page can be slightly soft at normal size until you zoom in a little (the picture is capped at 1.5× the screen width, and the sharp patch only comes above 1.05×).
 - After a jump to a page not yet measured for trim, the page can show grey for a moment while its new fit is drawn. Writing still lands in the right place.

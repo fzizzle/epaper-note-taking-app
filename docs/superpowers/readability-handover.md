@@ -13,12 +13,12 @@ Branch `review-readability`, not merged. [Plan](plans/2026-11-10-review-readabil
 | 5. Trim margins | Done, reviewed (2 fix rounds), owner-checked. |
 | 7. Page drawn on whole pixels | Done, reviewed (approved), tablet suite passes (85/85, 2026-11-10). Controller screenshot check passed. **Owner check still to do.** |
 | 8. Dark text as black | Done, reviewed (no Critical/Important), laptop 326 and tablet 85/85 pass; a full page with Strongest takes 20 ms (limit 80). **Owner check (step 6) still to do.** |
-| 6. Owner session | Not started: write `notes/TESTING-readability.md`, update the spec §6.2, then stop. |
+| 6. Owner session | Checklist `notes/TESTING-readability.md` and spec §6.2 written (555ff79). Whole-branch review done and its fixes in (8f6571e). **Owner session is the hard stop: then results, squash, merge.** |
 
 ## Next steps
 
-1. The owner checks Tasks 7 and 8 on the tablet (build installed 2026-11-10).
-2. Task 6, then a whole-branch review that triages the deferred minor findings below, then merge.
+1. The owner works through `notes/TESTING-readability.md` (the build on the tablet is 8f6571e's). Results go in `docs/superpowers/readability-results.md`.
+2. Merge: squash the work-in-progress commit 8178ab4 into the Task 8 commits (message "notes: dark text can be shown as black"), open the PR, merge after the owner's go.
 
 If a build fails on a file named "… 2.xml" (or any "* 2.*") under `notes/app/build/`, those are duplicates made by file sync: `rm -rf notes/app/build` and build again.
 
@@ -134,3 +134,11 @@ Task 8: minor (deferred): the early return in applyTo (off + Normal) has no test
 Task 8: minor (deferred): squash 8178ab4 ("work in progress") at merge; plan's message "notes: dark text can be shown as black".
 Task 8: on by default (owner, 2026-11-10): ReadingPrefs default true; turned off from ⋯ as before.
 Task 8: complete pending owner step 6.
+
+#### Whole-branch review (2026-11-10)
+Review: 0 Critical, 2 Important, both fixed (8f6571e), with a re-review of the fixes (1 Important regression in the first fix, fixed in the same commit):
+- Zoomed in, strokes drawn over the sharp patch were never baked (bakeIfFull baked only the page picture under it). Now the patch is baked quietly too, and the page picture still is.
+- The held after-zoom refresh went off when a page picture arrived before the patch, so the patch cost a second update. Now only the patch (or the 300 ms limit) releases it.
+- New minor, left: strokes drawn by hand skip the page look, so under Strongest a fresh highlight shows paler until baked. Mapping the stroke colour before it's blended over the page wouldn't match a curve applied after, so it's left for the owner to judge (R2).
+- To check, not verified: whether the `pages.invalidate()` at fingers-up now makes its own panel update before the held REGAL one. Needs a real pinch (adb can't inject one): count `adb logcat -s SDM` `update_to_display` lines for one zoom during the owner session.
+Triage of the deferred minors: fixed now: 2 (a failed patch render, via PageView.regionFailed), 3 (pen during the after-zoom wait: the screen takes it), 4 (held-refresh body), 7 (curve values pinned), 13 (fitPagesAgain), 19 (corner trim test), 22 (old-width picture after a refit), 23 (focus tolerance). Already gone: 18. At merge: 29 (squash). Left, with the reviewer's reasons: 1, 5, 6, 8, 9, 10, 11, 12, 14, 15, 16, 17, 20, 24, 25, 26, 27 (owner R4), 28.
