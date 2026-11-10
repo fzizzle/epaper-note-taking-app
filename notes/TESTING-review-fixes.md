@@ -2,16 +2,7 @@
 
 About 15 minutes. These check the bug fixes from the [review of 2026-11-10](../docs/superpowers/review-2026-11-10.md). Use a test copy of a PDF, not an original.
 
-**Before this checklist (for whoever installs the build):** the fixes were built and tested on the laptop only, because the tablet was in use. The tablet tests still have to be run once on a quiet tablet:
-
-```
-source ~/.local/opt/android-env.sh && cd notes
-./gradlew :app:installDebug :app:installDebugAndroidTest
-adb shell am instrument -w -e class com.fzizzle.epapernotes.pdf.PdfFileStrokesTest,com.fzizzle.epapernotes.ui.ThumbnailLoaderTest \
-  com.fzizzle.epapernotes.test/androidx.test.runner.AndroidJUnitRunner
-```
-
-All must pass, above all `highlighterIsSolidJustInsideItsEnd` and `oldDrawingIsRedrawnOnce`.
+The laptop tests (265) and the tablet tests (68) all pass on this build, and it is installed on the tablet. On the test copy, old strokes were drawn again once after opening and not again on the next opening.
 
 ## What changed
 
@@ -21,6 +12,8 @@ All must pass, above all `highlighterIsSolidJustInsideItsEnd` and `oldDrawingIsR
 - The pen can't write in the margin beside the page.
 - A zoomed slide that is shorter than the screen no longer turns the page when dragged up or down.
 - A very tall first page gets a small, narrow thumbnail.
+- A stroke begun in the instant the screen updates (just after an erase or undo) is kept.
+- A highlighter corner drawn fast, with its points far apart, is solid.
 - If the tablet's storage is full, strokes are still kept and saved, and a message says so.
 
 ## Checks
@@ -34,8 +27,6 @@ All must pass, above all `highlighterIsSolidJustInsideItsEnd` and `oldDrawingIsR
 - [ ] **R7. Dialogs.** Tap the page number, then Cancel. Open ⋯ and close it. Each time the screen is clean (no leftover box) and the pen writes at once.
 - [ ] **R8. Margin.** At normal size, try to write in the white band beside the page. Nothing appears.
 - [ ] **R9. Leave and kill.** Write a line, press ←, and swipe the app away at once. Reopen the file: the line is there, and there is no message about unsaved writing being kept.
-- [ ] **R10. Tall page.** If you have a PDF with one very long page, its tile shows a narrow picture, and the grid doesn't keep flickering.
-
-If R6 loses a stroke, say so: a log line was added to catch exactly that, and the fix for it is ready to build.
+- [ ] **R10. Tall page.** If you have a PDF with one very long page, its tile shows a narrow picture, and the grid doesn't keep flickering. (A tall picture made by an older build is replaced the first time its tile is shown.)
 
 When done, the results go in `docs/superpowers/review-fixes-results.md`.
