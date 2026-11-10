@@ -3,6 +3,7 @@ package com.fzizzle.epapernotes.ui
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.DashPathEffect
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
@@ -68,6 +69,15 @@ class SelectionLayer(private val handlePx: Float, private val listener: Listener
     // A finished move is shown grey where it went until the page is drawn again with it there.
     private var previewUntilRedrawn = false
 
+    // The grey preview's line for each of [items], in PDF space, made once when the selection
+    // is set ([select]). A drag redraws on every pen move, and building every line again from
+    // its points each time made a big selection drag in jerks; now each line is only shifted
+    // to where the drag has it ([drawPreviews]). Being in PDF space, they stay right through
+    // zooming and moving the page. Null for an item of a single point: see [previewPath].
+    private var previewPaths: List<Path?> = emptyList()
+    private val previewMatrix = Matrix()
+    private val previewOnScreen = Path()
+
     private sealed interface Gesture
     private class Drag(val grip: SelectionBox.Grip, val box: SelectionBox, val frame: PageFrame, val start: Pt) : Gesture {
         var transform = Affine.IDENTITY // screen pixels
@@ -78,6 +88,20 @@ class SelectionLayer(private val handlePx: Float, private val listener: Listener
     private class Paste(val at: Pt) : Gesture
     private class Trace(val button: PenButton) : Gesture {
         val points = mutableListOf<FloatArray>()
+
+        // The grey line through [points], kept between draws: each draw adds only the points
+        // that came since the last one, rather than building the whole line again from its start.
+        private val line = Path()
+        private var inLine = 0
+
+        fun line(): Path {
+            while (inLine < points.size) {
+                val p = points[inLine]
+                if (inLine == 0) line.moveTo(p[0], p[1]) else line.lineTo(p[0], p[1])
+                inLine++
+            }
+            return line
+        }
 
         /** The event's points, batched ones first. A lift often reports no pressure: it keeps the last. */
         fun add(event: MotionEvent) {
@@ -95,6 +119,7 @@ class SelectionLayer(private val handlePx: Float, private val listener: Listener
     /** Shows a selection of [items] (PDF space). [justMoved]: the page doesn't show them there yet. */
     fun select(items: List<Item>, justMoved: Boolean = false) {
         this.items = items
+        previewPaths = items.map { previewPath(it) }
         bounds = union(items)
         previewUntilRedrawn = justMoved && items.isNotEmpty()
         redraw()
@@ -102,6 +127,7 @@ class SelectionLayer(private val handlePx: Float, private val listener: Listener
 
     fun clearSelection() {
         items = emptyList()
+        previewPaths = emptyList()
         bounds = null
         previewUntilRedrawn = false
         if (gesture is Drag) gesture = Swallow
@@ -240,7 +266,7 @@ class SelectionLayer(private val handlePx: Float, private val listener: Listener
         bounds?.let { b ->
             val t = drag?.transform ?: Affine.IDENTITY
             val box = screenBox(b, toScreen.then(t))
-            if (drag != null || previewUntilRedrawn) items.forEach { drawPreview(canvas, it, toScreen.then(t)) }
+            if (drag != null || previewUntilRedrawn) drawPreviews(canvas, toScreen.then(t))
             canvas.drawRect(box.x0, box.y0, box.x1, box.y1, dashed)
             val s = handlePx / 2
             for (x in floatArrayOf(box.x0, box.x1)) for (y in floatArrayOf(box.y0, box.y1)) canvas.drawRect(x - s, y - s, x + s, y + s, filled)
@@ -248,12 +274,7 @@ class SelectionLayer(private val handlePx: Float, private val listener: Listener
         }
         when (val g = gesture) {
             is Snip -> canvas.drawRect(min(g.start.x, g.end.x), min(g.start.y, g.end.y), max(g.start.x, g.end.x), max(g.start.y, g.end.y), dashed)
-            is Trace -> if (g.points.size > 1) {
-                val path = Path()
-                path.moveTo(g.points[0][0], g.points[0][1])
-                g.points.drop(1).forEach { path.lineTo(it[0], it[1]) }
-                canvas.drawPath(path, grey)
-            }
+            is Trace -> if (g.points.size > 1) canvas.drawPath(g.line(), grey)
             else -> Unit
         }
     }
@@ -268,13 +289,50 @@ class SelectionLayer(private val handlePx: Float, private val listener: Listener
         }
     }
 
-    /** Thin grey lines where the ink will go; a picture as its outline. */
+    /**
+     * An item's preview line in PDF space: a stroke's points joined up, a picture's outline.
+     * Null for a stroke of one point. Its dot is a line one screen pixel long whatever the
+     * zoom, which can't be made ahead in PDF space, so [drawPreview] still draws it each time.
+     */
+    private fun previewPath(item: Item): Path? {
+        val pts = when (item) {
+            is InkItem -> item.stroke.points.map { Pt(it.x, it.y) }
+            is ImageItem -> with(item.box) { listOf(Pt(x0, y0), Pt(x1, y0), Pt(x1, y1), Pt(x0, y1), Pt(x0, y0)) }
+        }
+        if (pts.size < 2) return null
+        val path = Path()
+        path.moveTo(pts[0].x, pts[0].y)
+        for (i in 1 until pts.size) path.lineTo(pts[i].x, pts[i].y)
+        return path
+    }
+
+    /**
+     * The whole selection in grey, where [pdfToScreen] puts it. Each ready-made line is moved
+     * to the screen in one step and drawn there with the same 2-pixel grey as before. (Drawing
+     * the PDF-space lines under a canvas transform instead would also scale the line's width.)
+     */
+    private fun drawPreviews(canvas: Canvas, pdfToScreen: Affine) {
+        // Android's Matrix lists its numbers row by row: x' = a·x + c·y + e, y' = b·x + d·y + f.
+        with(pdfToScreen) { previewMatrix.setValues(floatArrayOf(a, c, e, b, d, f, 0f, 0f, 1f)) }
+        for (i in items.indices) {
+            val path = previewPaths.getOrNull(i)
+            if (path == null) {
+                drawPreview(canvas, items[i], pdfToScreen)
+                continue
+            }
+            path.transform(previewMatrix, previewOnScreen)
+            canvas.drawPath(previewOnScreen, grey)
+        }
+    }
+
+    /** One item's preview built from its points: thin grey lines where the ink will go; a picture as its outline. */
     private fun drawPreview(canvas: Canvas, item: Item, pdfToScreen: Affine) {
         val path = Path()
         val pts = when (item) {
             is InkItem -> item.stroke.points.map { pdfToScreen.map(Pt(it.x, it.y)) }
             is ImageItem -> with(item.box) { listOf(Pt(x0, y0), Pt(x1, y0), Pt(x1, y1), Pt(x0, y1), Pt(x0, y0)).map { pdfToScreen.map(it) } }
         }
+        if (pts.isEmpty()) return
         path.moveTo(pts[0].x, pts[0].y)
         pts.drop(1).forEach { path.lineTo(it.x, it.y) }
         if (pts.size == 1) path.lineTo(pts[0].x + 1f, pts[0].y)
