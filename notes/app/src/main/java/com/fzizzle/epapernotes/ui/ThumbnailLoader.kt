@@ -9,8 +9,8 @@ import android.os.SystemClock
 import android.util.Log
 import android.util.LruCache
 import com.fzizzle.epapernotes.library.PdfEntry
-import com.fzizzle.epapernotes.library.THUMB_WIDTH_PX
 import com.fzizzle.epapernotes.library.ThumbnailCache
+import com.fzizzle.epapernotes.library.thumbWidthPx
 import com.fzizzle.epapernotes.pdf.PdfFile
 import java.io.ByteArrayOutputStream
 
@@ -164,7 +164,11 @@ class ThumbnailLoader(private val cache: ThumbnailCache, private val onReady: (P
      */
     private fun render(pdf: PdfEntry, forScreen: Boolean): Bitmap? {
         val start = SystemClock.uptimeMillis()
-        val full = PdfFile.open(pdf.file).use { it.render(0, THUMB_WIDTH_PX) }
+        val full = PdfFile.open(pdf.file).use {
+            val size = it.displaySize(0)
+            // Narrower than usual for a very tall page, so no thumbnail is huge (THUMB_MAX_HEIGHT_PX).
+            it.render(0, thumbWidthPx(size.width, size.height))
+        }
         try {
             try {
                 val png = ByteArrayOutputStream().also { full.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
