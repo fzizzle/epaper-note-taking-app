@@ -25,6 +25,8 @@ class DocumentSessionTest {
     private val scheduler = FakeScheduler()
     private val events = mutableListOf<SessionEvent>()
     private var fake = FakePdfPages()
+    /** How the session opens the PDF. A test can make it fail. */
+    private var opening: (File) -> PdfPages = { fake }
     private val dot = Stroke(StrokeKind.PEN, listOf(StrokePoint(1f, 2f, 0.5f)))
     /** A line across y=100, from x=10 to x=50, far from [dot]. */
     private val line = Stroke(StrokeKind.PEN, (0..8).map { StrokePoint(10f + it * 5, 100f, 0.5f) })
@@ -39,7 +41,7 @@ class DocumentSessionTest {
     private fun session() = DocumentSession(
         pdf = pdf,
         journalDir = journals,
-        open = { fake },
+        open = { opening(it) },
         scheduler = scheduler,
         events = { events += it },
         clock = { LocalDateTime.of(2026, 11, 9, 14, 5) },
@@ -735,5 +737,27 @@ class DocumentSessionTest {
         s.saveNow()
         scheduler.runDelayed()
         assertEquals(saves, fake.saves) // nothing left to save
+    }
+
+    /** Review 1.4: an opening that fails with something other than an Exception still says so. */
+    @Test fun openThatBlowsUpReportsOpenFailed() {
+        opening = { throw OutOfMemoryError() }
+        val s = session()
+        assertEquals(1, events.count { it is SessionEvent.OpenFailed })
+        s.addStroke(0, dot) // returns: the wait for the journal was ended
+    }
+
+    /** Review 1.4: running out of memory in a save is a failed save like any other, told and tried again. */
+    @Test fun saveThatRunsOutOfMemoryIsReportedAndTriedAgain() {
+        val s = session()
+        fake.failSaveWith = OutOfMemoryError()
+        s.addStroke(0, dot)
+        s.saveNow()
+        assertTrue(events.any { it is SessionEvent.SaveFailed })
+        assertEquals("original", pdf.readText())
+        fake.failSaveWith = null
+        scheduler.runDelayed() // the retry
+        assertTrue(events.contains(SessionEvent.Saved))
+        assertEquals("items=1", pdf.readText())
     }
 }

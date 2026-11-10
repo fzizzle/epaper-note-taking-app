@@ -132,9 +132,11 @@ class ThumbnailLoader(private val cache: ThumbnailCache, private val onReady: (P
         val decoded = cached?.let { BitmapFactory.decodeFile(it.path, SMALL) }
         val bitmap = decoded ?: try {
             render(pdf, forScreen = intoMemory)
-        } catch (e: Exception) {
-            // Damaged, password-protected, or gone: a tile on screen goes to the grey page,
-            // rather than keep a picture of what the file used to be.
+        } catch (e: Throwable) {
+            // Damaged, password-protected, gone, or too big to draw (out of memory, which is
+            // why this catches Throwable: it would end this thread and every later thumbnail
+            // with it). A tile on screen goes to the grey page, rather than keep a picture of
+            // what the file used to be.
             Log.w(TAG, "thumbnail ${pdf.name} failed: ${e.message}")
             finished(key, ok = false)
             if (intoMemory) tell(pdf, null)

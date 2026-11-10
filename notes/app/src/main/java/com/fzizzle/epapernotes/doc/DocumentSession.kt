@@ -99,6 +99,11 @@ class DocumentSession(
                 // Wait for an earlier session on this file to finish its last save.
                 previous?.let { runCatching { it.get(previousSessionWaitMs, TimeUnit.MILLISECONDS) } }
                 openOnWorker()
+            } catch (t: Throwable) {
+                // Whatever went wrong (the journal couldn't be read or rewritten, memory ran
+                // out), say so: otherwise the screen waits for a document that never comes.
+                System.err.println("DocumentSession: opening failed: $t")
+                events(SessionEvent.OpenFailed("${file.name} couldn't be opened."))
             } finally {
                 journalReady.countDown()
             }
@@ -492,8 +497,10 @@ class DocumentSession(
             inkRedrawn = false
             restartJournal(known!!, inThisSave)
             events(SessionEvent.Saved)
-        } catch (e: Exception) {
-            // Nothing lost: the journal still has everything. Try again later.
+        } catch (e: Throwable) {
+            // Throwable, not Exception: running out of memory while saving must be told and
+            // tried again like any other failure. Nothing lost: the changes are still in
+            // memory and in the journal. Try again later.
             events(SessionEvent.SaveFailed(e.message ?: "The file couldn't be saved."))
             scheduler.postDelayed(AUTOSAVE, RETRY_DELAY_MS) { save() }
         }

@@ -21,8 +21,15 @@ interface Scheduler {
 /**
  * One worker thread per open document. It's the only thread that touches the PDF, because
  * MuPDF's objects mustn't be used from two threads at once.
+ *
+ * Anything a task throws goes to [onError]. Left alone, Java's scheduled executor keeps a
+ * delayed task's exception to itself and reports nothing, and a failure nobody hears about
+ * is the worst kind here. The default prints it, which reaches logcat on the tablet.
  */
-class WorkerScheduler(name: String = "document") : Scheduler {
+class WorkerScheduler(
+    name: String = "document",
+    private val onError: (Throwable) -> Unit = { System.err.println("worker task failed: $it") },
+) : Scheduler {
     private val executor = ScheduledThreadPoolExecutor(1) { r -> Thread(r, name) }
     private val pending = mutableMapOf<String, ScheduledFuture<*>>()
 
@@ -30,7 +37,7 @@ class WorkerScheduler(name: String = "document") : Scheduler {
     // than crashing the app. Anything that matters is already in the journal by then.
     override fun post(task: () -> Unit) {
         try {
-            executor.execute(task)
+            executor.execute(reporting(task))
         } catch (e: RejectedExecutionException) {
             // closed
         }
@@ -40,9 +47,18 @@ class WorkerScheduler(name: String = "document") : Scheduler {
     override fun postDelayed(key: String, delayMs: Long, task: () -> Unit) {
         pending.remove(key)?.cancel(false)
         try {
-            pending[key] = executor.schedule(task, delayMs, TimeUnit.MILLISECONDS)
+            pending[key] = executor.schedule(reporting(task), delayMs, TimeUnit.MILLISECONDS)
         } catch (e: RejectedExecutionException) {
             // closed
+        }
+    }
+
+    /** [task], with anything it throws (out of memory too) handed to [onError] instead of lost. */
+    private fun reporting(task: () -> Unit) = Runnable {
+        try {
+            task()
+        } catch (t: Throwable) {
+            onError(t)
         }
     }
 
