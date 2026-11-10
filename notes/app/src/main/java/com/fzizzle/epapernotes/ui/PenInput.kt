@@ -1,7 +1,9 @@
 package com.fzizzle.epapernotes.ui
 
+import android.content.pm.ApplicationInfo
 import android.graphics.Color
 import android.graphics.Rect
+import android.util.Log
 import android.view.View
 import com.fzizzle.epapernotes.ink.StrokeKind
 import com.fzizzle.epapernotes.ink.StrokeStyle
@@ -96,7 +98,42 @@ class PenInput(
      * after the page has moved.
      */
     fun cleanRefresh(view: View) {
-        EpdController.invalidate(view, UpdateMode.GC)
+        val mode = trialMode("zoom") ?: UpdateMode.GC
+        EpdController.invalidate(view, mode)
+    }
+
+    /**
+     * Draws [view] again once fast-ink is paused for a new look of the page: a page turn, or
+     * the page redrawn after an erase, a move or an undo. Today with the panel's default
+     * update; which update looks best is the owner's call (readability plan, Task 4).
+     */
+    fun showPage(view: View) {
+        val mode = trialMode("show") ?: return view.invalidate()
+        Log.i(TAG, "page shown with $mode (trial)")
+        EpdController.invalidate(view, mode)
+    }
+
+    /**
+     * TEMPORARY, for the readability plan's Task 4 only: lets the owner compare panel updates
+     * without a rebuild. In a debug build, `adb shell setprop debug.epapernotes.show REGAL` (or
+     * `.zoom`) picks the update for page shows (or after a zoom) from the next one on; an empty
+     * value goes back to today's. Removed once the owner has chosen.
+     */
+    private fun trialMode(key: String): UpdateMode? {
+        if (view.context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE == 0) return null
+        val name = runCatching {
+            Class.forName("android.os.SystemProperties").getMethod("get", String::class.java)
+                .invoke(null, "debug.epapernotes.$key") as String
+        }.getOrNull()
+        if (name.isNullOrEmpty()) return null
+        return UpdateMode.values().firstOrNull { it.name == name } ?: null.also { Log.w(TAG, "no update mode called $name") }
+    }
+
+    /** TEMPORARY (Task 4): what this tablet offers, and what the app gets by default. Debug builds only. */
+    fun logUpdateModes() {
+        if (view.context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE == 0) return
+        Log.i(TAG, "update modes: ${UpdateMode.values().joinToString { it.name }}")
+        Log.i(TAG, "default update: view ${runCatching { EpdController.getViewDefaultUpdateMode(view) }.getOrNull()}, system ${runCatching { EpdController.getSystemDefaultUpdateMode() }.getOrNull()}")
     }
 
     /**
@@ -192,6 +229,7 @@ class PenInput(
     }
 
     companion object {
+        private const val TAG = "Notes"
         private const val THIN_GREY_PX = 2f
 
         /** How long posting stays open for [showAlone]: the strip's frame, drawn and composed, with room to spare. */

@@ -342,6 +342,7 @@ class WritingActivity : Activity() {
                 if (pauseWhenLifted) runOnUiThread { toolStateChanged() }
             },
         )
+        pen.logUpdateModes()
         pages.onStylusHover = { button ->
             if (button != hoverButton) {
                 hoverButton = button
@@ -964,7 +965,9 @@ class WritingActivity : Activity() {
         showPending = false
         handler.removeCallbacks(retryShow)
         Log.i(TAG, "show: pause fast-ink")
-        pausePenAndRedraw()
+        // As pausePenAndRedraw, with the update chosen for a new look of the page.
+        pen.pause()
+        pen.showPage(pages)
         // While fast-ink is paused Onyx doesn't follow the pen. With the pen or highlighter
         // chosen nothing else did either, so a stroke begun in this short pause (erase a word,
         // carry straight on writing) was lost or cut. The screen takes the pen for the pause:
