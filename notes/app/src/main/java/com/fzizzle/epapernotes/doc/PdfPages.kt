@@ -23,7 +23,7 @@ interface PdfPages : Closeable {
 
     /**
      * Draws again, in place, up to [limit] of the app's strokes on [page] that an earlier
-     * version saved with a faulty drawing (mirrored in its box). Ids and drawing order stay the
+     * version saved with a faulty drawing (mirrored in its box, or with holes at its ends). Ids and drawing order stay the
      * same. A stroke that can't be redrawn is skipped, and not tried again while the file is
      * open. [InkRedraw.redrawn] > 0 means the file needs saving even though nothing was journaled.
      */

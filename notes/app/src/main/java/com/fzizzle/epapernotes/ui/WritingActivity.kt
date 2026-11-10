@@ -45,6 +45,8 @@ import com.fzizzle.epapernotes.tools.placedOn
 import com.fzizzle.epapernotes.ui.StripButton.Glyph
 import java.io.ByteArrayOutputStream
 import java.io.File
+import kotlin.math.ceil
+import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
 
@@ -59,6 +61,7 @@ class WritingActivity : Activity() {
     private lateinit var pages: PageView
     private lateinit var indicator: TextView
     private lateinit var lastPages: LastPageStore
+    /** The file being written into. It changes once, if the owner saves a damaged file's writing to a copy. */
     private lateinit var path: String
     private var pageCount = 0
     private lateinit var pen: PenInput
@@ -82,6 +85,9 @@ class WritingActivity : Activity() {
 
     /** True once the pages are laid out. The pen stays off until then: a stroke would have nowhere to go. */
     private var documentShown = false
+
+    /** True between onResume and onPause: the only time the pen may be switched on. UI thread. */
+    private var resumed = false
 
     /**
      * Screen pixels to PDF space for the page on show, published by the UI thread whenever the
@@ -269,13 +275,15 @@ class WritingActivity : Activity() {
             updateIndicator()
             updatePenWidth()
             publishPenMapping()
-            if (documentShown) pen.setLimit(Rect(0, 0, pages.width, pages.height))
+            if (documentShown) pen.setLimit(penLimit())
         }
         layOutPages(startPage = lastPages.get(path)) {
             pages.post {
                 documentShown = true
                 publishPenMapping()
-                penOn()
+                // A slow document can finish opening after the screen was left. The pen must not
+                // come on for a screen in the background; onResume turns it on if the screen comes back.
+                if (resumed) penOn()
             }
         }
 
@@ -308,12 +316,20 @@ class WritingActivity : Activity() {
             publishPenChoice()
             strokeChoice = penChoice
         }
+        // A palm that lands while the pen is writing must not pause fast-ink (that cuts the
+        // stroke) or move the page. Fingers work again as soon as the pen lifts.
+        pages.fingersAllowed = { !pen.isWriting && !screenPenDown }
         pages.onFingerGestureStart = {
             Log.i(TAG, "fingers down: pause fast-ink")
             handler.removeCallbacks(resumeFastInk) // a show's resume mustn't land mid-gesture
             pausePenAndRedraw()
         }
         pages.onFingerGestureEnd = { moved ->
+            // Moving a zoomed page with one finger changes where the page is without telling
+            // onViewportChanged (that would call Onyx on every finger movement). Fast-ink is
+            // off until here anyway, so telling the pen now is in time for the next stroke.
+            publishPenMapping()
+            pages.viewport?.let { Log.i(TAG, "fingers up: pen mapping page=${it.page} zoom=${it.zoom}") }
             if (moved) {
                 // Wipe fast-ink's leftover copy of the strokes, then hand the pen back.
                 Log.i(TAG, "fingers up after moving: clean refresh, then resume fast-ink")
@@ -360,13 +376,25 @@ class WritingActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
-        if (documentShown) pages.post { penOn() }
+        resumed = true
+        // Checked again when it runs: the screen may have been left in between.
+        if (documentShown) pages.post { if (resumed) penOn() }
         if (showPending) retryShowWhenIdle()
     }
 
-    /** The pen is limited to the page area, below the strip. Fast-ink stays off if a tool needs it off. */
+    /**
+     * Where the pen may write: the page itself, as far as it's on screen. Ink written beside
+     * the page would be saved outside it and vanish at the next redraw. Rounded inwards, so
+     * not even a pixel's width lies off the page.
+     */
+    private fun penLimit(): Rect {
+        val b = pages.viewport?.pageBoundsPx() ?: return Rect(0, 0, pages.width, pages.height)
+        return Rect(ceil(b[0]).toInt(), ceil(b[1]).toInt(), floor(b[2]).toInt(), floor(b[3]).toInt())
+    }
+
+    /** The pen is limited to the page ([penLimit]). Fast-ink stays off if a tool needs it off. */
     private fun penOn() {
-        pen.on(Rect(0, 0, pages.width, pages.height))
+        pen.on(penLimit())
         if (!fastInkWanted()) {
             pen.pause()
             // A tool's pause waiting for a lift that never came (the app was left mid-stroke):
@@ -722,7 +750,10 @@ class WritingActivity : Activity() {
         pen.pause()
         dialog.setOnDismissListener {
             dialogOpen = false
-            resumeFastInk.run()
+            // After the usual pause, not at once: the screen must first draw the page without
+            // the dialog, or fast-ink would freeze bits of it (or the old page) on the panel.
+            handler.removeCallbacks(resumeFastInk)
+            handler.postDelayed(resumeFastInk, SHOW_PAUSE_MS)
         }
         dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
         dialog.show()
@@ -754,7 +785,9 @@ class WritingActivity : Activity() {
         pen.pause()
         menu.setOnDismissListener {
             dialogOpen = false
-            resumeFastInk.run()
+            // After the usual pause, as for "Go to page".
+            handler.removeCallbacks(resumeFastInk)
+            handler.postDelayed(resumeFastInk, SHOW_PAUSE_MS)
         }
         menu.show()
     }
@@ -802,6 +835,12 @@ class WritingActivity : Activity() {
         handler.removeCallbacks(retryShow)
         Log.i(TAG, "show: pause fast-ink")
         pausePenAndRedraw()
+        // While fast-ink is paused Onyx doesn't follow the pen. With the pen or highlighter
+        // chosen nothing else did either, so a stroke begun in this short pause (erase a word,
+        // carry straight on writing) was lost or cut. The screen takes the pen for the pause:
+        // it traces such a stroke and records it as ink, and resumeFastInk waits for its lift.
+        pages.penHandler = screenPen
+        screenHasPen = true
         handler.removeCallbacks(resumeFastInk)
         handler.postDelayed(resumeFastInk, SHOW_PAUSE_MS)
     }
@@ -866,6 +905,7 @@ class WritingActivity : Activity() {
 
     override fun onPause() {
         super.onPause()
+        resumed = false
         val start = SystemClock.uptimeMillis()
         // Nothing may turn fast-ink back on in the background; onResume starts it afresh.
         handler.removeCallbacks(retryShow)
@@ -883,6 +923,8 @@ class WritingActivity : Activity() {
         super.onDestroy()
         val start = SystemClock.uptimeMillis()
         handler.removeCallbacksAndMessages(null)
+        // onPause has done this already; once more in case anything turned the pen on since.
+        if (::pen.isInitialized) pen.off()
         if (::session.isInitialized) session.close()
         Log.i(TAG, "leave: destroy ms=${SystemClock.uptimeMillis() - start}")
     }
@@ -896,9 +938,16 @@ class WritingActivity : Activity() {
     }
 
     private fun show(event: SessionEvent) {
+        // The last save lands after the screen is left, so events still come once it's closing
+        // or closed. Messages are still shown then: a failed save must never be silent. But
+        // nothing touches the screen any more, and a question shown on a closed screen crashes.
+        val needsTheScreen = event is SessionEvent.NeedsRepairDecision || event is SessionEvent.InkRedrawn ||
+            event is SessionEvent.PageChanged || event is SessionEvent.HistoryChanged
+        if (needsTheScreen && (isFinishing || isDestroyed)) return
         when (event) {
             SessionEvent.Saved -> Unit // saving is silent when it works
             is SessionEvent.SaveFailed -> toast("Couldn't save: ${event.message}. Your writing is kept safe and will be saved again.")
+            SessionEvent.JournalFailed -> toast("Storage is full: writing can't be kept safe until there's room.")
             SessionEvent.ChangedOnDisk -> toast("This file was changed elsewhere, so it isn't being saved into. Your writing is kept safe.")
             SessionEvent.WritingStopped -> toast("A change couldn't be written into this file, so it isn't being saved into. Your writing is kept safe in the app.")
             SessionEvent.NeedsRepairDecision -> askAboutRepair()
@@ -911,7 +960,14 @@ class WritingActivity : Activity() {
                 redoButton.isEnabled = event.canRedo
             }
             is SessionEvent.EarlierWritingKept -> toast("Unsaved writing from before this file changed was kept safe.")
-            is SessionEvent.SavedToCopy -> toast("Saved to ${event.copy.name}.")
+            is SessionEvent.SavedToCopy -> {
+                // The session writes into the copy from here on, so the copy is what "Continue"
+                // and the remembered page must follow, not the damaged original.
+                path = event.copy.path
+                pages.viewport?.let { lastPages.set(path, it.page) }
+                LibraryPrefs(this).lastOpened = event.copy
+                toast("Saved to ${event.copy.name}.")
+            }
             is SessionEvent.OpenFailed -> {
                 toast(event.message)
                 finish()
@@ -921,16 +977,27 @@ class WritingActivity : Activity() {
 
     /** Spec §7.3: a repaired file is never written to until the owner chooses. */
     private fun askAboutRepair() {
-        AlertDialog.Builder(this)
+        val dialog = AlertDialog.Builder(this)
             .setTitle("This file was damaged")
             .setMessage("It was repaired when it opened. Saving into it would replace the original with the repaired version.")
             .setPositiveButton("Save into this file") { _, _ -> session.saveIntoRepairedFile() }
             .setNegativeButton("Save my writing to a copy") { _, _ -> session.saveRepairedToCopy() }
             .setCancelable(false)
-            .show()
+            .create()
+        // As for "Go to page": fast-ink would freeze the question on screen, and pen taps on its
+        // buttons would mark the page underneath.
+        dialogOpen = true
+        pen.pause()
+        dialog.setOnDismissListener {
+            dialogOpen = false
+            handler.removeCallbacks(resumeFastInk)
+            handler.postDelayed(resumeFastInk, SHOW_PAUSE_MS)
+        }
+        dialog.show()
     }
 
-    private fun toast(text: String) = Toast.makeText(this, text, Toast.LENGTH_LONG).show()
+    /** With the app's context, not the screen's: a message can come after the screen has closed (see [show]). */
+    private fun toast(text: String) = Toast.makeText(applicationContext, text, Toast.LENGTH_LONG).show()
 
     companion object {
         const val EXTRA_PATH = "path"

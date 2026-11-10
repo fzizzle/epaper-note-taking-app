@@ -13,6 +13,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeFalse
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -25,6 +26,8 @@ class DocumentSessionTest {
     private val scheduler = FakeScheduler()
     private val events = mutableListOf<SessionEvent>()
     private var fake = FakePdfPages()
+    /** How the session opens the PDF. A test can make it fail. */
+    private var opening: (File) -> PdfPages = { fake }
     private val dot = Stroke(StrokeKind.PEN, listOf(StrokePoint(1f, 2f, 0.5f)))
     /** A line across y=100, from x=10 to x=50, far from [dot]. */
     private val line = Stroke(StrokeKind.PEN, (0..8).map { StrokePoint(10f + it * 5, 100f, 0.5f) })
@@ -39,7 +42,7 @@ class DocumentSessionTest {
     private fun session() = DocumentSession(
         pdf = pdf,
         journalDir = journals,
-        open = { fake },
+        open = { opening(it) },
         scheduler = scheduler,
         events = { events += it },
         clock = { LocalDateTime.of(2026, 11, 9, 14, 5) },
@@ -700,6 +703,131 @@ class DocumentSessionTest {
         assertEquals(emptyList<Item>(), answered)
         s.addStroke(0, dot) // still working
         s.saveNow()
+        assertEquals("items=1", pdf.readText())
+    }
+
+    /** As a full tablet does: from now on the journal can't be appended to or rewritten. */
+    private fun breakTheJournal() {
+        val journalFile = ChangeJournal.forDocument(journals, pdf).file
+        assertTrue(journalFile.delete())
+        assertTrue(journalFile.mkdir())
+    }
+
+    /** Review 1.3: with the tablet full, a stroke is kept in memory and saved at once, and nothing crashes. */
+    @Test fun strokeIsKeptWhenTheJournalCantBeWritten() {
+        val s = session()
+        breakTheJournal()
+        s.addStroke(0, dot)
+        s.addStroke(0, line)
+        s.addStroke(1, dot)
+        assertEquals(1, events.count { it == SessionEvent.JournalFailed }) // told once, not at every stroke
+        assertEquals(listOf(dot, line), strokesOn(0))
+        assertEquals(listOf(dot), strokesOn(1))
+        assertEquals("items=3", pdf.readText()) // saved without waiting for the autosave
+    }
+
+    /** The PDF was saved, so the save counts, even though the journal couldn't be brought up to date. */
+    @Test fun saveStillCountsWhenTheJournalCantBeRewritten() {
+        val s = session()
+        breakTheJournal()
+        s.addStroke(0, dot)
+        assertEquals("items=1", pdf.readText())
+        assertTrue(events.contains(SessionEvent.Saved))
+        assertTrue(events.none { it is SessionEvent.SaveFailed })
+        val saves = fake.saves
+        s.saveNow()
+        scheduler.runDelayed()
+        assertEquals(saves, fake.saves) // nothing left to save
+    }
+
+    /** Review 1.4: an opening that fails with something other than an Exception still says so. */
+    @Test fun openThatBlowsUpReportsOpenFailed() {
+        opening = { throw OutOfMemoryError() }
+        val s = session()
+        assertEquals(1, events.count { it is SessionEvent.OpenFailed })
+        s.addStroke(0, dot) // returns: the wait for the journal was ended
+    }
+
+    /** Review 1.4: running out of memory in a save is a failed save like any other, told and tried again. */
+    @Test fun saveThatRunsOutOfMemoryIsReportedAndTriedAgain() {
+        val s = session()
+        fake.failSaveWith = OutOfMemoryError()
+        s.addStroke(0, dot)
+        s.saveNow()
+        assertTrue(events.any { it is SessionEvent.SaveFailed })
+        assertEquals("original", pdf.readText())
+        fake.failSaveWith = null
+        scheduler.runDelayed() // the retry
+        assertTrue(events.contains(SessionEvent.Saved))
+        assertEquals("items=1", pdf.readText())
+    }
+
+    /**
+     * Review 2.1: the app is killed just after the new PDF is swapped in, before the journal is
+     * brought up to date. The journal says which save was under way, so the next opening knows
+     * the first two strokes are in the file and puts back only the third.
+     */
+    @Test fun killedAfterTheSwapReplaysOnlyTheRest() {
+        val a = InkItem("a", dot)
+        val b = InkItem("b", line)
+        val c = InkItem("c", dot)
+        val journal = ChangeJournal.forDocument(journals, pdf)
+        journal.start(FileIdentity.of(pdf)) // the file before the save
+        listOf(a, b, c).forEach { journal.append(AddItems(0, listOf(it))) }
+        pdf.writeText("items=2") // the save that was swapped in: it held the first two
+        journal.file.appendText("saving ${FileIdentity.of(pdf).encode()} 2\n")
+        fake.pageItems[0] = mutableListOf(a, b)
+
+        session()
+        assertTrue(events.contains(SessionEvent.Replayed(1)))
+        assertTrue(events.none { it is SessionEvent.EarlierWritingKept })
+        assertEquals(listOf<Item>(a, b, c), fake.items(0))
+        assertEquals(listOf<Change>(AddItems(0, listOf(c))), journalChanges()) // and the journal now starts from the saved file
+        scheduler.runDelayed()
+        assertEquals("items=3", pdf.readText())
+    }
+
+    /** The same kill, played through a real save: the journal can be added to but not replaced. */
+    @Test fun saveMarksTheJournalBeforeTheSwap() {
+        val s = session()
+        s.addStroke(0, dot)
+        s.addStroke(0, line)
+        journals.setWritable(false) // the rewrite after the save needs a new file in the folder
+        try {
+            assumeFalse("can't lock the folder here (running as root?)", journals.canWrite())
+            s.saveNow()
+            assertEquals("items=2", pdf.readText())
+            s.addStroke(0, dot) // after the save, never saved
+        } finally {
+            journals.setWritable(true)
+        }
+        val all = fake.items(0)
+        events.clear()
+        fake = FakePdfPages().apply { pageItems[0] = all.take(2).toMutableList() } // the file as saved
+        session()
+        assertTrue(events.none { it is SessionEvent.EarlierWritingKept })
+        assertTrue(events.contains(SessionEvent.Replayed(1)))
+        assertEquals(all, fake.items(0))
+    }
+
+    /** Review 2.2: a sync app reset the file's date after a crash. The unsaved writing still comes back. */
+    @Test fun journalReplaysWhenOnlyTheDateChanged() {
+        ChangeJournal.forDocument(journals, pdf).apply { start(FileIdentity.of(pdf)); append(AddItems(0, listOf(InkItem("a", dot)))) }
+        pdf.setLastModified(pdf.lastModified() + 60_000)
+        session()
+        assertTrue(events.contains(SessionEvent.Replayed(1)))
+        assertTrue(events.none { it is SessionEvent.EarlierWritingKept })
+        assertEquals(1, fake.itemCount)
+    }
+
+    /** Review 2.2: the same while the file is open. Its contents are as they were, so it's saved into. */
+    @Test fun aTouchedFileIsStillSavedInto() {
+        val s = session()
+        pdf.setLastModified(pdf.lastModified() + 60_000)
+        s.addStroke(0, dot)
+        s.saveNow()
+        assertTrue(events.contains(SessionEvent.Saved))
+        assertFalse(events.contains(SessionEvent.ChangedOnDisk))
         assertEquals("items=1", pdf.readText())
     }
 }

@@ -12,6 +12,8 @@ class FakePdfPages(override var wasRepaired: Boolean = false, private val saveDe
     var failNextSave = false
     /** The next apply writes half of the change, then throws, as a MuPDF error midway might. */
     var failNextApply = false
+    /** Every save throws this until it's cleared: an OutOfMemoryError, say, which isn't an Exception. */
+    var failSaveWith: Throwable? = null
     var saves = 0
     /** Runs in the middle of a save, to imitate the pen writing while the worker saves. */
     var duringSave: (() -> Unit)? = null
@@ -92,6 +94,7 @@ class FakePdfPages(override var wasRepaired: Boolean = false, private val saveDe
     }
 
     override fun saveTo(target: File) {
+        failSaveWith?.let { throw it }
         if (failNextSave) {
             failNextSave = false
             target.writeText("half")

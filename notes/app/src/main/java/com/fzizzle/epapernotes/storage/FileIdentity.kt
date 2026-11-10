@@ -10,8 +10,18 @@ import java.security.MessageDigest
  *
  * The fingerprint is needed because size and time alone can miss an edit: a sync app may
  * write the same number of bytes and restore the old time.
+ *
+ * The time is recorded but decides nothing (see [sameContentAs]): a sync app or a copy back
+ * can also reset a file's date without touching a byte of it.
  */
 data class FileIdentity(val size: Long, val modifiedMs: Long, val sha256: String) {
+
+    /**
+     * Whether the file holds the same bytes as [other]: same size and fingerprint. The
+     * modified time is ignored, so a file whose date alone changed counts as unchanged.
+     * Use this, not `==`, to ask "did something else change the file?".
+     */
+    fun sameContentAs(other: FileIdentity?): Boolean = other != null && size == other.size && sha256 == other.sha256
 
     fun encode(): String = "$size $modifiedMs $sha256"
 

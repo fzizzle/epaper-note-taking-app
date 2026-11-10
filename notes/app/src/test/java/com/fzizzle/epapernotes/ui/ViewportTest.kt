@@ -2,6 +2,7 @@ package com.fzizzle.epapernotes.ui
 
 import com.fzizzle.epapernotes.geometry.Affine
 import com.fzizzle.epapernotes.geometry.Pt
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -92,6 +93,46 @@ class ViewportTest {
         v.panBy(0f, 1e5f) // to the bottom
         assertEquals(250f, v.panBy(0f, 250f), 0.01f) // past the bottom edge
         assertEquals(0f, v.panBy(0f, -50f), 0.01f) // back up: fine
+    }
+
+    /**
+     * Review 2.5: a zoomed landscape slide that is still shorter than the screen has no top or
+     * bottom edge to push past. Any up or down drag used to count as "past the edge" and turn the page.
+     */
+    @Test fun shortZoomedPageNeverReportsPastTheEdge() {
+        val v = Viewport(listOf(SizePt(960f, 540f)), viewWidthPx = 1860, viewHeightPx = 2300)
+        v.zoomAround(1.5f, 930f, 1150f)
+        assertEquals(0f, v.panBy(0f, 400f), 0.01f)
+        assertEquals(0f, v.panBy(0f, -400f), 0.01f)
+    }
+
+    @Test fun tallZoomedPageStillReportsPastTheEdge() {
+        val v = viewport()
+        v.zoomAround(2f, 930f, 1150f)
+        v.panBy(0f, -1e5f) // to the top
+        assertEquals(-300f, v.panBy(0f, -300f), 0.01f)
+        v.panBy(0f, 1e5f) // to the bottom
+        assertEquals(300f, v.panBy(0f, 300f), 0.01f)
+    }
+
+    /** The part of the page that's on screen: where the pen may write (review 2.6). */
+    @Test fun pageBoundsAreClippedToTheView() {
+        // At normal size the portrait page fills the height and leaves a margin on each side.
+        val v = viewport()
+        val pageWidth = 612 * (2300f / 792)
+        assertArrayEquals(floatArrayOf((1860 - pageWidth) / 2, 0f, (1860 + pageWidth) / 2, 2300f), v.pageBoundsPx(), 0.5f)
+
+        // Zoomed in, it's bigger than the screen both ways: the whole view, however it's moved.
+        v.zoomAround(2f, 930f, 1150f)
+        assertArrayEquals(floatArrayOf(0f, 0f, 1860f, 2300f), v.pageBoundsPx(), 0.01f)
+        v.panBy(200f, -300f)
+        assertArrayEquals(floatArrayOf(0f, 0f, 1860f, 2300f), v.pageBoundsPx(), 0.01f)
+
+        // A zoomed slide: wider than the screen, but still shorter, so there's room above and below.
+        val slide = Viewport(listOf(SizePt(960f, 540f)), viewWidthPx = 1860, viewHeightPx = 2300)
+        slide.zoomAround(1.5f, 930f, 1150f)
+        val slideHeight = 540 * (1860f / 960) * 1.5f
+        assertArrayEquals(floatArrayOf(0f, (2300 - slideHeight) / 2, 1860f, (2300 + slideHeight) / 2), slide.pageBoundsPx(), 0.5f)
     }
 
     @Test fun goToShowsThatPage() {

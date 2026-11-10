@@ -69,14 +69,28 @@ class Viewport(private val sizes: List<SizePt>, private val viewWidthPx: Int, pr
      * Moves the view the way a finger drag does: positive [dy] goes further down the page.
      * Returns how far the vertical move went past the page's edge (positive past the
      * bottom, negative past the top). The screen uses that to turn the page.
+     *
+     * A page shorter than the screen (a zoomed landscape slide, say) stays centred and has no
+     * edge to push past: it reports 0, or every up or down drag would turn the page.
      */
     fun panBy(dx: Float, dy: Float): Float {
         x0 -= dx
         val wantedY = y0 - dy
         y0 = wantedY
         clamp()
-        return y0 - wantedY
+        return if (pageHeightPx() > viewHeightPx) y0 - wantedY else 0f
     }
+
+    /**
+     * Where the page is on screen, cut to the view: `[left, top, right, bottom]` in pixels. A
+     * plain array, not Android's RectF, so it can be tested on the laptop.
+     */
+    fun pageBoundsPx(): FloatArray = floatArrayOf(
+        maxOf(x0, 0f),
+        maxOf(y0, 0f),
+        minOf(x0 + pageWidthPx(), viewWidthPx.toFloat()),
+        minOf(y0 + pageHeightPx(), viewHeightPx.toFloat()),
+    )
 
     /** Display points on the page to screen pixels: what drawing the page needs. */
     fun pageToScreen(): Affine = Affine.scale(pxPerPt()).then(Affine.translate(x0, y0))

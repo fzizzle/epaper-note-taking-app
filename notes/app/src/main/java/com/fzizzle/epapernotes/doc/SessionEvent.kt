@@ -9,6 +9,14 @@ sealed interface SessionEvent {
     /** The save didn't work. The writing is still in the journal, and the next save tries again. */
     data class SaveFailed(val message: String) : SessionEvent
 
+    /**
+     * The journal couldn't be written (the tablet's own storage is full, most likely). The
+     * change is kept in memory and saved to the PDF at once, but until the journal works again
+     * a crash could lose what the PDF doesn't hold yet. Sent once, not at every stroke: again
+     * only after the journal has worked in between.
+     */
+    data object JournalFailed : SessionEvent
+
     /** Something else changed the file since it was opened. The app stops writing into it. */
     data object ChangedOnDisk : SessionEvent
 
@@ -31,7 +39,7 @@ sealed interface SessionEvent {
      */
     data class PageChanged(val pages: Set<Int>, val rotated: Boolean) : SessionEvent
 
-    /** Strokes on [page] that an earlier version saved mirrored were drawn again: show it again. */
+    /** Strokes on [page] that an earlier version saved with a faulty drawing were drawn again: show it again. */
     data class InkRedrawn(val page: Int) : SessionEvent
 
     /** For the undo and redo buttons. */

@@ -7,6 +7,24 @@ import java.security.MessageDigest
 const val THUMB_WIDTH_PX = 300
 
 /**
+ * And the most a thumbnail may be tall. With no limit, the thumbnail of a very long page (a
+ * scan or an exported web page) is thousands of pixels tall; a few of those on screen didn't
+ * fit the loader's picture memory, which then drew tiles again and again.
+ */
+const val THUMB_MAX_HEIGHT_PX = 450
+
+/**
+ * How wide to render the thumbnail of a page of this size (in points, as shown): the usual
+ * width, or narrower if that would make it taller than [THUMB_MAX_HEIGHT_PX]. Never under
+ * 20 px, so there's always something to see. Rounded down, so the height stays within the limit.
+ */
+fun thumbWidthPx(pageWidth: Float, pageHeight: Float): Int {
+    if (pageWidth <= 0f || pageHeight <= 0f) return THUMB_WIDTH_PX
+    val widthAtMaxHeight = (THUMB_MAX_HEIGHT_PX * pageWidth / pageHeight).toInt()
+    return minOf(THUMB_WIDTH_PX, widthAtMaxHeight).coerceAtLeast(20)
+}
+
+/**
  * PNG thumbnails on disk, named `<path hash>-<size>-<modified>.png`. A changed PDF has a new
  * size or time, so it gets a new name and a stale thumbnail is never shown. Rendering is the
  * caller's job.

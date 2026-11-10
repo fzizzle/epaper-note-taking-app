@@ -3,7 +3,10 @@ package com.fzizzle.epapernotes.ui
 import android.graphics.Bitmap
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.fzizzle.epapernotes.ink.Box
 import com.fzizzle.epapernotes.library.PdfEntry
+import com.fzizzle.epapernotes.library.THUMB_MAX_HEIGHT_PX
+import com.fzizzle.epapernotes.library.THUMB_WIDTH_PX
 import com.fzizzle.epapernotes.library.ThumbnailCache
 import com.fzizzle.epapernotes.pdf.TestPdfs
 import java.io.File
@@ -12,6 +15,7 @@ import java.util.concurrent.TimeUnit
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -40,5 +44,19 @@ class ThumbnailLoaderTest {
         assertEquals(good, first.first)
         assertNotNull(first.second)
         assertEquals(bad to null, second)
+    }
+
+    /** Review 2.3: a very tall first page gets a narrower thumbnail, not a huge one. */
+    @Test fun tallFirstPageIsCapped() {
+        val tall = entry(TestPdfs.blank(dir, pages = 1, mediaBox = Box(0f, 0f, 300f, 6000f)))
+        loader.show(listOf(tall), onScreen = listOf(tall))
+        val bitmap = next().second ?: throw AssertionError("no thumbnail for the tall page")
+        assertTrue("${bitmap.width}x${bitmap.height}", bitmap.height <= THUMB_MAX_HEIGHT_PX && bitmap.width >= 20)
+    }
+
+    @Test fun ordinaryPageKeepsTheUsualWidth() {
+        val page = entry(TestPdfs.blank(dir, pages = 1))
+        loader.show(listOf(page), onScreen = listOf(page))
+        assertEquals(THUMB_WIDTH_PX, next().second?.width)
     }
 }

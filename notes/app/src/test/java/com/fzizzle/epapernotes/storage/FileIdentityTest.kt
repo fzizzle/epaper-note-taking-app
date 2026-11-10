@@ -1,8 +1,10 @@
 package com.fzizzle.epapernotes.storage
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -34,5 +36,24 @@ class FileIdentityTest {
     @Test fun decodeRejectsGarbage() {
         assertNull(FileIdentity.decode("12 x y"))
         assertNull(FileIdentity.decode(""))
+    }
+
+    /** Review 2.2: a sync app or a copy back can reset a file's date without touching its contents. */
+    @Test fun aChangedDateAloneIsTheSameContent() {
+        val f = tmp.newFile("a.pdf").apply { writeText("hello") }
+        val before = FileIdentity.of(f)
+        f.setLastModified(before.modifiedMs + 60_000)
+        val after = FileIdentity.of(f)
+        assertNotEquals(before.modifiedMs, after.modifiedMs)
+        assertTrue(after.sameContentAs(before))
+    }
+
+    @Test fun aChangedByteIsNot() {
+        val f = tmp.newFile("a.pdf").apply { writeText("hello") }
+        val before = FileIdentity.of(f)
+        f.writeText("jello")
+        f.setLastModified(before.modifiedMs)
+        assertFalse(FileIdentity.of(f).sameContentAs(before))
+        assertFalse(before.sameContentAs(null)) // a file that couldn't be read
     }
 }
