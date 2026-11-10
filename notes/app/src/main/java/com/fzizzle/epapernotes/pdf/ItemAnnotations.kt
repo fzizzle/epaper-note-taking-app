@@ -78,13 +78,35 @@ internal class ItemAnnotations(private val doc: PDFDocument) {
         }
     }
 
-    /** Writes [item] as a new annotation at the end of the page, and returns that annotation's dictionary. */
-    fun add(p: PDFPage, item: Item): PDFObject = when (item) {
-        is InkItem -> addInk(p, item)
+    /**
+     * Writes [item] as a new annotation at the end of the page, and returns that annotation's
+     * dictionary.
+     *
+     * [pageWontBeUpdated] is the caller's promise that, until this loaded page [p] is let go,
+     * nothing asks MuPDF to update it or any annotation on it: no `p.update()`, no
+     * `annot.update()` (so no picture added alongside, see [addImage]), no drawing of it. A
+     * stroke is then written without MuPDF's own drawing step; see [addInk].
+     */
+    fun add(p: PDFPage, item: Item, pageWontBeUpdated: Boolean = false): PDFObject = when (item) {
+        is InkItem -> addInk(p, item, pageWontBeUpdated)
         is ImageItem -> addImage(p, item)
     }
 
-    private fun addInk(p: PDFPage, item: InkItem): PDFObject {
+    /**
+     * MuPDF wants to draw every ink annotation itself, as a line of one width. Setting the ink
+     * list, colour and so on marks the annotation "to be drawn", and the next update of
+     * anything in the document draws all that are marked, over whatever drawing they have.
+     *
+     * The usual way round that: `annot.update()` here, so MuPDF draws its line now, and then
+     * [drawInk] puts the app's drawing in its place. But that update looks at every annotation
+     * on every loaded page, twice (MuPDF 1.28.5, pdf_update_annot), and makes a drawing that is
+     * thrown away at once: it was a good part of what a stroke costs on a full page.
+     *
+     * With [pageWontBeUpdated] it is left out. The mark stays on, which is safe only because
+     * the mark lives in the loaded page, not in the PDF: when the page is let go the mark is
+     * gone, and a page loaded later finds a stroke that has a drawing and leaves it alone.
+     */
+    private fun addInk(p: PDFPage, item: InkItem, pageWontBeUpdated: Boolean): PDFObject {
         val stroke = item.stroke
         val style = StrokeStyle.of(stroke.kind)
         val annot = p.createAnnotation(PDFAnnotation.TYPE_INK)
@@ -99,7 +121,7 @@ internal class ItemAnnotations(private val doc: PDFDocument) {
         annot.getObject().put("NM", item.id)
         annot.getObject().put(StrokeCodec.KEY, StrokeCodec.encode(stroke))
         // Let MuPDF finish its own drawing now, or it would redraw over ours on the page update.
-        annot.update()
+        if (!pageWontBeUpdated) annot.update()
         drawInk(annot.getObject(), stroke)
         return annot.getObject()
     }

@@ -17,6 +17,7 @@ import com.fzizzle.epapernotes.doc.ReplaceItems
 import com.fzizzle.epapernotes.doc.RotatePages
 import com.fzizzle.epapernotes.geometry.Affine
 import com.fzizzle.epapernotes.ink.Box
+import com.fzizzle.epapernotes.ink.InkItem
 import com.fzizzle.epapernotes.ink.Item
 import java.io.File
 
@@ -185,7 +186,10 @@ class PdfFile private constructor(private val doc: PDFDocument) : PdfPages {
                     val there = idsFor(change.page)
                     add(p, change.page, change.items.filter { it.id !in there })
                 }
-                is RemoveItems -> onPage(change.page) { p -> remove(p, change.page, change.items) }
+                is RemoveItems -> onPage(change.page) { p ->
+                    remove(p, change.page, change.items)
+                    UPDATE_PAGE
+                }
                 is ReplaceItems -> onPage(change.page) { p ->
                     val move = change.stillThere(idsFor(change.page))
                     remove(p, change.page, move.before)
@@ -227,13 +231,15 @@ class PdfFile private constructor(private val doc: PDFDocument) : PdfPages {
         }
     }
 
-    /** Runs [edit] on a loaded page, then lets MuPDF catch up. A page that doesn't exist is skipped. */
-    private fun onPage(page: Int, edit: (PDFPage) -> Unit) {
+    /**
+     * Runs [edit] on a loaded page, then lets MuPDF catch up, unless [edit] answers
+     * [LEAVE_PAGE_ALONE] (see [add]). A page that doesn't exist is skipped.
+     */
+    private fun onPage(page: Int, edit: (PDFPage) -> Boolean) {
         if (page !in 0 until pageCount) return
         val p = doc.loadPage(page) as PDFPage
         try {
-            edit(p)
-            p.update()
+            if (edit(p) == UPDATE_PAGE) p.update()
         } finally {
             p.destroy()
         }
@@ -244,13 +250,21 @@ class PdfFile private constructor(private val doc: PDFDocument) : PdfPages {
      * each one as the PDF now holds it, read back from its new annotation, not as it was handed
      * in: a stroke's numbers are rounded when written, and a picture is stored in MuPDF's own
      * way. That is what reading the page again would give.
+     *
+     * Strokes alone, which is nearly every change, are written the quick way (see
+     * ItemAnnotations.addInk): MuPDF's own drawing step is left out for each of them, and the
+     * answer is then [LEAVE_PAGE_ALONE], because an update of this loaded page would draw
+     * MuPDF's plain line over each new stroke. With a picture among them, everything goes the
+     * old way and the page is updated as before.
      */
-    private fun add(p: PDFPage, page: Int, items: List<Item>) {
+    private fun add(p: PDFPage, page: Int, items: List<Item>): Boolean {
+        val strokesOnly = items.isNotEmpty() && items.all { it is InkItem }
         for (item in items) {
-            val dict = annotations.add(p, item)
+            val dict = annotations.add(p, item, pageWontBeUpdated = strokesOnly)
             idsByPage[page]?.let { ids -> annotations.idOf(dict)?.let { ids += it } }
             itemsByPage[page]?.let { cached -> annotations.read(dict)?.let { cached += it } }
         }
+        return if (strokesOnly) LEAVE_PAGE_ALONE else UPDATE_PAGE
     }
 
     /** Deletes the app's annotations with these items' ids. Ids that aren't there are skipped. */
@@ -308,6 +322,10 @@ class PdfFile private constructor(private val doc: PDFDocument) : PdfPages {
     }
 
     companion object {
+        /** What an edit tells [onPage]: whether MuPDF may update the loaded page afterwards. */
+        private const val UPDATE_PAGE = true
+        private const val LEAVE_PAGE_ALONE = false
+
         /** How many pages' decoded items are remembered at once (see [itemsByPage]). */
         private const val ITEM_PAGES_KEPT = 4
 
