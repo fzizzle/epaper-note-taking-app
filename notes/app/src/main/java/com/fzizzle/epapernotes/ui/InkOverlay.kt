@@ -6,21 +6,61 @@ import com.fzizzle.epapernotes.ink.Stroke
  * The strokes written in this session, per page, so the page view can draw the ones a page
  * rendering doesn't contain yet.
  *
- * Every rendering remembers the page's [version] at the moment it was asked for: how many
- * strokes the page had then. The worker handles things in order, so the rendering contains
- * exactly those. Anything [newerThan] that is drawn on top. This holds for any rendering,
- * including an older one kept from before some strokes, at another zoom.
+ * Every rendering remembers the page's [version] at the moment it was asked for. The version
+ * goes up by one for each new stroke and for each other [changed]. The worker handles things
+ * in order, so the rendering contains everything up to that version. Anything [newerThan] that
+ * is drawn on top. This holds for any rendering, including an older one kept from before some
+ * strokes, at another zoom.
+ *
+ * Any other change (an erase, a move, a paste) makes renderings from before it [isStale]: a
+ * fresh one is asked for. A stale one is still drawn meanwhile, since an old page is better than
+ * a blank one on e-ink, and it still gets every stroke it lacks on top, in the place it had
+ * before the change, just like the stale picture's own ink. Dropping them would make this
+ * session's writing vanish until the fresh rendering arrives (the owner's plan-2 report).
  */
 class InkOverlay {
-    private val strokes = mutableMapOf<Int, MutableList<Stroke>>()
+    private class PageInk {
+        var version = 0
+        var changedAt = 0
 
-    fun add(page: Int, stroke: Stroke) {
-        strokes.getOrPut(page) { mutableListOf() }.add(stroke)
+        /** Each stroke with the version it brought. */
+        val strokes = mutableListOf<Pair<Int, Stroke>>()
     }
 
-    /** How many strokes [page] has had this session. */
-    fun version(page: Int): Int = strokes[page]?.size ?: 0
+    private val pages = mutableMapOf<Int, PageInk>()
 
-    /** The strokes added to [page] after [version]. */
-    fun newerThan(page: Int, version: Int): List<Stroke> = strokes[page]?.drop(version).orEmpty()
+    fun add(page: Int, stroke: Stroke) {
+        val p = pages.getOrPut(page) { PageInk() }
+        p.version++
+        p.strokes += p.version to stroke
+    }
+
+    /**
+     * [page] changed in some way other than a new stroke, and the change has reached the PDF:
+     * renderings asked for from now on show it, and older ones are stale.
+     */
+    fun changed(page: Int) {
+        val p = pages.getOrPut(page) { PageInk() }
+        p.version++
+        p.changedAt = p.version
+    }
+
+    /**
+     * The page view left [page] and threw its renderings away, so the next one is asked for
+     * at the version now: strokes from before the last [changed] can no longer be missing.
+     */
+    fun left(page: Int) {
+        val p = pages[page] ?: return
+        p.strokes.removeAll { it.first < p.changedAt }
+    }
+
+    /** The page's version now: what a rendering asked for now will contain. */
+    fun version(page: Int): Int = pages[page]?.version ?: 0
+
+    /** True when a rendering made at [version] is from before the page's last [changed]. */
+    fun isStale(page: Int, version: Int): Boolean = version < (pages[page]?.changedAt ?: 0)
+
+    /** The strokes a rendering made at [version] doesn't have. */
+    fun newerThan(page: Int, version: Int): List<Stroke> =
+        pages[page]?.strokes?.filter { it.first > version }?.map { it.second }.orEmpty()
 }

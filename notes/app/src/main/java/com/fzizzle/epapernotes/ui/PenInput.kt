@@ -5,6 +5,7 @@ import android.graphics.Rect
 import android.view.View
 import com.fzizzle.epapernotes.ink.StrokeKind
 import com.fzizzle.epapernotes.ink.StrokeStyle
+import com.fzizzle.epapernotes.tools.LiveLine
 import com.onyx.android.sdk.api.device.epd.EpdController
 import com.onyx.android.sdk.api.device.epd.UpdateMode
 import com.onyx.android.sdk.data.note.TouchPoint
@@ -12,12 +13,11 @@ import com.onyx.android.sdk.pen.RawInputCallback
 import com.onyx.android.sdk.pen.TouchHelper
 import com.onyx.android.sdk.pen.data.TouchPointList
 
-enum class Tool { PEN, HIGHLIGHTER }
-
 /**
  * The pen, through Boox's fast-ink mode: Onyx draws the ink straight onto the e-ink panel as
  * the pen moves, which is what makes it feel immediate (spec §5). When the pen lifts, the
  * whole stroke comes back through [onStroke] as `[x, y, rawPressure]` points in [view] pixels.
+ * The eraser end (button 2 held, probe results §1) comes back the same way through [onEraseTrail].
  *
  * This is the only place in the app that uses Onyx's SDK.
  *
@@ -28,6 +28,9 @@ class PenInput(
     private val view: View,
     private val onPenDown: () -> Unit,
     private val onStroke: (List<FloatArray>) -> Unit,
+    private val onEraseTrail: (List<FloatArray>) -> Unit,
+    /** The pen lifted, after drawing or erasing. [isWriting] is already false. */
+    private val onPenUp: () -> Unit = {},
 ) {
 
     private var helper: TouchHelper? = null
@@ -35,8 +38,16 @@ class PenInput(
     /** True while the pen is on the screen. Nothing may pause fast-ink then: it would cut the stroke short. */
     @Volatile var isWriting = false
         private set
-    private var tool = Tool.PEN
+    private var line = LiveLine.PEN
     private var pxPerPt = 1f
+
+    /**
+     * True while Onyx draws the pen's ink on the panel: fast-ink is on and not paused. A stroke
+     * that lands then is drawn by Onyx, so the app must record it. It errs towards true: set
+     * before Onyx starts drawing and cleared only after it has stopped.
+     */
+    @Volatile var drawsInk = false
+        private set
 
     fun on(limit: Rect) {
         if (helper != null) return
@@ -46,23 +57,29 @@ class PenInput(
         // (probe results §5). Button 2 arrives as the eraser end, which plan 3 makes erase.
         h.enableSideBtnErase(false)
         helper = h
-        applyTool()
+        applyLine()
+        drawsInk = true
         h.setRawDrawingEnabled(true)
     }
 
     fun off() {
         val h = helper ?: return
         h.setRawDrawingEnabled(false)
+        drawsInk = false
         h.closeRawDrawing()
         helper = null
     }
 
     fun pause() {
-        helper?.setRawDrawingEnabled(false)
+        val h = helper ?: return
+        h.setRawDrawingEnabled(false)
+        drawsInk = false
     }
 
     fun resume() {
-        helper?.setRawDrawingEnabled(true)
+        val h = helper ?: return
+        drawsInk = true
+        h.setRawDrawingEnabled(true)
     }
 
     /**
@@ -79,25 +96,36 @@ class PenInput(
         helper?.setLimitRect(limit, emptyList())
     }
 
-    /** [pxPerPt]: screen pixels per PDF point where the pen is writing, so the live ink matches the saved ink. */
-    fun setTool(tool: Tool, pxPerPt: Float) {
-        this.tool = tool
+    /**
+     * How Onyx draws while the pen moves. [pxPerPt]: screen pixels per PDF point where the pen
+     * is writing, so the live ink matches the saved ink. Hover events call this often, so Onyx
+     * is only told when something actually changed.
+     */
+    fun setLiveLine(line: LiveLine, pxPerPt: Float) {
+        if (line == this.line && pxPerPt == this.pxPerPt) return
+        this.line = line
         this.pxPerPt = pxPerPt
-        applyTool()
+        applyLine()
     }
 
-    private fun applyTool() {
+    private fun applyLine() {
         val h = helper ?: return
-        when (tool) {
-            Tool.PEN -> {
+        when (line) {
+            LiveLine.PEN -> {
                 h.setStrokeStyle(TouchHelper.STROKE_STYLE_FOUNTAIN) // the line follows pressure
                 h.setStrokeColor(Color.BLACK)
                 h.setStrokeWidth(StrokeStyle.of(StrokeKind.PEN).maxWidth * pxPerPt)
             }
-            Tool.HIGHLIGHTER -> {
+            LiveLine.HIGHLIGHTER -> {
                 h.setStrokeStyle(TouchHelper.STROKE_STYLE_MARKER)
                 h.setStrokeColor(StripButton.HIGHLIGHTER_YELLOW)
                 h.setStrokeWidth(StrokeStyle.of(StrokeKind.HIGHLIGHTER).maxWidth * pxPerPt)
+            }
+            // The eraser's and the lasso's trail: just where the pen went, at any zoom.
+            LiveLine.THIN_GREY -> {
+                h.setStrokeStyle(TouchHelper.STROKE_STYLE_PENCIL)
+                h.setStrokeColor(Color.GRAY)
+                h.setStrokeWidth(THIN_GREY_PX)
             }
         }
     }
@@ -115,18 +143,29 @@ class PenInput(
 
         override fun onEndRawDrawing(shortcut: Boolean, p: TouchPoint?) {
             isWriting = false
+            onPenUp()
         }
         override fun onRawDrawingTouchPointMoveReceived(p: TouchPoint?) = Unit
 
-        // Button 2 (the "eraser end", probe results §1). Ignored until plan 3 adds the eraser.
+        // Button 2 (the "eraser end", probe results §1): a pen-down like any other, so the
+        // trail is placed with the view as it was when it started.
         override fun onBeginRawErasing(shortcut: Boolean, p: TouchPoint?) {
             isWriting = true
+            onPenDown()
         }
 
         override fun onEndRawErasing(shortcut: Boolean, p: TouchPoint?) {
             isWriting = false
+            onPenUp()
         }
         override fun onRawErasingTouchPointMoveReceived(p: TouchPoint?) = Unit
-        override fun onRawErasingTouchPointListReceived(list: TouchPointList?) = Unit
+        override fun onRawErasingTouchPointListReceived(list: TouchPointList?) {
+            val points = list?.points ?: return
+            onEraseTrail(points.map { floatArrayOf(it.x, it.y, it.pressure) })
+        }
+    }
+
+    companion object {
+        private const val THIN_GREY_PX = 2f
     }
 }

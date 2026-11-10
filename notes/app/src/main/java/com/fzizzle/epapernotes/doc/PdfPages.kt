@@ -1,6 +1,6 @@
 package com.fzizzle.epapernotes.doc
 
-import com.fzizzle.epapernotes.ink.Stroke
+import com.fzizzle.epapernotes.ink.Item
 import java.io.Closeable
 import java.io.File
 
@@ -11,6 +11,29 @@ import java.io.File
 interface PdfPages : Closeable {
     val pageCount: Int
     val wasRepaired: Boolean
-    fun addStroke(page: Int, stroke: Stroke): Int
+
+    /** The app's own items on the page, in drawing order. Annotations from other apps are left out. */
+    fun items(page: Int): List<Item>
+
+    /**
+     * Writes [change] into the document. An id that isn't found is skipped, which makes a
+     * replay after a half-finished save harmless. Never touches an annotation the app didn't make.
+     */
+    fun apply(change: Change)
+
+    /**
+     * Draws again, in place, up to [limit] of the app's strokes on [page] that an earlier
+     * version saved with a faulty drawing (mirrored in its box). Ids and drawing order stay the
+     * same. A stroke that can't be redrawn is skipped, and not tried again while the file is
+     * open. [InkRedraw.redrawn] > 0 means the file needs saving even though nothing was journaled.
+     */
+    fun redrawFaultyInk(page: Int, limit: Int): InkRedraw
+
+    /** The page's rotation: 0, 90, 180 or 270. */
+    fun rotation(page: Int): Int
+
     fun saveTo(target: File)
 }
+
+/** What one [PdfPages.redrawFaultyInk] did: how many strokes it drew again, and whether the page has more to try. */
+data class InkRedraw(val redrawn: Int, val more: Boolean)

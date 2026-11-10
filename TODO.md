@@ -18,6 +18,12 @@
 - [x] Carry out plan 2: [writing screen](docs/superpowers/plans/2026-11-09-writing-screen.md), ending in an owner writing session (hard stop).
   - [ ] Gentler refresh after zooming: the full flash works but feels a bit weird (owner, 2026-11-09). Try a softer e-ink mode that still clears fast-ink's leftovers.
   - [ ] Screen-recording test of writing (owner asked, 2026-11-09): record the screen while writing fast, to check no stroke ever disappears.
+- [ ] Plan 3: [tools](docs/superpowers/plans/2026-11-09-tools.md): eraser, lasso, snip, paste, undo/redo, page menu, pen buttons, ending in an owner tool session (hard stop).
+  - [x] Owner approves the plan and its 11 decisions.
+  - [x] Build the tools (Tasks 1–9), with the fixes from the final review.
+  - [ ] Owner tool session (Task 10, hard stop): work through the checklist on the tablet.
+
+- [ ] Plan 4: [library](docs/superpowers/plans/2026-11-09-library.md): folders and thumbnails, breadcrumb, rename/move/delete, fast exit from a document; ends in an owner library session (hard stop). Approved 2026-11-10.
 
 ## Later (not in the first version)
 

@@ -2,6 +2,7 @@ package com.fzizzle.epapernotes.doc
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.fzizzle.epapernotes.geometry.Pt
 import com.fzizzle.epapernotes.ink.Stroke
 import com.fzizzle.epapernotes.ink.StrokeKind
 import com.fzizzle.epapernotes.ink.StrokePoint
@@ -39,7 +40,7 @@ class DocumentSessionDeviceTest {
         }
     }
 
-    private fun strokesIn(pdf: File) = PdfFile.open(pdf).use { p -> (0 until p.pageCount).sumOf { p.strokes(it).size } }
+    private fun strokesIn(pdf: File) = PdfFile.open(pdf).use { p -> (0 until p.pageCount).sumOf { p.items(it).size } }
 
     @Test fun strokeSurvivesKillBeforeSave() {
         val pdf = TestPdfs.blank(dir)
@@ -61,6 +62,34 @@ class DocumentSessionDeviceTest {
         assertEquals(1, strokesIn(pdf))
     }
 
+    /** A saved stroke is erased, then the app is killed: the erase is replayed from the journal by item id. */
+    @Test fun eraseSurvivesKillBeforeSave() {
+        val pdf = TestPdfs.blank(dir)
+        val first = Run(pdf, journals).apply { session.start() }
+        first.session.addStroke(0, line)
+        first.session.saveNow()
+        first.waitFor { first.events.contains(SessionEvent.Saved) }
+        assertEquals(1, strokesIn(pdf))
+
+        first.session.erase(0, listOf(Pt(200f, 290f), Pt(200f, 310f)))
+        val journal = ChangeJournal.forDocument(journals, pdf)
+        first.waitFor { journal.read()!!.changes.singleOrNull() is RemoveItems }
+        // The app is killed: no save, no close.
+        first.scheduler.killNow()
+        Thread.sleep(200)
+        first.opened?.close()
+        assertEquals(1, strokesIn(pdf))
+
+        val second = Run(pdf, journals).apply { session.start() }
+        // The killed session never closed, so the new one first waits out its turn (15 s).
+        second.waitFor(timeoutMs = 25_000) { second.events.contains(SessionEvent.Replayed(1)) }
+        second.session.saveNow()
+        second.waitFor { second.events.contains(SessionEvent.Saved) }
+        second.session.close()
+        Thread.sleep(200)
+        assertEquals(0, strokesIn(pdf))
+    }
+
     @Test fun autosaveWritesTheFile() {
         val pdf = TestPdfs.blank(dir)
         val run = Run(pdf, journals).apply { session.start() }
@@ -69,7 +98,7 @@ class DocumentSessionDeviceTest {
         run.session.close()
         Thread.sleep(200)
         assertEquals(1, strokesIn(pdf))
-        assertEquals(0, StrokeJournal.forDocument(journals, pdf).read()!!.strokes.size)
+        assertEquals(0, ChangeJournal.forDocument(journals, pdf).read()!!.changes.size)
     }
 
     @Test fun repairedFileIsNotWrittenWithoutDecision() {

@@ -12,11 +12,30 @@ sealed interface SessionEvent {
     /** Something else changed the file since it was opened. The app stops writing into it. */
     data object ChangedOnDisk : SessionEvent
 
+    /**
+     * A change couldn't be written into the open PDF, which may now hold only part of it. The
+     * app stops saving into the file; everything is kept in the journal and comes back on the
+     * next open.
+     */
+    data object WritingStopped : SessionEvent
+
     /** MuPDF repaired the file to open it. Nothing is written until the owner chooses. */
     data object NeedsRepairDecision : SessionEvent
 
-    /** Strokes that never reached the PDF last time were found in the journal and put back. */
+    /** [count] changes that never reached the PDF last time were found in the journal and put back. */
     data class Replayed(val count: Int) : SessionEvent
+
+    /**
+     * Changes have reached the PDF on these [pages]: draw them again. When [rotated], a page
+     * turned, so its size on screen has changed too.
+     */
+    data class PageChanged(val pages: Set<Int>, val rotated: Boolean) : SessionEvent
+
+    /** Strokes on [page] that an earlier version saved mirrored were drawn again: show it again. */
+    data class InkRedrawn(val page: Int) : SessionEvent
+
+    /** For the undo and redo buttons. */
+    data class HistoryChanged(val canUndo: Boolean, val canRedo: Boolean) : SessionEvent
 
     /**
      * The journal held writing from an earlier session, but the file has changed since. That

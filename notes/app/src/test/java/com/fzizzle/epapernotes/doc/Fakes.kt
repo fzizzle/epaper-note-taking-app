@@ -1,23 +1,94 @@
 package com.fzizzle.epapernotes.doc
 
-import com.fzizzle.epapernotes.ink.Stroke
+import com.fzizzle.epapernotes.ink.Item
 import java.io.File
 import java.io.IOException
 
-/** Stands in for a real PDF. Saving writes how many strokes it holds, so tests can read files back. */
+/** Stands in for a real PDF. Saving writes how many items it holds, so tests can read files back. */
 class FakePdfPages(override var wasRepaired: Boolean = false, private val saveDelayMs: Long = 0) : PdfPages {
-    val strokes = mutableListOf<Pair<Int, Stroke>>()
+    /** Each page's items, in drawing order. */
+    val pageItems = mutableMapOf<Int, MutableList<Item>>()
+    val rotations = mutableMapOf<Int, Int>()
     var failNextSave = false
+    /** The next apply writes half of the change, then throws, as a MuPDF error midway might. */
+    var failNextApply = false
     var saves = 0
     /** Runs in the middle of a save, to imitate the pen writing while the worker saves. */
     var duringSave: (() -> Unit)? = null
+    /** Runs while items are read, to imitate the pen writing while the worker works out an erase. */
+    var duringItems: (() -> Unit)? = null
     var closed = false
+    /** How many strokes on each page open with faulty ink drawings; redrawing one fixes it for good. */
+    val faultyStrokes = mutableMapOf<Int, Int>()
+    /** Runs at each redraw call (a page, or a part of one), to imitate the screen or the pen meanwhile. */
+    var duringRedraw: ((page: Int) -> Unit)? = null
 
     override val pageCount = 5
 
-    override fun addStroke(page: Int, stroke: Stroke): Int {
-        strokes += page to stroke
-        return strokes.size
+    val itemCount get() = pageItems.values.sumOf { it.size }
+
+    override fun items(page: Int): List<Item> {
+        checkPage(page)
+        val now = pageItems[page].orEmpty().toList()
+        duringItems?.invoke()
+        return now
+    }
+
+    /**
+     * As PdfFile does it: ids that aren't there are skipped, an add skips ids already there, and
+     * a move only moves items still on the page.
+     */
+    override fun apply(change: Change) {
+        if (failNextApply && change is ReplaceItems) {
+            failNextApply = false
+            remove(change.page, change.before)
+            throw IllegalStateException("mupdf error")
+        }
+        if (failNextApply) {
+            failNextApply = false
+            throw IllegalStateException("mupdf error")
+        }
+        when (change) {
+            is AddItems -> {
+                val there = ids(change.page)
+                on(change.page).addAll(change.items.filter { it.id !in there })
+            }
+            is RemoveItems -> remove(change.page, change.items)
+            is ReplaceItems -> {
+                val move = change.stillThere(ids(change.page))
+                remove(change.page, move.before)
+                on(change.page).addAll(move.after)
+            }
+            is RotatePages -> rotations.putAll(change.after)
+        }
+    }
+
+    override fun rotation(page: Int): Int {
+        checkPage(page)
+        return rotations[page] ?: 0
+    }
+
+    /** As PdfFile does: a page that isn't there is an error. */
+    private fun checkPage(page: Int) {
+        if (page !in 0 until pageCount) throw IndexOutOfBoundsException("no page $page")
+    }
+
+    private fun on(page: Int) = pageItems.getOrPut(page) { mutableListOf() }
+
+    private fun ids(page: Int) = on(page).map { it.id }.toSet()
+
+    private fun remove(page: Int, items: List<Item>) {
+        val ids = items.map { it.id }.toSet()
+        on(page).removeAll { it.id in ids }
+    }
+
+    override fun redrawFaultyInk(page: Int, limit: Int): InkRedraw {
+        checkPage(page)
+        duringRedraw?.invoke(page)
+        val left = faultyStrokes.remove(page) ?: 0
+        val now = minOf(left, limit)
+        if (left > now) faultyStrokes[page] = left - now
+        return InkRedraw(now, more = left > now)
     }
 
     override fun saveTo(target: File) {
@@ -27,10 +98,10 @@ class FakePdfPages(override var wasRepaired: Boolean = false, private val saveDe
             throw IOException("storage full")
         }
         saves++
-        val count = strokes.size
+        val count = itemCount
         if (saveDelayMs > 0) Thread.sleep(saveDelayMs)
         duringSave?.invoke()
-        target.writeText("strokes=$count")
+        target.writeText("items=$count")
     }
 
     override fun close() {
