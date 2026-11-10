@@ -1,6 +1,6 @@
 # Library: owner checklist
 
-About 15 minutes. Open **E-paper Notes**: it now opens the library, a grid of the folders and PDFs in one folder.
+About 15 minutes. Open **Jot**: it now opens the library, a grid of the folders and PDFs in one folder.
 
 How the library works now:
 - Folders come first, then PDFs, each in name order ("Lecture 2" before "Lecture 10"). About 5 tiles across upright, 7 sideways.

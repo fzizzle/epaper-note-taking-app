@@ -2,7 +2,7 @@
 
 About 15 minutes. Use the test copy, **Documents/E-paper Notes test/PWT test copy.pdf**. The app writes into real files, so don't use an original yet.
 
-Open **E-paper Notes**, then tap the test copy in the list. Write a few strokes (pen and highlighter) and put a few on a second page first, so there's something to work on.
+Open **Jot**, then tap the test copy in the list. Write a few strokes (pen and highlighter) and put a few on a second page first, so there's something to work on.
 
 How the tools work now:
 - **Pen button 2** erases: whole strokes (and snips) the trail touches go when the pen lifts. A thin grey trail may show while you drag.

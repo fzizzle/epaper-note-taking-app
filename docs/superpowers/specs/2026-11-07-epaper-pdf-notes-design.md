@@ -1,4 +1,4 @@
-# E-paper PDF Notes: Design
+# Jot (first called E-paper PDF Notes): Design
 
 Date: 2026-11-07
 Target device: Boox Note Air 6 C (Android, colour Kaleido e-ink, EMR pen)
