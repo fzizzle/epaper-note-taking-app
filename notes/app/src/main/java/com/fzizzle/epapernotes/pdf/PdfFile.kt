@@ -108,6 +108,9 @@ class PdfFile private constructor(private val doc: PDFDocument) : PdfPages {
      */
     fun foreignAnnotationCount(page: Int): Int = annotationDicts(page).count { !annotations.isOurs(it) }
 
+    override fun redrawFaultyInk(page: Int): Boolean =
+        annotationDicts(page).count { annotations.isFaulty(it) && annotations.redraw(it) } > 0
+
     /**
      * An add skips ids already on the page, so a replay can't double an item, and a move only
      * moves items still on the page ([ReplaceItems.stillThere]), so it can't bring back an

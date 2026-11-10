@@ -31,6 +31,9 @@ sealed interface SessionEvent {
      */
     data class PageChanged(val pages: Set<Int>, val rotated: Boolean) : SessionEvent
 
+    /** Strokes on [page] that an earlier version saved mirrored were drawn again: show it again. */
+    data class InkRedrawn(val page: Int) : SessionEvent
+
     /** For the undo and redo buttons. */
     data class HistoryChanged(val canUndo: Boolean, val canRedo: Boolean) : SessionEvent
 

@@ -18,6 +18,10 @@ class FakePdfPages(override var wasRepaired: Boolean = false, private val saveDe
     /** Runs while items are read, to imitate the pen writing while the worker works out an erase. */
     var duringItems: (() -> Unit)? = null
     var closed = false
+    /** Pages that open with faulty ink drawings; redrawing a page fixes it for good. */
+    val faultyPages = mutableSetOf<Int>()
+    /** Runs as each page is checked, to imitate the screen asking for a page in the meantime. */
+    var duringRedraw: ((page: Int) -> Unit)? = null
 
     override val pageCount = 5
 
@@ -76,6 +80,12 @@ class FakePdfPages(override var wasRepaired: Boolean = false, private val saveDe
     private fun remove(page: Int, items: List<Item>) {
         val ids = items.map { it.id }.toSet()
         on(page).removeAll { it.id in ids }
+    }
+
+    override fun redrawFaultyInk(page: Int): Boolean {
+        checkPage(page)
+        duringRedraw?.invoke(page)
+        return faultyPages.remove(page)
     }
 
     override fun saveTo(target: File) {

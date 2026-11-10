@@ -21,6 +21,13 @@ interface PdfPages : Closeable {
      */
     fun apply(change: Change)
 
+    /**
+     * Draws again, in place, any of the app's strokes on [page] that an earlier version saved
+     * with a faulty drawing (mirrored in its box). True if there were any: the file then needs
+     * saving even though nothing was journaled. Ids and drawing order stay the same.
+     */
+    fun redrawFaultyInk(page: Int): Boolean
+
     /** The page's rotation: 0, 90, 180 or 270. */
     fun rotation(page: Int): Int
 

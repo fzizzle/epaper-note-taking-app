@@ -871,6 +871,7 @@ class WritingActivity : Activity() {
             SessionEvent.NeedsRepairDecision -> askAboutRepair()
             is SessionEvent.Replayed -> toast("Recovered ${event.count} change(s) that hadn't been saved.")
             // A page that turned has a new size and place on screen: lay the pages out again first.
+            is SessionEvent.InkRedrawn -> pages.pageChanged(event.page) // drawn again if it's showing
             is SessionEvent.PageChanged -> if (event.rotated) layOutPages { pagesChanged(event.pages) } else pagesChanged(event.pages)
             is SessionEvent.HistoryChanged -> {
                 undoButton.isEnabled = event.canUndo

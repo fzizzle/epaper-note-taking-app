@@ -135,6 +135,66 @@ class PdfFileStrokesTest {
         }
     }
 
+    /**
+     * An L: down from PDF (100, 700) to (100, 500), then right to (300, 500). Lopsided on
+     * purpose, so a mirrored or turned drawing of it shows up (owner: resized writing went upside down).
+     */
+    private val ell = Stroke(
+        StrokeKind.PEN,
+        (0..20).map { StrokePoint(100f, 700f - it * 10, 1f) } + (1..20).map { StrokePoint(100f + it * 10, 500f, 1f) },
+    )
+
+    /** Dark where each of [dark] is, in pixels of [bmp], and light at [light]. */
+    private fun assertInk(bmp: android.graphics.Bitmap, dark: List<Pair<Int, Int>>, light: Pair<Int, Int>) {
+        dark.forEach { (x, y) -> assertTrue("ink expected at $x,$y", isDark(bmp.getPixel(x, y))) }
+        assertTrue("no ink expected at $light", !isDark(bmp.getPixel(light.first, light.second)))
+    }
+
+    @Test fun lopsidedStrokeIsDrawnTheWayItWasWritten() = PdfFile.open(TestPdfs.blank(dir)).use { pdf ->
+        pdf.add(0, ell)
+        // 1 px per point, y down: the arm's top end at (100, 92), the foot's end at (300, 292).
+        assertInk(pdf.render(0, 612), dark = listOf(100 to 100, 290 to 292), light = 290 to 100)
+    }
+
+    /** Ink written on a page that's already turned (owner: resized writing went upside down there). */
+    @Test fun lopsidedStrokeOnTurnedPageIsDrawnTheWayItWasWritten() = PdfFile.open(TestPdfs.blank(dir)).use { pdf ->
+        pdf.setRotation(0, 90)
+        pdf.add(0, ell)
+        // Turned 90° clockwise, PDF (x, y) shows at (y, x): the arm runs from (700, 100) to
+        // (500, 100), and the foot down to (500, 300).
+        assertInk(pdf.render(0, 792), dark = listOf(690 to 100, 500 to 290), light = 690 to 290)
+    }
+
+    /**
+     * A file written before the fix: its strokes' drawings carry the page transform as their
+     * /Matrix, as MuPDF's setAppearance stored it. Opening redraws them in place, once.
+     */
+    @Test fun faultyInkDrawingIsRedrawnOnce() {
+        val written = File(dir, "faulty.pdf")
+        PdfFile.open(TestPdfs.blank(dir)).use { it.add(0, ell); it.add(0, line); it.saveTo(written) }
+        val faulty = File(dir, "faulty2.pdf")
+        val doc = com.artifex.mupdf.fitz.Document.openDocument(written.path).let { d -> try { d.asPDF()!! } finally { d.destroy() } }
+        try {
+            val annots = doc.findPage(0).get("Annots")
+            for (i in 0 until annots.size()) {
+                val m = doc.newArray().apply { listOf(1f, 0f, 0f, -1f, 0f, 792f).forEach { push(it) } }
+                annots.get(i).get("AP").get("N").put("Matrix", m)
+            }
+            doc.save(faulty.path, "")
+        } finally {
+            doc.destroy()
+        }
+        PdfFile.open(faulty).use { pdf ->
+            // Mirrored in its box, the foot is drawn along the top, at row 792 - 700.
+            assertTrue("the old drawing is mirrored", isDark(pdf.render(0, 612).getPixel(290, 92)))
+            val idsBefore = pdf.items(0).map { it.id }
+            assertTrue(pdf.redrawFaultyInk(0))
+            assertInk(pdf.render(0, 612), dark = listOf(100 to 100, 290 to 292), light = 290 to 100)
+            assertEquals(idsBefore, pdf.items(0).map { it.id }) // same ids, same drawing order
+            assertTrue(!pdf.redrawFaultyInk(0)) // once is enough
+        }
+    }
+
     /** Erased handwriting must really leave the file, not just stop being shown. */
     @Test fun erasedStrokeIsGoneFromFile() {
         val first = File(dir, "erase1.pdf")

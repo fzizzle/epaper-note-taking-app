@@ -87,11 +87,67 @@ class DocumentSessionTest {
         assertTrue(events.contains(SessionEvent.Saved))
     }
 
+    /** Owner: strokes saved before the fix are drawn mirrored. Opening redraws them, and that's saved like an edit. */
+    @Test fun redrawnInkIsSavedWithNothingJournaled() {
+        fake.faultyPages += setOf(1, 3)
+        session()
+        scheduler.runDelayed() // the redraw, a moment after opening
+        assertEquals(0, fake.saves)
+        scheduler.runDelayed() // the autosave it asked for
+        assertEquals(1, fake.saves)
+        assertTrue(events.contains(SessionEvent.Saved))
+        scheduler.runDelayed()
+        assertEquals(1, fake.saves) // nothing left to save
+    }
+
+    /** Each redrawn page is announced, so the screen draws it again if it's showing. */
+    @Test fun eachRedrawnPageIsAnnounced() {
+        fake.faultyPages += setOf(1, 3)
+        session()
+        assertTrue(events.none { it is SessionEvent.InkRedrawn }) // not before the first page is drawn
+        scheduler.runDelayed()
+        assertEquals(listOf(1, 3), events.filterIsInstance<SessionEvent.InkRedrawn>().map { it.page })
+    }
+
+    /**
+     * The redraw goes a page at a time, so a page asked for while it runs doesn't wait for the
+     * whole file (about 21 ms a stroke; 1.4 s for the owner's test file).
+     */
+    @Test fun pageRequestsGetInBetweenTheRedraw() {
+        val order = mutableListOf<String>()
+        fake.duringRedraw = { page ->
+            order += "redraw $page"
+            // What runOnDocument does when the screen asks for the first page.
+            if (page == 0) scheduler.post { order += "draw first page" }
+        }
+        session()
+        scheduler.runDelayed()
+        assertEquals(listOf("redraw 0", "draw first page", "redraw 1"), order.take(3))
+        assertEquals(5 + 1, order.size) // every page checked once
+    }
+
+    @Test fun fileWithNothingToRedrawIsNotSavedJustForOpening() {
+        session()
+        scheduler.runDelayed()
+        scheduler.runDelayed()
+        assertEquals(0, fake.saves)
+    }
+
+    /** A repaired file waits for the owner's decision before anything is saved into it, the redraw too. */
+    @Test fun redrawnInkWaitsForTheRepairDecision() {
+        fake = FakePdfPages(wasRepaired = true).apply { faultyPages += 1 }
+        session()
+        scheduler.runDelayed()
+        scheduler.runDelayed()
+        assertEquals(0, fake.saves)
+    }
+
     @Test fun newStrokeReschedulesAutosave() {
         val s = session()
         s.addStroke(0, dot)
         s.addStroke(0, dot)
-        assertEquals(1, scheduler.delayed.size)
+        // One autosave, rescheduled; the other wait is the old-ink check a moment after opening.
+        assertEquals(setOf("autosave", "redraw-ink"), scheduler.delayed.keys)
     }
 
     @Test fun saveNowSavesImmediately() {
@@ -99,7 +155,7 @@ class DocumentSessionTest {
         s.addStroke(0, dot)
         s.saveNow()
         assertEquals("items=1", pdf.readText())
-        assertTrue(scheduler.delayed.isEmpty())
+        assertFalse("autosave" in scheduler.delayed)
     }
 
     @Test fun nothingUnsavedMeansNoSave() {

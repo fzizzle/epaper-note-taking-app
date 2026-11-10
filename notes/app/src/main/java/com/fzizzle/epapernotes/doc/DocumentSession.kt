@@ -79,6 +79,7 @@ class DocumentSession(
     private var pages: PdfPages? = null
     private var applied = 0 // how many of `unsaved` are in `pages`: always the first ones, in order
     private var applyFailed = false // the PDF no longer matches the journal, so it's never saved
+    private var inkRedrawn = false // strokes were drawn again (redrawFaultyInk) since the last save: save even with nothing journaled
     private var known: FileIdentity? = null // the file as it was when opened or last saved
     private var repairDecided = false
     private var waitingForRepairDecision = false
@@ -147,10 +148,37 @@ class DocumentSession(
         // The replayed changes, and any the pen has added since the journal opened.
         applyPending()
         checkRepair(opened)
+        scheduler.postDelayed(REDRAW_INK, REDRAW_INK_DELAY_MS) { redrawFaultyInkFrom(0) }
         if (replay.isNotEmpty() && !applyFailed) {
             events(SessionEvent.Replayed(replay.size))
             scheduleAutosave()
         }
+    }
+
+    /**
+     * Strokes an earlier version saved mirrored are drawn again, and saved like an edit. It
+     * starts a moment after opening, so the first page shows at once (owner's choice; about
+     * 21 ms a stroke, 1.4 s for the test file), and goes one page per task, each posting the
+     * next, so the screen's requests for pages get in between. A page on show is drawn again
+     * once its strokes are fixed ([SessionEvent.InkRedrawn]). If the app stops before the
+     * save, the next opening simply does it again. Worker thread only.
+     */
+    private fun redrawFaultyInkFrom(page: Int) {
+        val p = pages ?: return // closed
+        if (page >= p.pageCount) {
+            if (inkRedrawn) scheduleAutosave()
+            return
+        }
+        try {
+            if (p.redrawFaultyInk(page)) {
+                inkRedrawn = true
+                events(SessionEvent.InkRedrawn(page))
+            }
+        } catch (e: Exception) {
+            // Never a reason to stop: the strokes just stay as they were.
+            System.err.println("DocumentSession: redrawing ink on page $page failed: $e")
+        }
+        scheduler.post { redrawFaultyInkFrom(page + 1) }
     }
 
     /** A finished stroke, from the pen's thread. Safe in the journal when this returns. */
@@ -372,6 +400,7 @@ class DocumentSession(
     /** Saves anything unsaved, then closes the PDF and stops the worker. */
     fun close() {
         scheduler.cancel(AUTOSAVE)
+        scheduler.cancel(REDRAW_INK) // what's done so far is saved; the rest waits for the next opening
         scheduler.post {
             try {
                 save()
@@ -404,7 +433,7 @@ class DocumentSession(
     private fun save() {
         val p = pages ?: return
         val inThisSave = applied
-        if (inThisSave == 0) return
+        if (inThisSave == 0 && !inkRedrawn) return
         if (applyFailed || stoppedBecauseChanged || checkRepair(p)) return
 
         try {
@@ -420,6 +449,7 @@ class DocumentSession(
 
             SafeSave.replace(file) { p.saveTo(it) }
             known = FileIdentity.of(file)
+            inkRedrawn = false
             restartJournal(known!!, inThisSave)
             events(SessionEvent.Saved)
         } catch (e: Exception) {
@@ -498,6 +528,10 @@ class DocumentSession(
         const val HISTORY_LIMIT = 200
         const val RETRY_DELAY_MS = 30_000L
         private const val AUTOSAVE = "autosave"
+        private const val REDRAW_INK = "redraw-ink"
+
+        /** Long enough for the first page to be drawn before old strokes are fixed. */
+        const val REDRAW_INK_DELAY_MS = 1500L
 
         /** How long a new session waits for the previous one on the same file to close. */
         private const val PREVIOUS_SESSION_WAIT_MS = 15_000L
