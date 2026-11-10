@@ -144,7 +144,7 @@ These are new features, so each needs a yes or no. Any can be left out.
   - `renderWidth` stays the whole page's width at the fitted scale, which with a trim is larger than the view; cap it at 1.5× the view's width, and let Task 2's sharp patch cover the rest when zoomed.
   - The menu: "Trim margins" with a tick, in `openPageMenu` (or the library's Settings, by decision 5). Changing it lays the pages out again and calls `publishPenMapping()`.
 - [x] **Step 4: Run all laptop tests** — pass.
-- [ ] **Step 5: Check on the tablet,** on a deck with wide margins and on a scanned paper: text is visibly larger with trim on; write right at the trimmed edge, turn the page and come back — the stroke is inside the view; turn the tablet and rotate a page with trim on — the page refits and strokes stay put; lasso, move, resize and paste all land where the pen is; with trim off everything is as before.
+- [x] **Step 5: Check on the tablet,** (owner, 2026-11-10: "works fine"; tablet suite 86 pass) on a deck with wide margins and on a scanned paper: text is visibly larger with trim on; write right at the trimmed edge, turn the page and come back — the stroke is inside the view; turn the tablet and rotate a page with trim on — the page refits and strokes stay put; lasso, move, resize and paste all land where the pen is; with trim off everything is as before.
 - [x] **Step 6: Commit.** `git commit -m "notes: pages can be fitted to their printed area"`
 
 ### Task 6: Owner session (hard stop)

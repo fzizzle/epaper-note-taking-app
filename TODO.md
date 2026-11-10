@@ -72,7 +72,7 @@ From using the app on the tablet. Worked through on the branch `owner-feedback-f
 - [x] Sharp text when zoomed in (Task 2): owner-checked 2026-11-10, "works well".
 - [x] A contrast setting (Task 3): Normal / Stronger / Strongest under ⋯, owner-checked 2026-11-10.
 - [x] Cleaner page turns and a gentler refresh after zooming (Task 4): REGAL for both, owner's choice (2026-11-10).
-- [ ] Trim margins (Task 5).
+- [x] Trim margins (Task 5): a tick under ⋯, owner-checked 2026-11-10.
 - [ ] Owner session (Task 6, hard stop).
 
 ## Next up
