@@ -7,14 +7,19 @@ The four sections below come from the [project review of 2026-11-10](docs/superp
 From using the app on the tablet. Worked through on the branch `owner-feedback-fixes`. UI and UX points wait for a UI session: [UI feedback](docs/superpowers/ui-feedback.md).
 
 - [x] The writable area stops about 1 cm before the page edge. Found: at the sides the page is narrower than the screen (93 px each side), and ink can't be saved beside the page. That band is now shaded light grey (owner's choice).
-- [ ] Ink changes after it's written: a stroke thins out once you've finished it. Found: not the width (the saved width matches Onyx's own fountain width within 5%). Likely the saved stroke's smoothed grey edges, which look lighter on e-ink than Onyx's hard black line.
+- [ ] Ink changes after it's written: a stroke thins out once you've finished it. Found (system log): about a second after the pen leaves, Onyx turns the app's own drawing back on ("Post enabled"), and the panel swaps Onyx's hard black line for the app's copy, whose grey rim was 34–45% of its pixels. Built: ink at full strength is drawn solid on screen at the same width (rim 1% on the owner's page); the page, highlighter and thumbnails stay smoothed. Costs 137 ms instead of 91 ms to draw a page of 1,500 strokes. **Owner check:** write a word, keep the pen away for 2 s: does it still change?
 - [x] Paste a copied item with a finger press: a long-press shows a Paste button there (owner's choice: confirmed). Copy and snip now say so in a toast.
 - [x] Turn the page with the volume buttons (also Page Up/Down).
 - [x] Palm presses cause screen refreshes. Fixed: a touch only pauses fast-ink once it pinches or moves a zoomed page, and fingers are ignored while the pen is near.
 - [x] Tool icons still don't respond to every tap. Fixed: Onyx stops passing the app's drawing to the panel while fast-ink is on; the strip now lets it through for a moment, with one flash per tap (owner's choice over no flash). Switching to the eraser no longer refreshes the screen.
 - [x] The battery level can't be checked in the app. Tried in the strip; the owner didn't want it there. The status bar comes back for a moment with a swipe down from the top.
 - [x] The eraser is slow (owner, 2026-11-10): the first erase or lasso on a page read all its strokes, 1 s for 1,500. Stroke text is now parsed in one pass: 131 ms.
-- [ ] Far too many refreshes overall. See the speed plan (Task 4) and the readability plan (Task 4).
+- [ ] Far too many refreshes overall. Readability plan Task 4 (decision 4) taken as approved ("work on these", 2026-11-10); steps 1–2 done: a trial switch for the update used when a new look of the page is shown (`debug.epapernotes.show`) and after a zoom (`debug.epapernotes.zoom`). What the log shows refreshing:
+  - after each pause in writing, about a second after the pen leaves: Onyx's own hand-back (above); the ink fix should make it change almost nothing;
+  - each erase, lasso move, undo or page turn: fast-ink pauses and resumes once (a turn twice if the new page wasn't drawn yet);
+  - each tool tap: one whole-screen refresh (owner's choice);
+  - after a zoom or a move: the full flash.
+  - [ ] **Owner session** (Task 4 step 3): say which of these bother you, then compare updates for page turns (today's, `REGAL`, `GU`) and after zooming (`GC` today, `REGAL`), on a text slide and a dark one.
 
 ## Review: bugs to fix first
 
