@@ -99,8 +99,45 @@ class PdfFile private constructor(private val doc: PDFDocument) : PdfPages {
         doc.findPage(page).put("Rotate", normalise(degrees))
     }
 
-    /** The app's own items on a page, in drawing order. Other annotations are left out (see [foreignAnnotationCount]). */
-    override fun items(page: Int): List<Item> = annotationDicts(page).mapNotNull { annotations.read(it) }
+    /**
+     * The ids of the app's items on each page that has been edited, so adding a stroke doesn't
+     * walk through every stroke already there to check for its id (on a page of 1,500 strokes
+     * that walk took ten times as long as the adding). Read from the PDF the first time a page
+     * is edited ([idsFor]), then kept in step by every add and remove here.
+     */
+    private val idsByPage = HashMap<Int, HashSet<String>>()
+
+    /**
+     * Each page's items as [items] last gave them, in drawing order, for the few pages used
+     * most recently. Every erase and lasso asks for all of a page's items, and decoding a full
+     * page takes about a second. Kept in step by every add and remove here, so it always
+     * holds exactly what reading the PDF again would give ([readItems]).
+     *
+     * Only a few pages, because a page's items are all its strokes' points: the owner erases
+     * on the page in view, and a whole lecture's worth would be a lot of memory.
+     *
+     * Both this and [idsByPage] are dropped for a page whenever they might no longer be right:
+     * see [forgetPage].
+     */
+    private val itemsByPage = object : LinkedHashMap<Int, ArrayList<Item>>(8, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Int, ArrayList<Item>>) = size > ITEM_PAGES_KEPT
+    }
+
+    /**
+     * The app's own items on a page, in drawing order. Other annotations are left out (see
+     * [foreignAnnotationCount]). The caller gets a list of its own: later changes don't alter it.
+     */
+    override fun items(page: Int): List<Item> =
+        itemsByPage.getOrPut(page) { readItems(page).toCollection(ArrayList()) }.toList()
+
+    /** A page's items decoded from the PDF itself, every time. [items] is the one to use; tests compare the two. */
+    internal fun readItems(page: Int): List<Item> = annotationDicts(page).mapNotNull { annotations.read(it) }
+
+    /** Next time, read this page from the PDF again. */
+    private fun forgetPage(page: Int) {
+        idsByPage.remove(page)
+        itemsByPage.remove(page)
+    }
 
     /**
      * Every annotation on the page that isn't one of the app's items: highlights and notes
@@ -135,20 +172,33 @@ class PdfFile private constructor(private val doc: PDFDocument) : PdfPages {
      * An add skips ids already on the page, so a replay can't double an item, and a move only
      * moves items still on the page ([ReplaceItems.stillThere]), so it can't bring back an
      * erased one.
+     *
+     * What's remembered about a page ([idsByPage], [itemsByPage]) is updated along the way. If
+     * the change fails partway, the PDF may hold half of it, so its pages are forgotten and
+     * read again when next needed. A turned page is forgotten too: turning changes none of its
+     * items, but it's rare, and reading again is the surest way to stay right.
      */
     override fun apply(change: Change) {
-        when (change) {
-            is AddItems -> onPage(change.page) { p ->
-                val there = idsOn(change.page)
-                change.items.filter { it.id !in there }.forEach { annotations.add(p, it) }
+        try {
+            when (change) {
+                is AddItems -> onPage(change.page) { p ->
+                    val there = idsFor(change.page)
+                    add(p, change.page, change.items.filter { it.id !in there })
+                }
+                is RemoveItems -> onPage(change.page) { p -> remove(p, change.page, change.items) }
+                is ReplaceItems -> onPage(change.page) { p ->
+                    val move = change.stillThere(idsFor(change.page))
+                    remove(p, change.page, move.before)
+                    add(p, change.page, move.after)
+                }
+                is RotatePages -> {
+                    change.after.forEach { (page, degrees) -> if (page in 0 until pageCount) setRotation(page, degrees) }
+                    change.pages.forEach { forgetPage(it) }
+                }
             }
-            is RemoveItems -> onPage(change.page) { p -> remove(p, change.items) }
-            is ReplaceItems -> onPage(change.page) { p ->
-                val move = change.stillThere(idsOn(change.page))
-                remove(p, move.before)
-                move.after.forEach { annotations.add(p, it) }
-            }
-            is RotatePages -> change.after.forEach { (page, degrees) -> if (page in 0 until pageCount) setRotation(page, degrees) }
+        } catch (e: Throwable) {
+            change.pages.forEach { forgetPage(it) }
+            throw e
         }
     }
 
@@ -189,8 +239,23 @@ class PdfFile private constructor(private val doc: PDFDocument) : PdfPages {
         }
     }
 
+    /**
+     * Adds [items] at the end of the page, in this order. What's remembered about the page gets
+     * each one as the PDF now holds it, read back from its new annotation, not as it was handed
+     * in: a stroke's numbers are rounded when written, and a picture is stored in MuPDF's own
+     * way. That is what reading the page again would give.
+     */
+    private fun add(p: PDFPage, page: Int, items: List<Item>) {
+        for (item in items) {
+            val dict = annotations.add(p, item)
+            idsByPage[page]?.let { ids -> annotations.idOf(dict)?.let { ids += it } }
+            itemsByPage[page]?.let { cached -> annotations.read(dict)?.let { cached += it } }
+        }
+    }
+
     /** Deletes the app's annotations with these items' ids. Ids that aren't there are skipped. */
-    private fun remove(p: PDFPage, items: List<Item>) {
+    private fun remove(p: PDFPage, page: Int, items: List<Item>) {
+        if (items.isEmpty()) return
         val ids = items.mapTo(HashSet()) { it.id }
         p.annotations.orEmpty()
             .filter { annotations.isOurs(it.getObject()) && annotations.idOf(it.getObject()) in ids }
@@ -198,6 +263,9 @@ class PdfFile private constructor(private val doc: PDFDocument) : PdfPages {
                 annotations.forget(it.getObject())
                 p.deleteAnnotation(it)
             }
+        // Every annotation with one of these ids is gone now, so none is left to remember.
+        idsByPage[page]?.removeAll(ids)
+        itemsByPage[page]?.removeAll { it.id in ids }
     }
 
     /**
@@ -222,9 +290,9 @@ class PdfFile private constructor(private val doc: PDFDocument) : PdfPages {
 
     override fun close() = doc.destroy()
 
-    /** The ids of the app's items on [page], read without decoding any of them. */
-    private fun idsOn(page: Int): Set<String> = annotationDicts(page).mapNotNullTo(HashSet()) { d ->
-        if (annotations.isOurs(d)) annotations.idOf(d) else null
+    /** The ids of the app's items on [page]: read from the PDF once (without decoding any item), then remembered. */
+    private fun idsFor(page: Int): Set<String> = idsByPage.getOrPut(page) {
+        annotationDicts(page).mapNotNullTo(HashSet()) { d -> if (annotations.isOurs(d)) annotations.idOf(d) else null }
     }
 
     private fun annotationDicts(page: Int): List<PDFObject> {
@@ -240,6 +308,9 @@ class PdfFile private constructor(private val doc: PDFDocument) : PdfPages {
     }
 
     companion object {
+        /** How many pages' decoded items are remembered at once (see [itemsByPage]). */
+        private const val ITEM_PAGES_KEPT = 4
+
         fun open(file: File): PdfFile {
             val opened = try {
                 Document.openDocument(file.path)

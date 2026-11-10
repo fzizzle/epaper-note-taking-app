@@ -78,12 +78,13 @@ internal class ItemAnnotations(private val doc: PDFDocument) {
         }
     }
 
-    fun add(p: PDFPage, item: Item) = when (item) {
+    /** Writes [item] as a new annotation at the end of the page, and returns that annotation's dictionary. */
+    fun add(p: PDFPage, item: Item): PDFObject = when (item) {
         is InkItem -> addInk(p, item)
         is ImageItem -> addImage(p, item)
     }
 
-    private fun addInk(p: PDFPage, item: InkItem) {
+    private fun addInk(p: PDFPage, item: InkItem): PDFObject {
         val stroke = item.stroke
         val style = StrokeStyle.of(stroke.kind)
         val annot = p.createAnnotation(PDFAnnotation.TYPE_INK)
@@ -100,6 +101,7 @@ internal class ItemAnnotations(private val doc: PDFDocument) {
         // Let MuPDF finish its own drawing now, or it would redraw over ours on the page update.
         annot.update()
         drawInk(annot.getObject(), stroke)
+        return annot.getObject()
     }
 
     /**
@@ -156,7 +158,7 @@ internal class ItemAnnotations(private val doc: PDFDocument) {
         return true
     }
 
-    private fun addImage(p: PDFPage, item: ImageItem) {
+    private fun addImage(p: PDFPage, item: ImageItem): PDFObject {
         val annot = p.createAnnotation(PDFAnnotation.TYPE_STAMP)
         // Let MuPDF draw its default stamp now, so it doesn't redraw it over ours later.
         annot.update()
@@ -185,6 +187,7 @@ internal class ItemAnnotations(private val doc: PDFDocument) {
         ap.put("N", doc.addStream(buffer(contents), form))
         dict.put("AP", ap)
         dict.put("Rect", rectArray(item.box))
+        return dict
     }
 
     /**

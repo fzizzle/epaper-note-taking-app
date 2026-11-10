@@ -9,6 +9,7 @@ import com.fzizzle.epapernotes.doc.AddItems
 import com.fzizzle.epapernotes.doc.RemoveItems
 import com.fzizzle.epapernotes.doc.ReplaceItems
 import com.fzizzle.epapernotes.doc.RotatePages
+import com.fzizzle.epapernotes.geometry.Affine
 import com.fzizzle.epapernotes.geometry.Pt
 import com.fzizzle.epapernotes.ink.Box
 import com.fzizzle.epapernotes.ink.ImageItem
@@ -17,6 +18,7 @@ import com.fzizzle.epapernotes.ink.ItemCodec
 import com.fzizzle.epapernotes.ink.Stroke
 import com.fzizzle.epapernotes.ink.StrokeKind
 import com.fzizzle.epapernotes.ink.StrokePoint
+import com.fzizzle.epapernotes.ink.transformed
 import com.fzizzle.epapernotes.pdf.TestPdfs.isDark
 import java.io.File
 import org.junit.Assert.assertEquals
@@ -142,6 +144,125 @@ class PdfFileItemsTest {
         pdf.apply(AddItems(0, listOf(ink("a"))))
         pdf.apply(AddItems(0, listOf(ink("a"), picture("p"))))
         assertEquals(listOf("a", "p"), pdf.items(0).map { it.id })
+    }
+
+    /**
+     * A crash replay adds what the saved file may already hold. The ids on a page are
+     * remembered rather than read each time, so: both for ids read from the file and for ids
+     * added, removed and added again since.
+     */
+    @Test fun replayingAnAddTwiceAddsItOnce() {
+        val out = File(dir, "replay-add.pdf")
+        PdfFile.open(TestPdfs.blank(dir)).use { it.apply(AddItems(0, listOf(ink("a"), ink("b")))); it.saveTo(out) }
+        PdfFile.open(out).use { pdf ->
+            val replay = AddItems(0, listOf(ink("b"), ink("c")))
+            pdf.apply(replay)
+            pdf.apply(replay)
+            assertEquals(listOf("a", "b", "c"), pdf.items(0).map { it.id })
+            pdf.apply(RemoveItems(0, listOf(ink("b"))))
+            pdf.apply(replay) // b is gone, so this time it is added; c still isn't
+            pdf.apply(replay)
+            assertEquals(listOf("a", "c", "b"), pdf.items(0).map { it.id })
+            assertEquals(listOf("a", "c", "b"), pdf.readItems(0).map { it.id })
+        }
+    }
+
+    /** The undo of a move, after the moved item was erased: with the page's ids remembered, too. */
+    @Test fun aMoveOfAnErasedItemBringsNothingBack() = PdfFile.open(TestPdfs.blank(dir)).use { pdf ->
+        val before = ink("m", dot(300f, 400f))
+        val after = ink("m", dot(400f, 400f))
+        pdf.apply(AddItems(0, listOf(ink("a"), before)))
+        val move = ReplaceItems(0, listOf(before), listOf(after))
+        pdf.apply(move)
+        pdf.apply(RemoveItems(0, listOf(after)))
+        pdf.apply(move.inverse())
+        pdf.apply(move)
+        assertEquals(listOf("a"), pdf.items(0).map { it.id })
+        assertEquals(listOf("a"), pdf.readItems(0).map { it.id })
+    }
+
+    /**
+     * Review 4.3: a page's items are remembered between an erase and the next, not decoded
+     * again each time. What's remembered must be what reading the PDF again gives: the same
+     * items, in the same order, after every kind of change, and after the file is saved and
+     * opened again.
+     */
+    @Test fun cachedItemsMatchAFreshRead() {
+        val out = File(dir, "cached-items.pdf")
+        // Numbers that don't survive being written as text unchanged, as real pen points don't.
+        fun wobbly(id: String, y: Float) = ink(id, Stroke(StrokeKind.PEN, (0..20).map { StrokePoint(100.1234f + it * 3.3333f, y + it / 7f, 0.123456f + it / 40f) }))
+        fun check(pdf: PdfFile, ids: List<String>) {
+            val cached = pdf.items(0)
+            assertEquals(ids, cached.map { it.id })
+            assertEquals(pdf.readItems(0), cached) // exactly: ids, order, every point, every picture
+        }
+        PdfFile.open(TestPdfs.blank(dir, pages = 7)).use { pdf ->
+            val a = wobbly("a", 100f); val b = wobbly("b", 150f); val c = wobbly("c", 200f)
+            val snip = picture("p", Box(200.123f, 300.456f, 300.789f, 350.5f))
+            pdf.apply(AddItems(0, listOf(a, b, c, snip)))
+            check(pdf, listOf("a", "b", "c", "p")) // from here on the page is remembered
+
+            pdf.apply(AddItems(0, listOf(wobbly("d", 250f))))
+            check(pdf, listOf("a", "b", "c", "p", "d"))
+            pdf.apply(RemoveItems(0, listOf(b)))
+            check(pdf, listOf("a", "c", "p", "d"))
+            // Moves go by what the page holds, as the lasso's do.
+            val heldC = pdf.items(0).first { it.id == "c" }
+            pdf.apply(ReplaceItems(0, listOf(heldC), listOf(heldC.transformed(Affine.translate(12.345f, -6.789f), 1f))))
+            check(pdf, listOf("a", "p", "d", "c"))
+            val heldSnip = pdf.items(0).first { it.id == "p" } as ImageItem
+            pdf.apply(ReplaceItems(0, listOf(heldSnip), listOf(heldSnip.copy(box = Box(50.5f, 60.25f, 180.125f, 140.75f)))))
+            check(pdf, listOf("a", "d", "c", "p"))
+            pdf.apply(AddItems(0, listOf(picture("q", turns = 1), wobbly("e", 300f)))) // a second snip, and ink after it
+            check(pdf, listOf("a", "d", "c", "p", "q", "e"))
+            pdf.apply(AddItems(0, listOf(wobbly("d", 250f), wobbly("f", 350f)))) // a replay: d is there already
+            check(pdf, listOf("a", "d", "c", "p", "q", "e", "f"))
+            pdf.apply(ReplaceItems(0, listOf(b), listOf(wobbly("b", 500f)))) // a move of an erased item
+            check(pdf, listOf("a", "d", "c", "p", "q", "e", "f"))
+
+            pdf.apply(RotatePages(mapOf(0 to 0), mapOf(0 to 90)))
+            check(pdf, listOf("a", "d", "c", "p", "q", "e", "f"))
+            pdf.apply(AddItems(0, listOf(wobbly("g", 400f))))
+            pdf.apply(RemoveItems(0, listOf(a)))
+            val ids = listOf("d", "c", "p", "q", "e", "f", "g")
+            check(pdf, ids)
+
+            // Other pages, more than are remembered at once, each written on after it was read.
+            for (page in 1..6) {
+                assertTrue(pdf.items(page).isEmpty())
+                pdf.apply(AddItems(page, listOf(wobbly("s$page", 100f))))
+            }
+            for (page in 1..6) assertEquals(pdf.readItems(page), pdf.items(page))
+            check(pdf, ids)
+
+            pdf.saveTo(out)
+            check(pdf, ids) // a save changes nothing about what's on the page
+
+            // The same file, opened again. Strokes come back exactly. A picture's box is
+            // written to the file as rounded text, and its PNG is made again by MuPDF from the
+            // stored image, so those are compared as far as they can be: the box closely, the
+            // picture by its size.
+            val cached = pdf.items(0)
+            PdfFile.open(out).use { again ->
+                val fresh = again.items(0)
+                assertEquals(ids, fresh.map { it.id })
+                cached.zip(fresh).forEach { (was, now) ->
+                    if (was is ImageItem) {
+                        now as ImageItem
+                        assertEquals(was.quarterTurns, now.quarterTurns)
+                        listOf(was.box.x0 to now.box.x0, was.box.y0 to now.box.y0, was.box.x1 to now.box.x1, was.box.y1 to now.box.y1)
+                            .forEach { (x, y) -> assertEquals(x, y, 0.01f) }
+                        val wasPicture = BitmapFactory.decodeByteArray(was.png, 0, was.png.size)
+                        val nowPicture = BitmapFactory.decodeByteArray(now.png, 0, now.png.size)
+                        assertEquals(wasPicture.width, nowPicture.width)
+                        assertEquals(wasPicture.height, nowPicture.height)
+                    } else {
+                        assertEquals(was, now)
+                    }
+                }
+                for (page in 1..6) assertEquals(pdf.items(page), again.items(page))
+            }
+        }
     }
 
     /** An /NM that isn't a plain id (another app's, say) is ignored: the item goes by its object number. */

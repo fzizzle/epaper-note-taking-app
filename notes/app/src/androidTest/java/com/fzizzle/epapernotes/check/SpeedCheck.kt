@@ -19,6 +19,7 @@ import java.io.File
 import java.util.Locale
 import kotlin.math.sin
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -30,7 +31,8 @@ import org.junit.runner.RunWith
  * It never touches the owner's file: everything happens on a copy in the cache folder.
  *
  * [addingStrokesToAFullPage] is the exception to the first rule: it makes its own blank PDF,
- * so it always runs.
+ * so it always runs. It is also the one that can fail: a stroke on a full page must not cost
+ * more than twice a stroke on a nearly empty one.
  */
 @RunWith(AndroidJUnit4::class)
 class SpeedCheck {
@@ -116,6 +118,17 @@ class SpeedCheck {
                 val (items, itemsMs) = timed { pdf.items(0) }
                 log("items(0) with $FULL_PAGE_STROKES strokes: $itemsMs ms")
                 assertEquals(FULL_PAGE_STROKES, items.size)
+                // What every erase and lasso after the first on a page pays: the items are remembered.
+                val (again, againMs) = timed { pdf.items(0) }
+                log("items(0) again: $againMs ms")
+                assertEquals(items, again)
+
+                // Review speed, focus 1 (addingAStrokeDoesNotGrowWithThePage): on a full page a
+                // stroke may cost up to twice what it does on a nearly empty one, no more.
+                // Last, so every number above is logged even when this fails.
+                val early = median(eachNs.subList(50, 100))
+                val late = median(eachNs.subList(FULL_PAGE_STROKES - 50, FULL_PAGE_STROKES))
+                assertTrue("stroke 1451-1500 took ${ms(late)} ms, stroke 51-100 took ${ms(early)} ms", late < 2 * early)
             }
         } finally {
             blank.delete()
