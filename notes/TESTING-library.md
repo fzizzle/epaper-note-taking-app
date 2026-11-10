@@ -1,6 +1,6 @@
 # Library: owner checklist
 
-About 10 minutes. Open **E-paper Notes**: it now opens the library, a grid of the folders and PDFs in one folder.
+About 15 minutes. Open **E-paper Notes**: it now opens the library, a grid of the folders and PDFs in one folder.
 
 How the library works now:
 - Folders come first, then PDFs, each in name order ("Lecture 2" before "Lecture 10"). About 5 tiles across upright, 7 sideways.
@@ -25,6 +25,15 @@ How the library works now:
 Two questions for you:
 - (a) When a file changes (say, after you write on it), its tile keeps the old picture until the new one is ready, instead of going grey for a moment. OK?
 - (b) When you delete a folder, the question says how many PDFs go, and also how many other, non-PDF files in it will go too ("3 other files in it will go too"). Is that the right amount of warning?
+
+## Also check (tools fixes)
+
+A few fixes to writing came with the library.
+
+- [ ] **T1. Older files.** Open a file you wrote on before today, ideally one with pen, highlighter and a turned page. Wait about 2 seconds. Does the ink look unchanged, and the right way up? Leave and open it again: still fine? (The app quietly saves older files once, the first time they're opened, to fix how their ink is stored.)
+- [ ] **T2. Resize.** Select some writing and resize it. Does it stay the right way up after the pen lifts (no more turning upside down)?
+- [ ] **T3. Tap off, then write.** With writing selected, tap away from it and write straight away. Does the stroke land where you wrote it, and stay?
+- [ ] **T4. Home button.** With writing selected, press the tablet's home button, then come back to the app. Does the pen still move the selection? After you let go of it, does the pen write again?
 
 ## Things to watch
 
