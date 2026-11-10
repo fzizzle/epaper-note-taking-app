@@ -23,6 +23,8 @@
   - [x] Build the tools (Tasks 1–9), with the fixes from the final review.
   - [ ] Owner tool session (Task 10, hard stop): work through the checklist on the tablet.
 
+- [ ] Plan 4: [library](docs/superpowers/plans/2026-11-09-library.md): folders and thumbnails, breadcrumb, rename/move/delete, fast exit from a document; ends in an owner library session (hard stop). Approved 2026-11-10.
+
 ## Later (not in the first version)
 
 - Blank notebooks
