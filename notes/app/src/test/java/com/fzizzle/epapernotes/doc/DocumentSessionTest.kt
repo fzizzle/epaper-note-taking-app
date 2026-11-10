@@ -7,7 +7,6 @@ import com.fzizzle.epapernotes.ink.Stroke
 import com.fzizzle.epapernotes.ink.StrokeKind
 import com.fzizzle.epapernotes.ink.StrokePoint
 import com.fzizzle.epapernotes.storage.FileIdentity
-import com.fzizzle.epapernotes.storage.FileStamp
 import java.io.File
 import java.time.LocalDateTime
 import org.junit.Assert.assertEquals
@@ -34,8 +33,6 @@ class DocumentSessionTest {
     private val line = Stroke(StrokeKind.PEN, (0..8).map { StrokePoint(10f + it * 5, 100f, 0.5f) })
     /** An eraser swipe down across [line]. */
     private val acrossLine = listOf(Pt(30f, 90f), Pt(30f, 110f))
-    /** Every file the session read from start to end for its fingerprint, in order. */
-    private val fingerprinted = mutableListOf<File>()
 
     @Before fun setUp() {
         pdf = tmp.newFile("Lecture.pdf").apply { writeText("original") }
@@ -51,14 +48,7 @@ class DocumentSessionTest {
         clock = { LocalDateTime.of(2026, 11, 9, 14, 5) },
         // These tests "kill" a session by just starting another; don't wait out the dead one's turn.
         previousSessionWaitMs = 0,
-        fingerprint = { fingerprinted += it; FileIdentity.of(it) },
     ).also { it.start() }
-
-    /**
-     * Lets the storage's clock move on. A file that changed only a moment ago has a stamp the
-     * session doesn't trust yet (see FileStamp); a real lecture file was last changed long ago.
-     */
-    private fun aMomentLater() = Thread.sleep(3 * FileStamp.CLOCK_STEP_MS)
 
     private fun journalStrokes(file: File = pdf) = journalChanges(file).size
 
@@ -234,38 +224,6 @@ class DocumentSessionTest {
         assertEquals("edited on the laptop", pdf.readText())
         assertTrue(events.contains(SessionEvent.ChangedOnDisk))
         assertEquals(1, journalStrokes())
-    }
-
-    /**
-     * Review speed, focus 2: a sync app rewrites the open file with the same number of bytes
-     * and puts its old date back. The quick look (the file's stamp) must not take that for
-     * "untouched": the save still refuses to write over it.
-     */
-    @Test fun sameSizeAndDateButNewBytesIsStillCaught() {
-        aMomentLater() // so the session trusts the stamp it takes at opening
-        val s = session()
-        s.addStroke(0, dot)
-        val date = pdf.lastModified()
-        aMomentLater()
-        pdf.writeText("ORIGINAL") // as long as "original"
-        pdf.setLastModified(date)
-        s.saveNow()
-        assertTrue(events.contains(SessionEvent.ChangedOnDisk))
-        assertFalse(events.contains(SessionEvent.Saved))
-        assertEquals("ORIGINAL", pdf.readText())
-        assertEquals(0, fake.saves)
-        assertEquals(1, journalStrokes())
-    }
-
-    /** Review 4.1: the point of the stamp. A file nothing touched is read once, at opening, not again at each save. */
-    @Test fun anUntouchedFileIsNotReadAgainForASave() {
-        aMomentLater()
-        val s = session()
-        s.addStroke(0, dot)
-        s.saveNow()
-        assertTrue(events.contains(SessionEvent.Saved))
-        assertEquals("items=1", pdf.readText())
-        assertEquals(1, fingerprinted.count { it == pdf })
     }
 
     @Test fun failedSaveKeepsJournalAndRetries() {

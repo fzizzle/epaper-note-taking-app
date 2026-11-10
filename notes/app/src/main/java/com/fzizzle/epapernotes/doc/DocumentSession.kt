@@ -8,7 +8,6 @@ import com.fzizzle.epapernotes.ink.ItemIds
 import com.fzizzle.epapernotes.ink.Stroke
 import com.fzizzle.epapernotes.storage.CopyNames
 import com.fzizzle.epapernotes.storage.FileIdentity
-import com.fzizzle.epapernotes.storage.FileStamp
 import com.fzizzle.epapernotes.storage.SafeSave
 import com.fzizzle.epapernotes.tools.Eraser
 import com.fzizzle.epapernotes.tools.Lasso
@@ -32,9 +31,7 @@ import java.util.concurrent.TimeoutException
  *   the owner leaves the document or the app goes to the background.
  * - A save never writes over a file that something else has changed, or over a damaged file
  *   the owner hasn't decided about. The writing stays in the journal instead. "Changed" means
- *   its contents: a file whose date alone is different is the same file. Checking that means
- *   reading the whole file, so it's skipped when the file's stamp ([FileStamp]) shows that
- *   nothing has touched the file since this session read or saved it.
+ *   its contents: a file whose date alone is different is the same file.
  * - The journal is only emptied after a save has succeeded, and changes that arrived during
  *   that save are written back into it. Just before the new PDF is swapped in, the journal
  *   notes what it looks like, so a kill between the two is understood on the next open.
@@ -60,8 +57,6 @@ class DocumentSession(
     private val clock: () -> LocalDateTime = LocalDateTime::now,
     /** How long to wait for an earlier session on this file to close. Tests shorten it. */
     private val previousSessionWaitMs: Long = PREVIOUS_SESSION_WAIT_MS,
-    /** Reads a whole file for its fingerprint. Tests count how often that happens. */
-    private val fingerprint: (File) -> FileIdentity = FileIdentity::of,
 ) {
     /** The file being written into. It becomes the copy after a "save to a copy". */
     @Volatile var file: File = pdf
@@ -95,10 +90,6 @@ class DocumentSession(
     private var applyFailed = false // the PDF no longer matches the journal, so it's never saved
     private var inkRedrawn = false // strokes were drawn again (redrawFaultyInk) since the last save: save even with nothing journaled
     private var known: FileIdentity? = null // the file as it was when opened or last saved
-    // The file's stamp at that same moment, taken by this session itself, when it can be trusted
-    // (FileStamp.afterReading, afterMove). The only use it's ever put to: a save that finds the
-    // file with exactly this stamp skips reading it. Null, or any other stamp, means read it.
-    private var knownStamp: FileStamp? = null
     private var repairDecided = false
     private var waitingForRepairDecision = false
     private var stoppedBecauseChanged = false
@@ -127,14 +118,12 @@ class DocumentSession(
         // this file's: another file's may be in the middle of being saved.
         SafeSave.tempFileFor(file).delete()
 
-        val stampBefore = FileStamp.of(file)
         val identity = try {
-            fingerprint(file)
+            FileIdentity.of(file)
         } catch (e: Exception) {
             events(SessionEvent.OpenFailed("${file.name} couldn't be read."))
             return
         }
-        val stamp = FileStamp.afterReading(file, stampBefore)
 
         val replay: List<Change>
         synchronized(lock) {
@@ -180,7 +169,6 @@ class DocumentSession(
         }
         pages = opened
         known = identity
-        knownStamp = stamp
         // The replayed changes, and any the pen has added since the journal opened.
         applyPending()
         checkRepair(opened)
@@ -518,22 +506,15 @@ class DocumentSession(
             // file is still ours, writing the new PDF, and the rest (reading the new file,
             // the journal, moving it into place).
             val started = System.nanoTime()
-            // The quick look first: with the very stamp this session took when it read or
-            // saved the file, nothing has touched it, and it needn't be read (on a big lecture
-            // file that read is most of the check). With any other stamp, or none, read it.
-            val trusted = knownStamp
-            val untouched = trusted != null && FileStamp.of(file) == trusted
-            if (!untouched) {
-                val now = try { fingerprint(file) } catch (e: Exception) { null }
-                // Contents only: a sync app that just reset the file's date changed nothing.
-                if (now?.sameContentAs(known) != true) {
-                    // A laptop or sync app changed, moved or deleted the file. Writing over it
-                    // would lose their change, so stop saving into it. The changes stay in the
-                    // journal (plan 5 adds the copy).
-                    stoppedBecauseChanged = true
-                    events(SessionEvent.ChangedOnDisk)
-                    return
-                }
+            val now = try { FileIdentity.of(file) } catch (e: Exception) { null }
+            // Contents only: a sync app that just reset the file's date changed nothing.
+            if (now?.sameContentAs(known) != true) {
+                // A laptop or sync app changed, moved or deleted the file. Writing over it
+                // would lose their change, so stop saving into it. The changes stay in the
+                // journal (plan 5 adds the copy).
+                stoppedBecauseChanged = true
+                events(SessionEvent.ChangedOnDisk)
+                return
             }
 
             // The new version is read once, while it's still the temporary file: moving it
@@ -541,10 +522,8 @@ class DocumentSession(
             val checkNs = System.nanoTime() - started
             var writeNs = 0L
             var next: FileIdentity? = null
-            var tempStamp: FileStamp? = null
             SafeSave.replace(file, beforeSwap = { temp ->
-                tempStamp = FileStamp.of(temp)
-                val result = fingerprint(temp)
+                val result = FileIdentity.of(temp)
                 next = result
                 markSaving(result, inThisSave)
             }) {
@@ -552,12 +531,6 @@ class DocumentSession(
                 p.saveTo(it)
                 writeNs = System.nanoTime() - writeStarted
             }
-            // The new file's stamp, taken at once. Something else could still change the file
-            // between the swap and this line. That is why the stamp isn't simply taken and
-            // believed: afterMove only gives one when the file here is still the temporary
-            // file that was just fingerprinted (same file number, size and date), and
-            // otherwise gives none, so the next save reads the file and finds the change.
-            knownStamp = FileStamp.afterMove(file, tempStamp)
             val saved = next!!
             known = saved
             inkRedrawn = false
@@ -632,9 +605,7 @@ class DocumentSession(
 
     /** Worker thread only. Continue in [copy], which has just been saved with everything applied. */
     private fun switchTo(copy: File) {
-        val stampBefore = FileStamp.of(copy)
-        val base = fingerprint(copy)
-        val stamp = FileStamp.afterReading(copy, stampBefore)
+        val base = FileIdentity.of(copy)
         synchronized(lock) {
             val remaining = unsaved.drop(applied)
             val oldJournal = journal
@@ -645,7 +616,6 @@ class DocumentSession(
             journal.rewrite(base, remaining)
             file = copy
             known = base
-            knownStamp = stamp
             unsaved.clear()
             unsaved.addAll(remaining)
             applied = 0
