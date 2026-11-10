@@ -20,8 +20,8 @@ import android.view.View
  * dashed loop, a dashed rectangle. Paste is inverted too while it's armed. The library's top bar
  * reuses the strip with refresh (a circling arrow) and new folder (a folder with a plus).
  *
- * On the writing strip's island ([island] set) there are no frames: the capsule groups the
- * buttons, and the selected one sits in a circle of the opposite colour (see [IslandStyle]).
+ * On the writing strip's island ([onIsland] set) there are no frames: the outlined capsule groups
+ * the buttons, and the selected one sits in a black circle with a white mark.
  */
 class StripButton(context: Context, private val glyph: Glyph, description: String) : View(context) {
 
@@ -41,8 +41,8 @@ class StripButton(context: Context, private val glyph: Glyph, description: Strin
 
     private val isTool get() = glyph in TOOLS
 
-    /** The island this button sits on, or null for a plain strip button. */
-    var island: IslandStyle? = null
+    /** Whether this button sits on the writing strip's island rather than being a plain strip button. */
+    var onIsland = false
         set(value) {
             if (value == field) return
             field = value
@@ -117,26 +117,25 @@ class StripButton(context: Context, private val glyph: Glyph, description: Strin
 
     override fun onDraw(canvas: Canvas) {
         val inverted = isEnabled && (isSelected || (isPressed && showsPress))
-        val onBlack = island == IslandStyle.BLACK
         // Greyed out when there's nowhere to go (‹ on the first page, › on the last, undo with nothing to undo).
         val fg = when {
-            !isEnabled -> if (onBlack) IslandRow.ON_BLACK_GREY else DISABLED
-            inverted != onBlack -> Color.WHITE
+            !isEnabled -> DISABLED
+            inverted -> Color.WHITE
             else -> Color.BLACK
         }
         val s = minOf(width, height).toFloat()
         val cx = width / 2f
         val cy = height / 2f
 
-        if (inverted && island != null) {
+        if (inverted && onIsland) {
             // The circle sits just inside the capsule, the same distance from its top and bottom.
             ink.style = Paint.Style.FILL
-            ink.color = if (onBlack) Color.WHITE else Color.BLACK
+            ink.color = Color.BLACK
             canvas.drawCircle(cx, cy, s * 0.4f, ink)
         } else if (inverted) {
             canvas.drawColor(Color.BLACK)
         }
-        if (isTool && !inverted && island == null) {
+        if (isTool && !inverted && !onIsland) {
             // A thin frame marks a tool you can pick; arrows don't need one.
             ink.style = Paint.Style.STROKE
             ink.strokeWidth = 2f

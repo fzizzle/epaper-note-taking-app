@@ -126,7 +126,8 @@ internal class ItemAnnotations(private val doc: PDFDocument) {
         annot.setInkList(arrayOf(stroke.points.map { Point(it.x, it.y).transform(toPageSpace) }.toTypedArray()))
         annot.setColor(style.rgb)
         annot.setOpacity(style.opacity)
-        annot.setBorderWidth(style.maxWidth * stroke.widthScale)
+        // One width for all of it, so a middling pressure's: 2 pt for the pen, as before its curve changed.
+        annot.setBorderWidth(style.widthAt(0.7f, stroke.widthScale))
         annot.getObject().put("NM", item.id)
         annot.getObject().put(StrokeCodec.KEY, StrokeCodec.encode(stroke))
         // Let MuPDF finish its own drawing now, or it would redraw over ours on the page update.
