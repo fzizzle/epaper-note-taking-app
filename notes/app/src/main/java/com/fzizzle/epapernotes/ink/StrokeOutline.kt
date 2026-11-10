@@ -14,9 +14,9 @@ import kotlin.math.min
  * them they'd draw one fixed width and the pressure would be lost. MuPDF draws the same
  * commands inside the app, so the app and other viewers look alike.
  *
- * The shape is one outline: along the left edge of the stroke, then back along the right
- * edge, each pushed out by half the width at that point. Circles round off the two ends and
- * fill the notch where the line turns sharply. Plan 1 drew a circle at every point, which
+ * The shape is an outline: along the left edge of the stroke, then back along the right
+ * edge, each pushed out by half the width at that point. Where the line turns sharply the
+ * outline stops and a new one starts. Circles round off the two ends and cover each sharp turn. Plan 1 drew a circle at every point, which
  * made each stroke about 20 KB; this is a fraction of that.
  *
  * All the pieces are filled together, once, at the end. Filled one by one, a see-through
@@ -57,14 +57,13 @@ object StrokeOutline {
             return out.toString()
         }
 
-        outline(out, pts, style, stroke.widthScale)
-        circle(out, pts.first().x, pts.first().y, style.widthAt(pts.first().pressure, stroke.widthScale) / 2)
-        for (i in 1 until pts.size - 1) {
-            if (isSharpTurn(pts[i - 1], pts[i], pts[i + 1])) {
-                circle(out, pts[i].x, pts[i].y, style.widthAt(pts[i].pressure, stroke.widthScale) / 2)
-            }
-        }
-        circle(out, pts.last().x, pts.last().y, style.widthAt(pts.last().pressure, stroke.widthScale) / 2)
+        // The outline is cut at every sharp turn, and a circle covers the cut. Carried round the
+        // turn in one piece, the outline was pinched there (its two edges nearly met), which
+        // left unpainted slivers beside the circle when the points were far apart.
+        val sharp = (1 until pts.size - 1).filter { isSharpTurn(pts[it - 1], pts[it], pts[it + 1]) }
+        val cuts = listOf(0) + sharp + listOf(pts.size - 1)
+        for (i in 0 until cuts.size - 1) outline(out, pts.subList(cuts[i], cuts[i + 1] + 1), style, stroke.widthScale)
+        for (i in cuts) circle(out, pts[i].x, pts[i].y, style.widthAt(pts[i].pressure, stroke.widthScale) / 2)
         // Non-zero fill: every piece, and every overlap, is filled exactly once. That only
         // holds while all the pieces go round the same way. Where a piece going one way
         // overlaps a piece going the other, the two cancel and the overlap is left unpainted:

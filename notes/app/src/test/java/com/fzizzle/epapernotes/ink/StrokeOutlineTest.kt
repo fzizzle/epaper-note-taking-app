@@ -144,7 +144,7 @@ class StrokeOutlineTest {
      */
     @Test fun capsTurnTheSameWayAsTheBody() {
         val areas = pieces(StrokeOutline.contentStream(hook)).map { signedArea(it) }
-        assertEquals(4, areas.size) // the body, two ends and the corner
+        assertEquals(5, areas.size) // the body in two parts (cut at the corner), two ends and the corner
         assertTrue("areas: $areas", areas.all { it < 0 } || areas.all { it > 0 })
     }
 
@@ -189,6 +189,16 @@ class StrokeOutlineTest {
             for (step in 1..steps) points += StrokePoint(x0 + (x1 - x0) * step / steps, y0 + (y1 - y0) * step / steps, 1f)
         }
         return Stroke(kind, points)
+    }
+
+    /** Points far apart, as a fast stroke gives: the outline used to be pinched at each corner. */
+    @Test fun sparseZigZagHasNoGapsBesideItsCorners() {
+        val zigzag = (0 until 8).map { 10f + it * 12 to if (it % 2 == 0) 0f else 20f }.toTypedArray()
+        for (kind in StrokeKind.values()) {
+            assertSolidAlong(through(kind, 1000f, *zigzag)) // only the corners themselves
+            assertSolidAlong(through(kind, 10f, *zigzag))
+            assertSolidAlong(through(kind, 1000f, 0f to 0f, 40f to 0f, 0f to 3f)) // nearly doubling back
+        }
     }
 
     @Test fun zigZagHasNoHoles() {

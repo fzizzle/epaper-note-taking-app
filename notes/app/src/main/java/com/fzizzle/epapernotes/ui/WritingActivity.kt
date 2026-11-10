@@ -186,11 +186,6 @@ class WritingActivity : Activity() {
         // Onyx writing means fast-ink is on already.
         if (fastInkWanted() && !pen.isWriting) {
             Log.i(TAG, "resume fast-ink")
-            // Diagnostic for review 1.5: with the pen or highlighter chosen, nothing listens to
-            // the pen while fast-ink is paused for a show. If the pen landed during that pause,
-            // its stroke (or the start of it) may be lost. This line says whether it happens.
-            val sincePenDown = SystemClock.uptimeMillis() - pages.lastPenDownMs
-            if (sincePenDown in 0 until SHOW_PAUSE_MS) Log.i(TAG, "resume fast-ink $sincePenDown ms after a pen-down: a stroke may have begun during the pause")
             pen.resume()
         }
     }
@@ -840,6 +835,12 @@ class WritingActivity : Activity() {
         handler.removeCallbacks(retryShow)
         Log.i(TAG, "show: pause fast-ink")
         pausePenAndRedraw()
+        // While fast-ink is paused Onyx doesn't follow the pen. With the pen or highlighter
+        // chosen nothing else did either, so a stroke begun in this short pause (erase a word,
+        // carry straight on writing) was lost or cut. The screen takes the pen for the pause:
+        // it traces such a stroke and records it as ink, and resumeFastInk waits for its lift.
+        pages.penHandler = screenPen
+        screenHasPen = true
         handler.removeCallbacks(resumeFastInk)
         handler.postDelayed(resumeFastInk, SHOW_PAUSE_MS)
     }

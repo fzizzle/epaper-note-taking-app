@@ -60,10 +60,6 @@ class PageView(context: Context) : View(context) {
     /** True from a finger landing while [fingersAllowed] said no, until the next finger gesture begins. */
     private var ignoringFingers = false
 
-    /** When the pen last touched down (as SystemClock.uptimeMillis), or 0. For a diagnostic in the writing screen. */
-    var lastPenDownMs = 0L
-        private set
-
     /** A one-finger tap, in view pixels. */
     var onFingerTap: (x: Float, y: Float) -> Unit = { _, _ -> }
 
@@ -347,10 +343,7 @@ class PageView(context: Context) : View(context) {
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
         val m = event.actionMasked
-        if (m == MotionEvent.ACTION_DOWN && isPen(event)) {
-            lastPenDownMs = event.eventTime
-            onStylusDown(penButtonOf(event))
-        }
+        if (m == MotionEvent.ACTION_DOWN && isPen(event)) onStylusDown(penButtonOf(event))
         if (m == MotionEvent.ACTION_DOWN || m == MotionEvent.ACTION_POINTER_DOWN) {
             val lag = android.os.SystemClock.uptimeMillis() - event.eventTime
             android.util.Log.i("Notes", "touch ${MotionEvent.actionToString(m)} tool=${event.getToolType(event.actionIndex)} pointers=${event.pointerCount} deliveredLateMs=$lag")

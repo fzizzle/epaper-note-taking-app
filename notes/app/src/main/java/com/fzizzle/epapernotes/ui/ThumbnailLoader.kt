@@ -9,6 +9,7 @@ import android.os.SystemClock
 import android.util.Log
 import android.util.LruCache
 import com.fzizzle.epapernotes.library.PdfEntry
+import com.fzizzle.epapernotes.library.THUMB_MAX_HEIGHT_PX
 import com.fzizzle.epapernotes.library.ThumbnailCache
 import com.fzizzle.epapernotes.library.thumbWidthPx
 import com.fzizzle.epapernotes.pdf.PdfFile
@@ -129,7 +130,8 @@ class ThumbnailLoader(private val cache: ThumbnailCache, private val onReady: (P
         val cached = cache.cached(pdf)
         if (cached != null && !intoMemory) return finished(key, ok = true)
         // A cached file can vanish before it's read, or be damaged: then it's rendered again.
-        val decoded = cached?.let { BitmapFactory.decodeFile(it.path, SMALL) }
+        // One cached before thumbnails had a height limit is far too tall: also rendered again.
+        val decoded = cached?.let { BitmapFactory.decodeFile(it.path, SMALL) }?.takeIf { it.height <= THUMB_MAX_HEIGHT_PX }
         val bitmap = decoded ?: try {
             render(pdf, forScreen = intoMemory)
         } catch (e: Throwable) {
