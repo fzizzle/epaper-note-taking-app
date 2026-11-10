@@ -45,6 +45,8 @@ import com.fzizzle.epapernotes.tools.placedOn
 import com.fzizzle.epapernotes.ui.StripButton.Glyph
 import java.io.ByteArrayOutputStream
 import java.io.File
+import kotlin.math.ceil
+import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
 
@@ -270,7 +272,7 @@ class WritingActivity : Activity() {
             updateIndicator()
             updatePenWidth()
             publishPenMapping()
-            if (documentShown) pen.setLimit(Rect(0, 0, pages.width, pages.height))
+            if (documentShown) pen.setLimit(penLimit())
         }
         layOutPages(startPage = lastPages.get(path)) {
             pages.post {
@@ -369,9 +371,19 @@ class WritingActivity : Activity() {
         if (showPending) retryShowWhenIdle()
     }
 
-    /** The pen is limited to the page area, below the strip. Fast-ink stays off if a tool needs it off. */
+    /**
+     * Where the pen may write: the page itself, as far as it's on screen. Ink written beside
+     * the page would be saved outside it and vanish at the next redraw. Rounded inwards, so
+     * not even a pixel's width lies off the page.
+     */
+    private fun penLimit(): Rect {
+        val b = pages.viewport?.pageBoundsPx() ?: return Rect(0, 0, pages.width, pages.height)
+        return Rect(ceil(b[0]).toInt(), ceil(b[1]).toInt(), floor(b[2]).toInt(), floor(b[3]).toInt())
+    }
+
+    /** The pen is limited to the page ([penLimit]). Fast-ink stays off if a tool needs it off. */
     private fun penOn() {
-        pen.on(Rect(0, 0, pages.width, pages.height))
+        pen.on(penLimit())
         if (!fastInkWanted()) {
             pen.pause()
             // A tool's pause waiting for a lift that never came (the app was left mid-stroke):
