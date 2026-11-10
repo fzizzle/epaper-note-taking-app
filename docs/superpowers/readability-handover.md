@@ -11,7 +11,7 @@ Branch `review-readability`, not merged. [Plan](plans/2026-11-10-review-readabil
 | 3. Contrast | Done, reviewed, owner-checked. |
 | 4. Cleaner page turns (REGAL) | Done earlier, owner-chosen. |
 | 5. Trim margins | Done, reviewed (2 fix rounds), owner-checked. |
-| 7. Page drawn on whole pixels | Done, reviewed (approved), tablet suite passes (85/85, 2026-11-10). **Owner check still to do.** |
+| 7. Page drawn on whole pixels | Done, reviewed (approved), tablet suite passes (85/85, 2026-11-10). Controller screenshot check passed. **Owner check still to do.** |
 | 8. Dark text as black | Done, reviewed (no Critical/Important), laptop 326 and tablet 85/85 pass; a full page with Strongest takes 20 ms (limit 80). **Owner check (step 6) still to do.** |
 | 6. Owner session | Not started: write `notes/TESTING-readability.md`, update the spec §6.2, then stop. |
 
@@ -127,6 +127,7 @@ Task 7: minor (deferred): aSlowMoveIsNotLost RED was float noise; add a line say
 Task 7: minor (deferred): zoomed and pushed to the right/bottom edge, rounding leaves a sub-pixel grey last column/row (Viewport.kt:192); cosmetic, pen limit keeps ink off.
 Task 7: minor (deferred): 1 px check lets a stale anyFor picture 1 px wider draw unscaled; tighten width check to < 1f (PageView.kt:637).
 Task 7: complete pending tablet check (commits 0abec69..74d1c57, review clean)
+Task 7: step 5 controller check (2026-11-10): PWT test copy page 1 at normal size (Strongest, trim on), screenshot vs a poppler 1:1 render with the Strongest curve: mean difference 1.53 placed on a whole pixel, 2.03 / 1.91 for half-pixel blends up / down. The rest is poppler vs MuPDF. Owner part still to do.
 Task 8: WIP commit 8178ab4 finished: device test (f054c72); first tablet run 80 ms, failing the < 80 ms limit; the pixel step now reuses the last pixel's answer for runs of one colour and builds its grey table once per picture: 20 ms. Review: matches the plan, 0 Critical/Important.
 Task 8: minor (deferred): pale tints (chroma ≤ 40, e.g. formula anti-aliased edges (200, 230, 215), pastel boxes (225, 235, 250)) turn neutral grey; per the spec, but watch for it in step 6 (PageLook.kt, NEARLY_GREY ignores lightness).
 Task 8: minor (deferred): the early return in applyTo (off + Normal) has no test; needs Android.
