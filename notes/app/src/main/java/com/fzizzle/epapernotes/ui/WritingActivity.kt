@@ -59,6 +59,7 @@ class WritingActivity : Activity() {
     private lateinit var pages: PageView
     private lateinit var indicator: TextView
     private lateinit var lastPages: LastPageStore
+    /** The file being written into. It changes once, if the owner saves a damaged file's writing to a copy. */
     private lateinit var path: String
     private var pageCount = 0
     private lateinit var pen: PenInput
@@ -901,6 +902,12 @@ class WritingActivity : Activity() {
     }
 
     private fun show(event: SessionEvent) {
+        // The last save lands after the screen is left, so events still come once it's closing
+        // or closed. Messages are still shown then: a failed save must never be silent. But
+        // nothing touches the screen any more, and a question shown on a closed screen crashes.
+        val needsTheScreen = event is SessionEvent.NeedsRepairDecision || event is SessionEvent.InkRedrawn ||
+            event is SessionEvent.PageChanged || event is SessionEvent.HistoryChanged
+        if (needsTheScreen && (isFinishing || isDestroyed)) return
         when (event) {
             SessionEvent.Saved -> Unit // saving is silent when it works
             is SessionEvent.SaveFailed -> toast("Couldn't save: ${event.message}. Your writing is kept safe and will be saved again.")
@@ -917,7 +924,14 @@ class WritingActivity : Activity() {
                 redoButton.isEnabled = event.canRedo
             }
             is SessionEvent.EarlierWritingKept -> toast("Unsaved writing from before this file changed was kept safe.")
-            is SessionEvent.SavedToCopy -> toast("Saved to ${event.copy.name}.")
+            is SessionEvent.SavedToCopy -> {
+                // The session writes into the copy from here on, so the copy is what "Continue"
+                // and the remembered page must follow, not the damaged original.
+                path = event.copy.path
+                pages.viewport?.let { lastPages.set(path, it.page) }
+                LibraryPrefs(this).lastOpened = event.copy
+                toast("Saved to ${event.copy.name}.")
+            }
             is SessionEvent.OpenFailed -> {
                 toast(event.message)
                 finish()
@@ -927,16 +941,27 @@ class WritingActivity : Activity() {
 
     /** Spec §7.3: a repaired file is never written to until the owner chooses. */
     private fun askAboutRepair() {
-        AlertDialog.Builder(this)
+        val dialog = AlertDialog.Builder(this)
             .setTitle("This file was damaged")
             .setMessage("It was repaired when it opened. Saving into it would replace the original with the repaired version.")
             .setPositiveButton("Save into this file") { _, _ -> session.saveIntoRepairedFile() }
             .setNegativeButton("Save my writing to a copy") { _, _ -> session.saveRepairedToCopy() }
             .setCancelable(false)
-            .show()
+            .create()
+        // As for "Go to page": fast-ink would freeze the question on screen, and pen taps on its
+        // buttons would mark the page underneath.
+        dialogOpen = true
+        pen.pause()
+        dialog.setOnDismissListener {
+            dialogOpen = false
+            handler.removeCallbacks(resumeFastInk)
+            handler.postDelayed(resumeFastInk, SHOW_PAUSE_MS)
+        }
+        dialog.show()
     }
 
-    private fun toast(text: String) = Toast.makeText(this, text, Toast.LENGTH_LONG).show()
+    /** With the app's context, not the screen's: a message can come after the screen has closed (see [show]). */
+    private fun toast(text: String) = Toast.makeText(applicationContext, text, Toast.LENGTH_LONG).show()
 
     companion object {
         const val EXTRA_PATH = "path"
