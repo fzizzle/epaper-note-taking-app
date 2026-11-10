@@ -104,6 +104,12 @@ class PageView(context: Context) : View(context) {
     private var sizes: List<SizePt> = emptyList()
     private var toDisplay: List<Affine> = emptyList()
 
+    /** Trim margins: each page's box to fit (see Viewport), or null to fit whole pages. */
+    private var fit: List<Box>? = null
+
+    /** [fit] has boxes the viewport doesn't have yet ([refitLater]): it takes them at the next page turn. */
+    private var fitWaiting = false
+
     /** A page rendering, and the page's ink version it contains. */
     private class Rendered(val bitmap: Bitmap, val version: Int)
 
@@ -181,18 +187,41 @@ class PageView(context: Context) : View(context) {
     private val inkPaint = Paint().apply { strokeCap = Paint.Cap.ROUND }
     private val inkPath = Path() // used again for each see-through stroke, rather than made anew
 
-    /** Lays out the document. [pdfToDisplay] is each page's PDF-to-display transform. UI thread. */
-    fun setPages(pageSizes: List<SizePt>, pdfToDisplay: List<Affine>, startPage: Int) {
+    /**
+     * Lays out the document. [pdfToDisplay] is each page's PDF-to-display transform; [fit] each
+     * page's box to fit the view to (Trim margins), or null for whole pages. UI thread.
+     */
+    fun setPages(pageSizes: List<SizePt>, pdfToDisplay: List<Affine>, startPage: Int, fit: List<Box>? = null) {
         if (width == 0) {
-            post { setPages(pageSizes, pdfToDisplay, startPage) }
+            post { setPages(pageSizes, pdfToDisplay, startPage, fit) }
             return
         }
         sizes = pageSizes
         toDisplay = pdfToDisplay
+        this.fit = fit
+        fitWaiting = false
         dropPatch()
-        viewport = Viewport(pageSizes, width, height).also { it.goTo(startPage) }
+        viewport = Viewport(pageSizes, width, height, fit).also { it.goTo(startPage) }
         invalidate()
         onViewportChanged()
+    }
+
+    /**
+     * New boxes to fit pages to (Trim margins found some), for the same pages. Each page is
+     * fitted to its box from the next page turn: the page on show stays where it is, so it
+     * never moves under the pen. UI thread.
+     */
+    fun refitLater(fit: List<Box>?) {
+        this.fit = fit
+        fitWaiting = true
+    }
+
+    /** Lays the pages out with boxes [refitLater] kept, if any, on the page just turned to. */
+    private fun takeWaitingFit() {
+        if (!fitWaiting) return
+        fitWaiting = false
+        val page = viewport?.page ?: return
+        viewport = Viewport(sizes, width, height, fit).also { it.goTo(page) }
     }
 
     /** Previous or next page. Returns false at either end of the document. */
@@ -201,6 +230,7 @@ class PageView(context: Context) : View(context) {
         val leaving = v.page
         val moved = if (forward) v.next() else v.previous()
         if (!moved) return false
+        takeWaitingFit()
         dropPatch()
         forget(leaving)
         invalidate()
@@ -214,6 +244,7 @@ class PageView(context: Context) : View(context) {
         val leaving = v.page
         if (page == leaving) return
         v.goTo(page)
+        takeWaitingFit()
         dropPatch()
         forget(leaving)
         invalidate()
@@ -356,7 +387,9 @@ class PageView(context: Context) : View(context) {
         val old = viewport ?: return
         if (w == 0 || h == 0) return
         dropPatch()
-        viewport = Viewport(sizes, w, h).also { it.goTo(old.page) }
+        // The page refits anyway, so boxes waiting for a page turn come in now too.
+        fitWaiting = false
+        viewport = Viewport(sizes, w, h, fit).also { it.goTo(old.page) }
         invalidate()
         onViewportChanged()
     }
@@ -454,9 +487,14 @@ class PageView(context: Context) : View(context) {
      * How wide to render the page: its fitted width, zoomed in or not. Zoomed in it's scaled
      * up, and that is what shows while fingers move; once they lift, the sharp patch ([Patch])
      * draws the part on screen at its true size. A full page at 4x would need about 285 MB.
-     * Rounded from the fitted width, so floating-point noise never asks for 2789 then 2790.
+     *
+     * Each page at its own fitted scale, so a neighbour got ready ahead is at the width it will
+     * be shown at. Fitted to a trimmed box (Trim margins) the whole page is wider than the
+     * view; it's kept to [MAX_PICTURE_WIDTH] views wide all the same, for memory, and the
+     * sharp patch makes up for it once zoomed in.
      */
-    private fun renderWidth(v: Viewport, page: Int): Int = Math.round(sizes[page].w * v.pxPerPt() / v.zoom)
+    private fun renderWidth(v: Viewport, page: Int): Int =
+        minOf(Math.round(sizes[page].w * v.fittedPxPerPt(page)), Math.round(width * MAX_PICTURE_WIDTH))
 
     private fun ensureRendered(page: Int, widthPx: Int) {
         val have = bitmaps.get(page, widthPx)
@@ -706,6 +744,9 @@ class PageView(context: Context) : View(context) {
     }
 
     companion object {
+        /** A page's picture is at most this many times the view's width (see renderWidth). */
+        private const val MAX_PICTURE_WIDTH = 1.5f
+
         /** Beside the page: a light grey, darker than [placeholder]'s page-not-drawn-yet grey. */
         private val BESIDE_PAGE = Color.rgb(215, 215, 215)
 

@@ -168,6 +168,83 @@ class ViewportTest {
         assertEquals(2, v.page)
     }
 
+    // Trim margins: a 600 × 800 pt page whose printed area is 100..500 × 100..700 pt.
+    private val sheet = SizePt(600f, 800f)
+    private val printed = Box(100f, 100f, 500f, 700f)
+    private fun trimmed() = Viewport(listOf(sheet), viewWidthPx = 1200, viewHeightPx = 1800, fit = listOf(printed))
+
+    @Test fun aTrimmedPageFillsTheViewWithItsContent() {
+        val v = trimmed()
+        assertEquals(3f, v.pxPerPt(), 1e-4f) // 400 × 600 pt in 1200 × 1800 px
+        val tl = v.screenToPage(0f, 0f)
+        assertEquals(100f, tl.x, 0.5f)
+        assertEquals(100f, tl.y, 0.5f)
+        val br = v.screenToPage(1200f, 1800f)
+        assertEquals(500f, br.x, 0.5f)
+        assertEquals(700f, br.y, 0.5f)
+        // What's on show is the printed area: the sharp patch, zoomed, is cut from this.
+        assertBox(printed, v.visiblePagePart())
+    }
+
+    @Test fun aTrimmedPageCantBeMovedOutsideItsBox() {
+        val v = trimmed()
+        v.panBy(300f, 300f) // at normal size it stays put
+        assertEquals(100f, v.screenToPage(0f, 0f).x, 0.5f)
+        v.zoomAround(10f, 600f, 900f)
+        assertEquals(4f, v.zoom, 1e-4f)
+        assertEquals(12f, v.pxPerPt(), 1e-4f) // zoom counts from the box filling the view
+        v.panBy(-1e6f, -1e6f)
+        val tl = v.screenToPage(0f, 0f)
+        assertEquals(100f, tl.x, 0.5f)
+        assertEquals(100f, tl.y, 0.5f)
+        v.panBy(1e6f, 1e6f)
+        val br = v.screenToPage(1200f, 1800f)
+        assertEquals(500f, br.x, 0.5f)
+        assertEquals(700f, br.y, 0.5f)
+        // Pushed on past the box's bottom is past the edge: that turns the page.
+        assertEquals(250f, v.panBy(0f, 250f), 0.01f)
+    }
+
+    /**
+     * A wide printed area: it fills the width, and the page above and below it shows too. The
+     * page on screen is never more than the view, so the pen's limit stays on the screen.
+     */
+    @Test fun aTrimmedPagesBoundsStayInTheView() {
+        val v = Viewport(listOf(sheet), viewWidthPx = 1200, viewHeightPx = 1800, fit = listOf(Box(100f, 300f, 500f, 500f)))
+        assertEquals(3f, v.pxPerPt(), 1e-4f)
+        assertEquals(400f, v.screenToPage(0f, 900f).y, 0.5f) // the box's middle is the view's
+        assertArrayEquals(floatArrayOf(0f, 0f, 1200f, 1800f), v.pageBoundsPx(), 0.01f)
+        assertBox(Box(100f, 100f, 500f, 700f), v.visiblePagePart())
+    }
+
+    /** Each page is fitted to its own box, also the ones not on show (their pictures are made ahead). */
+    @Test fun eachPageIsFittedToItsOwnBox() {
+        val v = Viewport(listOf(sheet, sheet), viewWidthPx = 1200, viewHeightPx = 1800, fit = listOf(printed, Box(0f, 0f, 600f, 800f)))
+        assertEquals(3f, v.fittedPxPerPt(0), 1e-4f)
+        assertEquals(2f, v.fittedPxPerPt(1), 1e-4f)
+        v.zoomAround(2f, 600f, 900f)
+        assertEquals(3f, v.fittedPxPerPt(0), 1e-4f) // not the zoom
+        v.next()
+        assertEquals(2f, v.pxPerPt(), 1e-4f)
+        assertEquals(0f, v.screenToPage(0f, 100f).x, 0.5f) // the whole page, as without a box
+    }
+
+    /** A box that is the whole page is the same as no box, zoomed and moved or not. */
+    @Test fun withoutAFitBoxNothingChanges() {
+        val sizes = listOf(portrait, landscape)
+        val plain = Viewport(sizes, viewWidthPx = 1860, viewHeightPx = 2300)
+        val whole = Viewport(sizes, viewWidthPx = 1860, viewHeightPx = 2300, fit = sizes.map { Box(0f, 0f, it.w, it.h) })
+        listOf(plain, whole).forEach {
+            it.zoomAround(2.5f, 400f, 700f)
+            it.panBy(120f, -60f)
+        }
+        assertEquals(plain.pageToScreen(), whole.pageToScreen())
+        assertEquals(plain.panBy(0f, 1e5f), whole.panBy(0f, 1e5f), 0.01f)
+        plain.next()
+        whole.next()
+        assertEquals(plain.pageToScreen(), whole.pageToScreen())
+    }
+
     /** The whole chain: PDF point → display point → screen pixel, and back, zoomed, panned and rotated. */
     @Test fun mapsThroughZoomPanAndRotation() {
         // Page 1 is a portrait page with MediaBox (100,100)-(712,892), turned 90°. This is the

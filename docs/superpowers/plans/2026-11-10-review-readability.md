@@ -134,18 +134,18 @@ These are new features, so each needs a yes or no. Any can be left out.
   - `class Viewport(sizes: List<SizePt>, viewWidthPx: Int, viewHeightPx: Int, private val fit: List<Box>? = null)` — when `fit[page]` is given, "fitted" means that box fills the view, zoom 1 shows that box, and moving and zoom limits apply to it. `pageToScreen()` still maps whole-page display points, so everything built on it (the pen's mapping, the selection layer, `visiblePagePart`) keeps working unchanged. The picture of the whole page is still what's drawn; the view clips it.
   - `fun PageView.setPages(pageSizes: List<SizePt>, pdfToDisplay: List<Affine>, startPage: Int, fit: List<Box>? = null)`.
 
-- [ ] **Step 1: Write the failing tests.**
+- [x] **Step 1: Write the failing tests.**
   - `ContentBoundsTest`: `aBlankPageHasNoContent`; `textInTheMiddleIsFound`; `aSingleSpeckIsIgnored`; `aBlankPageIsNotTrimmed`; `aFullBleedPageIsNotTrimmed`; `theBorderNeverLeavesThePage`; `inkInTheMarginWidensTheTrim` (content found on a picture that includes a stroke near the edge reaches that stroke).
   - `ViewportTest`: `aTrimmedPageFillsTheViewWithItsContent` (fit box 100..500 × 100..700 on a 600×800 pt page in a 1200×1800 view: at zoom 1, `screenToPage(0, 0)` is near (100, 100) and `pxPerPt()` is 3); `aTrimmedPageCantBeMovedOutsideItsBox`; `withoutAFitBoxNothingChanges` (every existing test still passes untouched).
-- [ ] **Step 2: Run and confirm they fail.**
-- [ ] **Step 3: Implement.**
+- [x] **Step 2: Run and confirm they fail.**
+- [x] **Step 3: Implement.**
   - Finding the content: on the worker, per page and on demand (the page on show and its two neighbours, not the whole document at open): render at 200 px wide **with ink** (`PdfFile.render(page, 200)`), run `ContentBounds.of`, and keep the box in a map for the session. A page whose ink changes is measured again when it's next arrived at, not while it's on show, so the page never jumps under the pen.
   - Layout: `layOutPages` passes the boxes it has (the whole page for those not measured yet); when a box arrives for the page on show before the owner has zoomed or written on it, lay out again once.
   - `renderWidth` stays the whole page's width at the fitted scale, which with a trim is larger than the view; cap it at 1.5× the view's width, and let Task 2's sharp patch cover the rest when zoomed.
   - The menu: "Trim margins" with a tick, in `openPageMenu` (or the library's Settings, by decision 5). Changing it lays the pages out again and calls `publishPenMapping()`.
-- [ ] **Step 4: Run all laptop tests** — pass.
+- [x] **Step 4: Run all laptop tests** — pass.
 - [ ] **Step 5: Check on the tablet,** on a deck with wide margins and on a scanned paper: text is visibly larger with trim on; write right at the trimmed edge, turn the page and come back — the stroke is inside the view; turn the tablet and rotate a page with trim on — the page refits and strokes stay put; lasso, move, resize and paste all land where the pen is; with trim off everything is as before.
-- [ ] **Step 6: Commit.** `git commit -m "notes: pages can be fitted to their printed area"`
+- [x] **Step 6: Commit.** `git commit -m "notes: pages can be fitted to their printed area"`
 
 ### Task 6: Owner session (hard stop)
 

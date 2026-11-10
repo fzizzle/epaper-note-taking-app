@@ -14,7 +14,7 @@ class ReadingPrefs(context: Context) {
         get() = runCatching { Contrast.valueOf(prefs.getString(CONTRAST, null) ?: "") }.getOrDefault(Contrast.NORMAL)
         set(value) = prefs.edit().putString(CONTRAST, value.name).apply()
 
-    /** Whether the page's empty margins are cut off on screen (Task 5). Off until chosen. */
+    /** Whether pages are fitted to their printed area on screen, not the whole sheet (ContentBounds). Off until chosen. */
     var trimMargins: Boolean
         get() = prefs.getBoolean(TRIM_MARGINS, false)
         set(value) = prefs.edit().putBoolean(TRIM_MARGINS, value).apply()

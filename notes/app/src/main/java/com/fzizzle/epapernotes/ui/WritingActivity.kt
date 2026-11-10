@@ -71,6 +71,27 @@ class WritingActivity : Activity() {
      */
     @Volatile private var contrast = Contrast.NORMAL
 
+    /** Trim margins: pages fitted to their printed area, not the whole sheet. From [readingPrefs]. UI thread. */
+    private var trimMargins = false
+
+    /** A page's box to fit (ContentBounds.trim), in display points, and the page's ink version it was measured at. */
+    private class PrintedArea(val box: Box, val inkVersion: Int)
+
+    /**
+     * Each page's printed area once measured, kept for the session, and the pages being
+     * measured now. Only the page on show and its neighbours are measured, as pages are
+     * arrived at ([measureAround]), not the whole document at open. UI thread.
+     */
+    private val printedAreas = HashMap<Int, PrintedArea>()
+    private val measuring = HashSet<Int>()
+
+    /**
+     * True from a page being arrived at until the pen or a finger gesture first touches it.
+     * Only until then may its printed area, arriving, refit it: a page never moves under the
+     * pen. UI thread.
+     */
+    private var shownPageUntouched = false
+
     /** TEMPORARY: which island look the owner is trying, kept between documents. */
     private val stripLook by lazy { StripLook(getSharedPreferences("strip-look", MODE_PRIVATE)) }
     /** The file being written into. It changes once, if the owner saves a damaged file's writing to a copy. */
@@ -236,6 +257,7 @@ class WritingActivity : Activity() {
         path = intent.getStringExtra(EXTRA_PATH) ?: return finish()
         lastPages = LastPageStore(this)
         contrast = readingPrefs.contrast
+        trimMargins = readingPrefs.trimMargins
 
         pages = PageView(this)
         indicator = TextView(this).apply {
@@ -396,6 +418,7 @@ class WritingActivity : Activity() {
             }
         }
         pages.onStylusDown = { button ->
+            shownPageUntouched = false
             hoverButton = button
             publishPenChoice()
             strokeChoice = penChoice
@@ -406,6 +429,7 @@ class WritingActivity : Activity() {
         pages.onFingerGestureStart = {
             Log.i(TAG, "fingers down: pause fast-ink")
             fingerGesture = true
+            shownPageUntouched = false
             handler.removeCallbacks(resumeFastInk) // a show's resume mustn't land mid-gesture
             // Nor the last gesture's refresh: this one's end brings its own.
             handler.removeCallbacks(heldCleanRefresh)
@@ -487,13 +511,21 @@ class WritingActivity : Activity() {
                 // this was asked for: a second rotation's answer builds on the first one's.
                 val sizes = List(count) { read[it]?.first?.let { s -> SizePt(s.width, s.height) } ?: pageSizes[it] }
                 val transforms = List(count) { read[it]?.second ?: pdfToDisplay[it] }
-                // A page that turned has renderings the wrong way round.
-                pdfToDisplay.indices.filter { it < transforms.size && transforms[it] != pdfToDisplay[it] }.forEach { pages.pageRotated(it) }
+                // A page that turned has renderings, and a printed area, the wrong way round.
+                // One being measured is dropped when it comes (printedAreaFound).
+                pdfToDisplay.indices.filter { it < transforms.size && transforms[it] != pdfToDisplay[it] }.forEach {
+                    pages.pageRotated(it)
+                    printedAreas.remove(it)
+                    measuring.remove(it)
+                }
                 pageCount = sizes.size
                 pageSizes = sizes
                 pdfToDisplay = transforms
                 displayToPdf = transforms.map { it.inverse() }
-                pages.setPages(sizes, transforms, startPage ?: pages.viewport?.page ?: lastPages.get(path))
+                pages.setPages(sizes, transforms, startPage ?: pages.viewport?.page ?: lastPages.get(path), fitBoxes())
+                // The page on show is laid out anew. (At open the view may have no size yet; then
+                // setPages waits for it, and pageMaybeTurned does this.)
+                pages.viewport?.let { pageArrived(it.page) }
                 then()
             }
         }
@@ -510,7 +542,8 @@ class WritingActivity : Activity() {
     /**
      * Where the pen may write: the page itself, as far as it's on screen. Ink written beside
      * the page would be saved outside it and vanish at the next redraw. Rounded inwards, so
-     * not even a pixel's width lies off the page.
+     * not even a pixel's width lies off the page. Cut to the view (pageBoundsPx is), so a page
+     * fitted to its printed area, bigger than the view, still gives Onyx a rect on the screen.
      */
     private fun penLimit(): Rect {
         val b = pages.viewport?.pageBoundsPx() ?: return Rect(0, 0, pages.width, pages.height)
@@ -541,6 +574,99 @@ class WritingActivity : Activity() {
      * covers them, and the tool draws with fast-ink ([ToolState.fastInkOn]).
      */
     private fun fastInkWanted() = documentShown && !dialogOpen && toolState.fastInkOn()
+
+    /**
+     * Trim margins: the box to fit each page to, the whole page for those not measured yet; or
+     * null, whole pages, with it off. The boxes are in display points, as the pen's mapping is.
+     */
+    private fun fitBoxes(): List<Box>? {
+        if (!trimMargins) return null
+        return List(pageSizes.size) { printedAreas[it]?.box ?: Box(0f, 0f, pageSizes[it].w, pageSizes[it].h) }
+    }
+
+    /**
+     * Lays the pages out again with the boxes there are now, on the page on show at normal
+     * size. Like every layout it tells the pen the new mapping, limit and line width (see
+     * onViewportChanged); the mapping once more here, since the pen's stroke depends on it.
+     */
+    private fun fitPagesAgain() {
+        val v = pages.viewport ?: return
+        pages.setPages(pageSizes, pdfToDisplay, v.page, fitBoxes())
+        publishPenMapping()
+    }
+
+    /** UI thread. [page] is on show anew: turned to, or laid out again. Nothing has touched it yet. */
+    private fun pageArrived(page: Int) {
+        shownPageUntouched = true
+        measureAround(page)
+    }
+
+    /**
+     * Measures the printed area of [page] and its neighbours, where there's none yet or the
+     * page's ink has changed since. A page whose ink changes while it's on show is measured
+     * again only once it's left (as a neighbour) or arrived at again, so it never jumps under the
+     * pen. UI thread.
+     */
+    private fun measureAround(page: Int) {
+        if (!trimMargins) return
+        // The page on show first: the worker answers in order, and it's the one in view.
+        for (p in listOf(page, page + 1, page - 1)) if (p in pageSizes.indices) measure(p)
+    }
+
+    private fun measure(page: Int) {
+        val inkVersion = pages.inkVersion(page)
+        if (printedAreas[page]?.inkVersion == inkVersion || page in measuring) return
+        measuring += page
+        val size = pageSizes[page]
+        val turnedAs = pdfToDisplay[page]
+        // Every stroke counted in inkVersion reached the PDF before this, as for a page picture.
+        session.runOnDocument { pdf ->
+            val box = try {
+                val started = SystemClock.uptimeMillis()
+                // Smoothed, unlike the page pictures: at this size a pen stroke is under a pixel
+                // wide, and drawn solid it could vanish, where smoothed it still leaves a grey.
+                // No contrast step either: this picture is never shown.
+                val bitmap = (pdf as PdfFile).render(page, MEASURE_WIDTH_PX, smoothInk = true)
+                val w = bitmap.width
+                val h = bitmap.height
+                val pixels = IntArray(w * h).also { bitmap.getPixels(it, 0, w, 0, 0, w, h) }
+                bitmap.recycle()
+                ContentBounds.trim(size, ContentBounds.of(pixels, w, h), w / size.w).also {
+                    Log.i(TAG, "printed area page=$page box=$it ms=${SystemClock.uptimeMillis() - started}")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "measuring the printed area failed page=$page", e)
+                null
+            }
+            runOnUiThread { printedAreaFound(page, turnedAs, inkVersion, box) }
+        }
+    }
+
+    /**
+     * UI thread. A page's printed area arrived, measured with the page turned as [turnedAs] and
+     * its ink at [inkVersion]; null if it couldn't be measured (it's tried again next time). The page
+     * on show is refitted to it only if nothing has touched it since it was arrived at; any
+     * other page takes it at the next page turn.
+     */
+    private fun printedAreaFound(page: Int, turnedAs: Affine, inkVersion: Int, box: Box?) {
+        // The page turned since: layOutPages dropped this one and has asked again.
+        if (page !in pdfToDisplay.indices || pdfToDisplay[page] != turnedAs) return
+        measuring -= page
+        if (box == null) return
+        val had = printedAreas[page]?.box
+        printedAreas[page] = PrintedArea(box, inkVersion)
+        if (!trimMargins || box == had) return
+        val v = pages.viewport ?: return
+        if (page == v.page && shownPageUntouched && !pen.isWriting && !screenPenDown) {
+            Log.i(TAG, "refit page=$page to its printed area")
+            fitPagesAgain()
+            // The panel ignores the view's drawing while fast-ink is on, as for a page turn.
+            // With a menu or dialog open fast-ink is paused already, and its closing resumes it.
+            if (!dialogOpen) showWithoutFastInk()
+        } else {
+            pages.refitLater(fitBoxes())
+        }
+    }
 
     private fun publishPenMapping() {
         val v = pages.viewport ?: return
@@ -654,6 +780,7 @@ class WritingActivity : Activity() {
         if (page == shownPage) return
         shownPage = page
         letGoOfAll()
+        pageArrived(page)
     }
 
     /** UI thread. Lets go of the selection and cancels an armed paste, if there's either. */
@@ -974,6 +1101,8 @@ class WritingActivity : Activity() {
             looks.add(c.label()).setChecked(c == contrast).setOnMenuItemClickListener { chooseContrast(c); true }
         }
         looks.setGroupCheckable(0, true, true) // the one in use is ticked
+        menu.menu.add("Trim margins").setCheckable(true).setChecked(trimMargins)
+            .setOnMenuItemClickListener { chooseTrimMargins(!trimMargins); true }
         // TEMPORARY, while the owner compares the two island looks; removed once one is chosen.
         val other = if (island.style == IslandStyle.BLACK) IslandStyle.OUTLINE else IslandStyle.BLACK
         menu.menu.add(if (other == IslandStyle.BLACK) "Toolbar: black island" else "Toolbar: outlined island")
@@ -1003,6 +1132,18 @@ class WritingActivity : Activity() {
     }
 
     private fun Contrast.label() = name.lowercase().replaceFirstChar { it.uppercase() }
+
+    /**
+     * Fits pages to their printed area ([on]) or to the whole sheet again, and keeps the
+     * choice for next time. Screen only: the PDF is the same either way.
+     */
+    private fun chooseTrimMargins(on: Boolean) {
+        Log.i(TAG, "trim margins $on")
+        readingPrefs.trimMargins = on
+        trimMargins = on
+        fitPagesAgain()
+        pages.viewport?.let { pageArrived(it.page) }
+    }
 
     /** Turns the page on show, or every page, 90° clockwise from where it is (spec §6.4), as one undo step. */
     private fun rotate(all: Boolean) {
@@ -1279,6 +1420,9 @@ class WritingActivity : Activity() {
 
         /** How long the pen must rest before a show skipped while writing is tried again. */
         const val SHOW_RETRY_IDLE_MS = 500L
+
+        /** How wide a page is drawn to find its printed area (Trim margins): small, so it's quick. */
+        private const val MEASURE_WIDTH_PX = 200
 
         /** Snips (plan decision 9): 2 pixels per point, at most 2000 pixels on the long side. */
         const val SNIP_PX_PER_PT = 2f
