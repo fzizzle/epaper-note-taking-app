@@ -13,6 +13,7 @@ import android.view.ScaleGestureDetector
 import android.view.View
 import com.fzizzle.epapernotes.geometry.Affine
 import com.fzizzle.epapernotes.geometry.Pt
+import com.fzizzle.epapernotes.ink.Box
 import com.fzizzle.epapernotes.ink.Stroke
 import com.fzizzle.epapernotes.ink.StrokeStyle
 import com.fzizzle.epapernotes.tools.PenButton
@@ -79,11 +80,25 @@ class PageView(context: Context) : View(context) {
     /** The selection box, snip rectangle and so on, drawn on top of the page. */
     var selectionLayer: SelectionLayer? = null
 
+    /**
+     * The picture a refit of the page on show waited for has come ([refitWhenDrawn]). The
+     * screen lays the page out with its new box now, so the pen's mapping changes with what
+     * the panel shows, and returns true; or false if the owner has started on the page since,
+     * and then nothing in view changes. UI thread.
+     */
+    var onRefitReady: () -> Boolean = { false }
+
     /** Called after a fresh page rendering, made at the page's ink [version], is put on screen. */
     var onPageShown: (page: Int, version: Int) -> Unit = { _, _ -> }
 
     /** Asks for [page] to be drawn [widthPx] wide. The answer comes back through [pageRendered]. */
     var requestRender: (page: Int, widthPx: Int) -> Unit = { _, _ -> }
+
+    /**
+     * Asks for [part] of [page], in display points, drawn at [pxPerPt]: the sharp patch (see
+     * [Patch]). The answer comes back through [regionRendered] with the same [token].
+     */
+    var requestRegionRender: (page: Int, part: Box, pxPerPt: Float, token: Int) -> Unit = { _, _, _, _ -> }
 
     /**
      * True while Onyx has the panel (fast-ink is on) and the pen is up. Only then may a page's
@@ -96,6 +111,28 @@ class PageView(context: Context) : View(context) {
         private set
     private var sizes: List<SizePt> = emptyList()
     private var toDisplay: List<Affine> = emptyList()
+
+    /** Trim margins: each page's box to fit (see Viewport), or null to fit whole pages. */
+    private var fit: List<Box>? = null
+
+    /** [fit] has boxes the viewport doesn't have yet ([refitLater]): it takes them at the next page turn. */
+    private var fitWaiting = false
+
+    // The page on show and the picture width its new box needs, while that picture is on its
+    // way for a refit ([refitWhenDrawn]). Forgotten if the page is left, turned or laid out
+    // again first: the box then waits for the next page turn, as [refitLater] keeps it.
+    private var refitPage = NO_REFIT
+    private var refitWidth = 0
+
+    // Meanwhile a picture for the page's present layout came, and showing it was held (its ink
+    // version), so the panel goes straight to the refitted page: shown after all if the refit is
+    // given up. Null when none was held.
+    private var heldForRefit: Int? = null
+
+    private fun forgetRefit() {
+        refitPage = NO_REFIT
+        heldForRefit = null
+    }
 
     /** A page rendering, and the page's ink version it contains. */
     private class Rendered(val bitmap: Bitmap, val version: Int)
@@ -120,6 +157,35 @@ class PageView(context: Context) : View(context) {
     // comes, the view isn't redrawn and the screen isn't told.
     private val quietRenders = HashSet<Pair<Int, Int>>()
 
+    /**
+     * Zoomed in, the page's picture is the whole page at its fitted size, scaled up, so small
+     * text is blurry. Once the fingers lift, the part on screen ([Viewport.visiblePagePart]) is
+     * drawn again at its true size and laid over it: the sharp patch. At most the view's size,
+     * so it costs less memory than a bigger whole-page picture would. It's made at the page's
+     * ink [version], like a page picture (see InkOverlay).
+     */
+    private class Patch(val page: Int, val part: Box, val bitmap: Bitmap, val version: Int)
+
+    // Only one, for the page and part on show: any zoom, move, turn or rotation drops it at
+    // once ([dropPatch]), and its memory goes back then. Like the page pictures it's touched
+    // on the UI thread only, so onDraw never holds one that has been freed.
+    private var patch: Patch? = null
+
+    // Goes up with every patch asked for and every one dropped: an answer carrying an older
+    // token was asked for a view that has gone, and is thrown away.
+    private var patchToken = 0
+
+    // The token of a quiet patch on its way ([bakeIfFull]): when it comes, it replaces the patch
+    // on show without a redraw and without telling the screen. NO_QUIET_PATCH when none is.
+    private var quietPatchToken = NO_QUIET_PATCH
+
+    /**
+     * True from asking for a sharp patch until it arrives or is dropped. The screen holds the
+     * clean refresh after a zoom for it, so the zoom ends in one panel update, not two.
+     */
+    var sharpPatchComing = false
+        private set
+
     private val ink = InkOverlay()
 
     private var pinching = false
@@ -142,22 +208,75 @@ class PageView(context: Context) : View(context) {
 
     private val placeholder = Paint().apply { color = Color.rgb(235, 235, 235) }
     private val pagePaint = Paint(Paint.FILTER_BITMAP_FLAG)
+    // Pixel for pixel: for a picture drawn at its true size (the page at normal size, the
+    // sharp patch) on whole pixels, smoothing would only blur it.
+    private val unscaledPaint = Paint().apply { isFilterBitmap = false }
     // Not smoothed: solid, like Onyx's live ink and the page's renderings of it (PdfFile.render).
     // This is what the panel shows of a new stroke once Onyx hands it back after a pause.
     private val inkPaint = Paint().apply { strokeCap = Paint.Cap.ROUND }
     private val inkPath = Path() // used again for each see-through stroke, rather than made anew
 
-    /** Lays out the document. [pdfToDisplay] is each page's PDF-to-display transform. UI thread. */
-    fun setPages(pageSizes: List<SizePt>, pdfToDisplay: List<Affine>, startPage: Int) {
+    /**
+     * Lays out the document. [pdfToDisplay] is each page's PDF-to-display transform; [fit] each
+     * page's box to fit the view to (Trim margins), or null for whole pages. UI thread.
+     */
+    fun setPages(pageSizes: List<SizePt>, pdfToDisplay: List<Affine>, startPage: Int, fit: List<Box>? = null) {
         if (width == 0) {
-            post { setPages(pageSizes, pdfToDisplay, startPage) }
+            post { setPages(pageSizes, pdfToDisplay, startPage, fit) }
             return
         }
         sizes = pageSizes
         toDisplay = pdfToDisplay
-        viewport = Viewport(pageSizes, width, height).also { it.goTo(startPage) }
+        this.fit = fit
+        fitWaiting = false
+        forgetRefit()
+        dropPatch()
+        viewport = Viewport(pageSizes, width, height, fit).also { it.goTo(startPage) }
         invalidate()
         onViewportChanged()
+    }
+
+    /**
+     * New boxes to fit pages to (Trim margins found some), for the same pages. Each page is
+     * fitted to its box from the next page turn: the page on show stays where it is, so it
+     * never moves under the pen. UI thread.
+     */
+    fun refitLater(fit: List<Box>?) {
+        this.fit = fit
+        fitWaiting = true
+        // The neighbours' pictures made ahead were for their old boxes: made again for the new
+        // ones now, so turning to one finds its picture ready and costs one panel update.
+        // Asked for here, not by a redraw, which the panel could show for nothing.
+        val v = viewport ?: return
+        if (!pinching) readyNeighbours(v)
+    }
+
+    /**
+     * [fit] has a new box for the page on show, and nothing has touched the page since it was
+     * arrived at. Its picture at the width that box needs is asked for first; the layout, and
+     * with it the pen's mapping and limit, stay as they are until it comes, then
+     * [onRefitReady] makes the change and the picture shows it, in one panel update. Returns
+     * true if that picture is here already: the screen refits and shows it now. Like
+     * [refitLater], the next page turn takes the new boxes in any case. UI thread.
+     */
+    fun refitWhenDrawn(fit: List<Box>): Boolean {
+        refitLater(fit)
+        val v = viewport ?: return false
+        val w = widthWithBox(v.page)
+        val have = bitmaps.get(v.page, w)
+        if (have != null && !ink.isStale(v.page, have.version)) return true
+        refitPage = v.page
+        refitWidth = w
+        ensureRendered(v.page, w)
+        return false
+    }
+
+    /** Lays the pages out with boxes [refitLater] kept, if any, on the page just turned to. */
+    private fun takeWaitingFit() {
+        if (!fitWaiting) return
+        fitWaiting = false
+        val page = viewport?.page ?: return
+        viewport = Viewport(sizes, width, height, fit).also { it.goTo(page) }
     }
 
     /** Previous or next page. Returns false at either end of the document. */
@@ -166,6 +285,9 @@ class PageView(context: Context) : View(context) {
         val leaving = v.page
         val moved = if (forward) v.next() else v.previous()
         if (!moved) return false
+        forgetRefit()
+        takeWaitingFit()
+        dropPatch()
         forget(leaving)
         invalidate()
         onViewportChanged()
@@ -178,6 +300,9 @@ class PageView(context: Context) : View(context) {
         val leaving = v.page
         if (page == leaving) return
         v.goTo(page)
+        forgetRefit()
+        takeWaitingFit()
+        dropPatch()
         forget(leaving)
         invalidate()
         onViewportChanged()
@@ -194,9 +319,11 @@ class PageView(context: Context) : View(context) {
     /** [page] turned: its renderings are the wrong way round. Call before [setPages] lays it out anew. UI thread. */
     fun pageRotated(page: Int) {
         dropRenderings(page)
+        dropPatch()
     }
 
     private fun dropRenderings(page: Int) {
+        if (page == refitPage) forgetRefit() // that picture is dropped when it comes, and fresh ones asked for
         bitmaps.invalidate(page)
         inFlight.keys.filter { it.first == page }.forEach {
             inFlight.remove(it)
@@ -249,6 +376,10 @@ class PageView(context: Context) : View(context) {
         val v = viewport ?: return
         if (pinching || fingersDown || !quietTime()) return
         val page = v.page
+        // Zoomed in and still, the sharp patch is what's on top, and strokes are drawn by hand
+        // over it from its version (onDraw), so it's baked too. The page picture under it still
+        // is as well: it's what's drawn the moment the page moves and the patch goes.
+        bakePatchIfFull(v)
         val w = renderWidth(v, page)
         // No picture at this width, a stale one, or one on its way: the usual path has it in hand.
         val have = bitmaps.get(page, w) ?: return
@@ -260,6 +391,32 @@ class PageView(context: Context) : View(context) {
         quietRenders += page to w
         android.util.Log.i("Notes", "render requested page=$page width=$w version=${ink.version(page)} (quiet: $byHand strokes drawn by hand)")
         requestRender(page, w)
+    }
+
+    /**
+     * [bakeIfFull] for the sharp patch on show: when more than [InkOverlay.BAKE_AFTER] strokes
+     * are drawn by hand over it, a fresh one with them in it is asked for, quietly.
+     */
+    private fun bakePatchIfFull(v: Viewport) {
+        val p = patch ?: return
+        val part = v.visiblePagePart()
+        if (!patchCovers(v.page) || p.part != part) return
+        if (sharpPatchComing || quietPatchToken == patchToken) return // one on its way
+        val byHand = ink.count(v.page, p.version)
+        if (byHand <= InkOverlay.BAKE_AFTER) return
+        patchToken++ // the patch on show stays; anything that drops it drops this one too
+        quietPatchToken = patchToken
+        android.util.Log.i("Notes", "patch requested page=${v.page} (quiet: $byHand strokes drawn by hand)")
+        requestRegionRender(v.page, part, v.pxPerPt(), patchToken)
+    }
+
+    /**
+     * The patch asked for with [token] couldn't be made. It's no longer on its way, so the
+     * next rest or gesture can ask again; the scaled-up page, or the patch on show, stays. UI thread.
+     */
+    fun regionFailed(token: Int) {
+        if (token != patchToken) return // asked for a view that has gone anyway
+        if (token == quietPatchToken) quietPatchToken = NO_QUIET_PATCH else sharpPatchComing = false
     }
 
     override fun onDetachedFromWindow() {
@@ -275,7 +432,28 @@ class PageView(context: Context) : View(context) {
     fun pageChanged(page: Int) {
         ink.changed(page)
         val v = viewport ?: return
-        if (page == v.page && !pinching) ensureRendered(page, renderWidth(v, page))
+        if (page != v.page) return
+        // The patch, and any on its way, are from before the change: never shown again.
+        dropPatch()
+        // Fingers down: the gesture's end asks for it, for wherever the page is left.
+        // The patch first: it's what the owner sees, and the page's picture under it isn't.
+        if (!fingersDown) askForPatch()
+        if (!pinching) ensureRendered(page, renderWidth(v, page))
+    }
+
+    /**
+     * Every page now looks different (the contrast changed): forget every page picture and the
+     * sharp patch, and ask again for what's on show, as [pageChanged] does. Renders already on
+     * their way were made the old way: dropped when they come (see [pageRendered], and the
+     * patch's token). Nothing is redrawn now: the panel keeps the old look until the new one
+     * arrives and goes to it the usual way ([onPageShown]). UI thread.
+     */
+    fun dropAllRenderings() {
+        sizes.indices.forEach { dropRenderings(it) }
+        dropPatch()
+        val v = viewport ?: return
+        if (!fingersDown) askForPatch()
+        if (!pinching) ensureRendered(v.page, renderWidth(v, v.page))
     }
 
     /** Rendering failed (a damaged page, say). Forget it, so it's asked for again next time. UI thread. */
@@ -283,6 +461,12 @@ class PageView(context: Context) : View(context) {
         if (dropped.remove(page to widthPx)) return
         inFlight.remove(page to widthPx)
         quietRenders.remove(page to widthPx)
+        if (page == refitPage && widthPx == refitWidth) {
+            // No refit then: the page stays as it is, with the picture held for it, if any.
+            val held = heldForRefit
+            forgetRefit()
+            if (held != null) showPicture(page, held)
+        }
     }
 
     /** Where the page on show is, for the selection layer. Null until the pages are laid out. */
@@ -296,7 +480,11 @@ class PageView(context: Context) : View(context) {
         super.onSizeChanged(w, h, oldw, oldh)
         val old = viewport ?: return
         if (w == 0 || h == 0) return
-        viewport = Viewport(sizes, w, h).also { it.goTo(old.page) }
+        dropPatch()
+        // The page refits anyway, so boxes waiting for a page turn come in now too.
+        fitWaiting = false
+        forgetRefit()
+        viewport = Viewport(sizes, w, h, fit).also { it.goTo(old.page) }
         invalidate()
         onViewportChanged()
     }
@@ -310,6 +498,9 @@ class PageView(context: Context) : View(context) {
         }
         val version = inFlight.remove(page to widthPx) ?: 0
         val quiet = quietRenders.remove(page to widthPx)
+        val forRefit = page == refitPage && widthPx == refitWidth
+        val held = if (forRefit) heldForRefit else null
+        if (forRefit) forgetRefit()
         val stale = ink.isStale(page, version)
         android.util.Log.i("Notes", "rendered page=$page width=$widthPx version=$version of ${ink.version(page)}${if (stale) " (stale, asking again)" else ""}${if (quiet) " (quiet)" else ""}")
         if (quiet && !stale && page == viewport?.page) {
@@ -336,20 +527,131 @@ class PageView(context: Context) : View(context) {
         }
         // Otherwise even a stale one is kept: it's closer to the page than what's showing. Drawing asks again.
         bitmaps.put(page, widthPx, Rendered(bitmap, version))
+        // A refit is waiting for its picture (refitWhenDrawn): this one, for the layout on
+        // show, is kept but not shown, so the panel goes once, straight to the refitted page.
+        if (page == refitPage) {
+            if (!stale) heldForRefit = version
+            return
+        }
+        // The picture the refit waited for: it's for the new layout, so it's shown only along
+        // with it. If the page changed meanwhile, or the screen won't refit it now, it's kept
+        // for later, and what was held is shown instead (nothing, if nothing was).
+        if (forRefit && (stale || !onRefitReady())) {
+            if (held != null) showPicture(page, held)
+            return
+        }
+        // Under a good sharp patch this picture isn't seen (onDraw), so nothing in view changes:
+        // showing it would be a second panel update after the patch's own. Used once the patch goes.
+        if (!stale && patchCovers(page)) return
+        // A picture at a width the page no longer has (one asked for before a refit, say), while
+        // a good one at today's width is kept: it isn't drawn (onDraw takes today's), so it
+        // isn't shown either, which would cost a panel update for nothing.
+        val v = viewport
+        if (v != null && page == v.page && widthPx != renderWidth(v, page)) {
+            val current = bitmaps.get(page, renderWidth(v, page))
+            if (current != null && !ink.isStale(page, current.version)) return
+        }
         // Only the page on show: a neighbour got ready for the next page turn changes nothing in view.
         if (page == viewport?.page) invalidate()
         if (!stale) onPageShown(page, version)
     }
 
-    /**
-     * How wide to render the page. Zoomed in, it's rendered at 1.5x its fitted size and
-     * scaled up: a full page at 4x would need about 285 MB.
-     */
-    private fun renderWidth(v: Viewport, page: Int): Int {
-        // Rounded from the fitted width, so floating-point noise never asks for 2789 then 2790.
-        val fitted = Math.round(sizes[page].w * v.pxPerPt() / v.zoom)
-        return if (v.zoom > 1.05f) Math.round(fitted * 1.5f) else fitted
+    /** A picture of the page on show, made at ink [version], held back until now: on screen and to the panel. */
+    private fun showPicture(page: Int, version: Int) {
+        invalidate()
+        onPageShown(page, version)
     }
+
+    /** A sharp patch arrived from the worker, asked for with [token] at the page's ink [version]. UI thread. */
+    fun regionRendered(page: Int, part: Box, token: Int, version: Int, bitmap: Bitmap) {
+        val v = viewport
+        // Asked for a view that has gone since (a zoom, a move, a turn, a change): never shown.
+        if (token != patchToken || v == null || page != v.page || part != v.visiblePagePart()) {
+            bitmap.recycle()
+            return
+        }
+        if (token == quietPatchToken) {
+            quietPatchToken = NO_QUIET_PATCH
+            // As a quiet page picture (pageRendered): the same view plus the strokes drawn by
+            // hand, swapped in without a redraw, and only while Onyx has the panel. Otherwise
+            // the view is what the panel shows: thrown away, asked for again at a later rest.
+            val old = patch
+            if (quietTime() && old != null && patchCovers(page)) {
+                patch = Patch(page, part, bitmap, version)
+                old.bitmap.recycle()
+            } else {
+                bitmap.recycle()
+            }
+            return
+        }
+        sharpPatchComing = false
+        patch?.bitmap?.recycle() // none is kept while one is on its way; freed all the same if so
+        patch = Patch(page, part, bitmap, version)
+        invalidate()
+        // To the panel the way a fresh page picture goes.
+        onPageShown(page, version)
+    }
+
+    /**
+     * Zoomed in, with the page still: asks for the part on screen at its true size, unless the
+     * patch drawn now is that already. UI thread.
+     */
+    private fun askForPatch() {
+        val v = viewport ?: return
+        // Not at normal size, nor while one is on its way: that one is for this very view, as
+        // anything that changed the view dropped it.
+        if (v.zoom <= 1.05f || sharpPatchComing) return
+        val part = v.visiblePagePart()
+        if (patchCovers(v.page) && patch?.part == part) return
+        dropPatch()
+        sharpPatchComing = true
+        requestRegionRender(v.page, part, v.pxPerPt(), patchToken)
+    }
+
+    /** Lets go of the patch, freeing its memory, and of any on its way. UI thread. */
+    private fun dropPatch() {
+        patch?.bitmap?.recycle()
+        patch = null
+        patchToken++
+        quietPatchToken = NO_QUIET_PATCH
+        sharpPatchComing = false
+    }
+
+    /** True when a sharp patch from since [page]'s last change lies over it. */
+    private fun patchCovers(page: Int): Boolean {
+        val p = patch ?: return false
+        return p.page == page && !ink.isStale(page, p.version)
+    }
+
+    /**
+     * How wide to render the page: its fitted width, zoomed in or not. Zoomed in it's scaled
+     * up, and that is what shows while fingers move; once they lift, the sharp patch ([Patch])
+     * draws the part on screen at its true size. A full page at 4x would need about 285 MB.
+     *
+     * Each page at its own fitted scale, so a neighbour got ready ahead is at the width it will
+     * be shown at: the page on show as the viewport fits it now, any other with the box it
+     * will get when turned to ([fit], which may have come since: [refitLater]). Fitted to a
+     * trimmed box (Trim margins) the whole page is wider than the view; it's kept to
+     * [MAX_PICTURE_WIDTH] views wide all the same, for memory, and the sharp patch makes up
+     * for it once zoomed in.
+     */
+    private fun renderWidth(v: Viewport, page: Int): Int =
+        if (page == v.page) pictureWidth(page, v.fittedPxPerPt(page)) else widthWithBox(page)
+
+    /** [page]'s picture width with the box it gets from [fit] when next laid out or turned to. */
+    private fun widthWithBox(page: Int): Int =
+        pictureWidth(page, Viewport.scaleToFit(fit?.get(page) ?: Box(0f, 0f, sizes[page].w, sizes[page].h), width, height))
+
+    private fun pictureWidth(page: Int, pxPerPt: Float): Int =
+        minOf(Math.round(sizes[page].w * pxPerPt), Math.round(width * MAX_PICTURE_WIDTH))
+
+    /** At normal size, the pages either side of the one on show are made ahead, so turning to one is instant. */
+    private fun readyNeighbours(v: Viewport) {
+        if (v.zoom > 1.05f) return
+        if (v.page + 1 < v.pageCount) ensureRendered(v.page + 1, renderWidth(v, v.page + 1))
+        if (v.page > 0) ensureRendered(v.page - 1, renderWidth(v, v.page - 1))
+    }
+
 
     private fun ensureRendered(page: Int, widthPx: Int) {
         val have = bitmaps.get(page, widthPx)
@@ -385,10 +687,27 @@ class PageView(context: Context) : View(context) {
             bitmaps.invalidate(page) // so ensureRendered below asks for a fresh one
             shown = null
         }
-        if (shown != null) canvas.drawBitmap(shown.bitmap, null, dst, pagePaint) else canvas.drawRect(dst, placeholder)
+        when {
+            shown == null -> canvas.drawRect(dst, placeholder)
+            // The picture is the page's size on screen (normal size, or a zoom that happens to
+            // match): drawn as it is, at the page's corner, which is on a whole pixel (Viewport).
+            abs(shown.bitmap.width - dst.width()) <= 1f && abs(shown.bitmap.height - dst.height()) <= 1f ->
+                canvas.drawBitmap(shown.bitmap, dst.left, dst.top, unscaledPaint)
+            // Zoomed in, or a picture kept from another size: scaled to fit the page.
+            else -> canvas.drawBitmap(shown.bitmap, null, dst, pagePaint)
+        }
 
-        // Whatever this rendering is missing, whenever it was made.
-        val missing = ink.newerThan(page, shown?.version ?: 0)
+        // Zoomed in and still, the sharp patch goes over it, at its own place and size. Only
+        // while it's this view's part: it's dropped as soon as the page moves, so this is a check.
+        val sharp = patch?.takeIf { patchCovers(page) && it.part == v.visiblePagePart() }
+        if (sharp != null) {
+            val at = toScreen.map(Pt(sharp.part.x0, sharp.part.y0))
+            canvas.drawBitmap(sharp.bitmap, Math.round(at.x).toFloat(), Math.round(at.y).toFloat(), unscaledPaint)
+        }
+
+        // Whatever the picture on top is missing, whenever it was made. The patch covers all
+        // of the page that's on screen, so what's under it doesn't count.
+        val missing = ink.newerThan(page, sharp?.version ?: shown?.version ?: 0)
         val pdfToScreen = toDisplay[page].then(toScreen)
         val pxPerPt = v.pxPerPt()
         missing.forEach { drawStroke(canvas, it, pdfToScreen, pxPerPt) }
@@ -398,11 +717,7 @@ class PageView(context: Context) : View(context) {
         // Don't render mid-pinch: the width keeps changing. It's asked for once the pinch ends.
         if (!pinching) {
             ensureRendered(page, w)
-            // Get the neighbours ready, so turning the page is instant.
-            if (v.zoom <= 1.05f) {
-                if (page + 1 < v.pageCount) ensureRendered(page + 1, renderWidth(v, page + 1))
-                if (page > 0) ensureRendered(page - 1, renderWidth(v, page - 1))
-            }
+            readyNeighbours(v)
         }
 
         // Only the slow ones, so the log shows the draws that could make the pen or a drag
@@ -472,6 +787,7 @@ class PageView(context: Context) : View(context) {
             if (v.zoom <= 1.05f) return true
             startGesture()
             movedThisGesture = true
+            dropPatch()
             val beyond = v.panBy(dx, dy)
             pastEdge = if (beyond != 0f && (pastEdge == 0f || (beyond > 0) == (pastEdge > 0))) pastEdge + beyond else 0f
             invalidate()
@@ -488,6 +804,7 @@ class PageView(context: Context) : View(context) {
 
         override fun onScale(d: ScaleGestureDetector): Boolean {
             movedThisGesture = true
+            dropPatch()
             viewport?.zoomAround(d.scaleFactor, d.focusX, d.focusY)
             invalidate()
             onViewportChanged()
@@ -561,6 +878,9 @@ class PageView(context: Context) : View(context) {
                 if (abs(pastEdge) > height * TURN_PUSH_FRACTION && turn(forward = pastEdge > 0)) movedThisGesture = true
                 pastEdge = 0f
                 fingersDown = false
+                // The page is still now: the part on screen, sharp, if zoomed in. Asked before
+                // the screen hears of the gesture's end, so it can wait for it (sharpPatchComing).
+                askForPatch()
                 if (gestureStarted) {
                     gestureStarted = false
                     onFingerGestureEnd(movedThisGesture)
@@ -585,6 +905,14 @@ class PageView(context: Context) : View(context) {
     }
 
     companion object {
+        private const val NO_REFIT = -1
+
+        /** No quiet patch on its way (see quietPatchToken); tokens start at 0 and only go up. */
+        private const val NO_QUIET_PATCH = -1
+
+        /** A page's picture is at most this many times the view's width (see renderWidth). */
+        private const val MAX_PICTURE_WIDTH = 1.5f
+
         /** Beside the page: a light grey, darker than [placeholder]'s page-not-drawn-yet grey. */
         private val BESIDE_PAGE = Color.rgb(215, 215, 215)
 

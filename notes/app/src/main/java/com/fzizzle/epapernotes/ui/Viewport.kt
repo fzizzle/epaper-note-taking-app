@@ -2,6 +2,7 @@ package com.fzizzle.epapernotes.ui
 
 import com.fzizzle.epapernotes.geometry.Affine
 import com.fzizzle.epapernotes.geometry.Pt
+import com.fzizzle.epapernotes.ink.Box
 
 /** A page's size as shown (rotation applied), in PDF points. */
 data class SizePt(val w: Float, val h: Float)
@@ -12,31 +13,52 @@ data class SizePt(val w: Float, val h: Float)
  *
  * At normal size the whole page fits the screen, centred. Zoomed in (up to [MAX_ZOOM]) it
  * can be moved around, but never further than its own edges.
+ *
+ * With Trim margins, [fit] gives each page the box to fit instead, in display points (see
+ * ContentBounds): that box is what fills the screen at normal size, what zoom counts from, and
+ * whose edges limit moving. Everything else still speaks of the whole page: [pageToScreen]
+ * maps whole-page display points, so the pen's mapping, the selection layer and
+ * [visiblePagePart] work as without a box, and the whole page's picture is drawn, cut by the view.
  */
-class Viewport(private val sizes: List<SizePt>, private val viewWidthPx: Int, private val viewHeightPx: Int) {
+class Viewport(
+    private val sizes: List<SizePt>,
+    private val viewWidthPx: Int,
+    private val viewHeightPx: Int,
+    private val fit: List<Box>? = null,
+) {
 
     var page = 0
         private set
     var zoom = 1f
         private set
 
-    // Where the page's top-left corner is on screen, in pixels.
+    // Where the page's top-left corner is on screen, in pixels. Kept to fractions of a pixel,
+    // so slow drags add up, but the page is shown at [shownX0], [shownY0].
     private var x0 = 0f
     private var y0 = 0f
 
+    // The corner on whole pixels: at normal size the picture is drawn 1:1 there, each of its
+    // pixels on one of the screen's, not blended across two (half a pixel off blurs every
+    // edge). Everything that says where the page is on screen reads these, so the pen, the
+    // selection and the sharp patch agree with the picture.
+    private val shownX0: Float get() = Math.round(x0).toFloat()
+    private val shownY0: Float get() = Math.round(y0).toFloat()
+
     init {
         require(sizes.isNotEmpty()) { "a document has at least one page" }
+        require(fit == null || fit.size == sizes.size) { "one box to fit for each page" }
         goTo(0)
     }
 
     val pageCount: Int get() = sizes.size
 
-    /** Shows [page] (kept within the document), whole and centred. */
+    /** Shows [page] (kept within the document), whole (or its box, see [fit]) and centred. */
     fun goTo(page: Int) {
         this.page = page.coerceIn(0, sizes.size - 1)
         zoom = 1f
-        x0 = (viewWidthPx - pageWidthPx()) / 2
-        y0 = (viewHeightPx - pageHeightPx()) / 2
+        x0 = 0f
+        y0 = 0f
+        clamp() // at normal size, clamping is centring
     }
 
     /** Returns false at the last page. */
@@ -54,7 +76,10 @@ class Viewport(private val sizes: List<SizePt>, private val viewWidthPx: Int, pr
     }
 
     /** Screen pixels per PDF point, at the current zoom. */
-    fun pxPerPt(): Float = fitScale() * zoom
+    fun pxPerPt(): Float = fittedPxPerPt(page) * zoom
+
+    /** Screen pixels per PDF point for [page] at normal size, on show or not: how big to draw its picture. */
+    fun fittedPxPerPt(page: Int): Float = scaleToFit(box(page), viewWidthPx, viewHeightPx)
 
     /** Zooms by [factor], keeping the spot under the fingers ([focusX], [focusY]) where it is. */
     fun zoomAround(factor: Float, focusX: Float, focusY: Float) {
@@ -71,43 +96,65 @@ class Viewport(private val sizes: List<SizePt>, private val viewWidthPx: Int, pr
      * bottom, negative past the top). The screen uses that to turn the page.
      *
      * A page shorter than the screen (a zoomed landscape slide, say) stays centred and has no
-     * edge to push past: it reports 0, or every up or down drag would turn the page.
+     * edge to push past: it reports 0, or every up or down drag would turn the page. With a
+     * box to fit ([fit]), all this is of the box's edges.
      */
     fun panBy(dx: Float, dy: Float): Float {
         x0 -= dx
         val wantedY = y0 - dy
         y0 = wantedY
         clamp()
-        return if (pageHeightPx() > viewHeightPx) y0 - wantedY else 0f
+        val b = box(page)
+        return if ((b.y1 - b.y0) * pxPerPt() > viewHeightPx) y0 - wantedY else 0f
     }
 
     /**
      * Where the page is on screen, cut to the view: `[left, top, right, bottom]` in pixels. A
-     * plain array, not Android's RectF, so it can be tested on the laptop.
+     * plain array, not Android's RectF, so it can be tested on the laptop. The whole page's,
+     * even with a box to fit: the page round the box that is on screen can be written on too.
      */
     fun pageBoundsPx(): FloatArray = floatArrayOf(
-        maxOf(x0, 0f),
-        maxOf(y0, 0f),
-        minOf(x0 + pageWidthPx(), viewWidthPx.toFloat()),
-        minOf(y0 + pageHeightPx(), viewHeightPx.toFloat()),
+        maxOf(shownX0, 0f),
+        maxOf(shownY0, 0f),
+        minOf(shownX0 + pageWidthPx(), viewWidthPx.toFloat()),
+        minOf(shownY0 + pageHeightPx(), viewHeightPx.toFloat()),
     )
 
+    /**
+     * The part of the page on screen, in display points: the view cut to the page's edges.
+     * Zoomed in, this is what is drawn again at its true size once the fingers lift (PageView's
+     * sharp patch), so it is never bigger than the view in pixels.
+     */
+    fun visiblePagePart(): Box {
+        val b = pageBoundsPx()
+        val topLeft = screenToPage(b[0], b[1])
+        val bottomRight = screenToPage(b[2], b[3])
+        return Box(topLeft.x, topLeft.y, bottomRight.x, bottomRight.y)
+    }
+
     /** Display points on the page to screen pixels: what drawing the page needs. */
-    fun pageToScreen(): Affine = Affine.scale(pxPerPt()).then(Affine.translate(x0, y0))
+    fun pageToScreen(): Affine = Affine.scale(pxPerPt()).then(Affine.translate(shownX0, shownY0))
 
     /** Where a screen pixel is on the page, in display points. It can be off the page's edges. */
-    fun screenToPage(x: Float, y: Float): Pt = Pt((x - x0) / pxPerPt(), (y - y0) / pxPerPt())
+    fun screenToPage(x: Float, y: Float): Pt = Pt((x - shownX0) / pxPerPt(), (y - shownY0) / pxPerPt())
 
-    private fun fitScale(): Float = minOf(viewWidthPx / sizes[page].w, viewHeightPx / sizes[page].h)
+    /** What fills the screen at normal size: [page]'s box to fit, or the whole page. */
+    private fun box(page: Int): Box = fit?.get(page) ?: Box(0f, 0f, sizes[page].w, sizes[page].h)
 
     private fun pageWidthPx() = sizes[page].w * pxPerPt()
 
     private fun pageHeightPx() = sizes[page].h * pxPerPt()
 
-    /** Smaller than the screen in a direction: centred. Bigger: its edges can't come inside the screen. */
+    /**
+     * The box (the whole page without [fit]) smaller than the screen in a direction: centred.
+     * Bigger: its edges can't come inside the screen. Worked out on where the box is, then
+     * turned back into where the page's corner is.
+     */
     private fun clamp() {
-        x0 = clampAxis(x0, pageWidthPx(), viewWidthPx.toFloat())
-        y0 = clampAxis(y0, pageHeightPx(), viewHeightPx.toFloat())
+        val b = box(page)
+        val s = pxPerPt()
+        x0 = clampAxis(x0 + b.x0 * s, (b.x1 - b.x0) * s, viewWidthPx.toFloat()) - b.x0 * s
+        y0 = clampAxis(y0 + b.y0 * s, (b.y1 - b.y0) * s, viewHeightPx.toFloat()) - b.y0 * s
     }
 
     private fun clampAxis(start: Float, length: Float, view: Float): Float =
@@ -115,5 +162,9 @@ class Viewport(private val sizes: List<SizePt>, private val viewWidthPx: Int, pr
 
     companion object {
         const val MAX_ZOOM = 4f
+
+        /** Screen pixels per point that make [box] fill a [viewWidthPx] × [viewHeightPx] view, whole. */
+        fun scaleToFit(box: Box, viewWidthPx: Int, viewHeightPx: Int): Float =
+            minOf(viewWidthPx / (box.x1 - box.x0), viewHeightPx / (box.y1 - box.y0))
     }
 }

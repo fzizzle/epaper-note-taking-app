@@ -16,6 +16,8 @@ Paths below are under `notes/app/src/`. `main/…` means `main/java/com/fzizzle/
 
 ## Decisions for the owner (approve before Task 1)
 
+**Approved, all five (owner, 2026-11-10).** Decision 4 first, during Task 4; decisions 1–3 and 5 afterwards. Decision 5: the page menu (⋯).
+
 These are new features, so each needs a yes or no. Any can be left out.
 
 1. **Sharp zoom.** After a zoom or a move, the part of the page on screen is drawn again at its true size. It arrives a moment after the fingers lift, with the clean refresh that already follows a zoom. No setting, always on.
@@ -50,10 +52,10 @@ These are new features, so each needs a yes or no. Any can be left out.
 **Files:**
 - Create: `docs/superpowers/readability-trial.md`
 
-- [ ] **Step 1: Look at what the tablet applies to the app now:** `adb shell dumpsys oec_service | grep -A30 com.fzizzle.epapernotes` (the app had no entry on 2026-11-10, so it used the system defaults). Record it.
-- [ ] **Step 2: Ask the owner to try,** on one slide deck they find hard to read: long-press the app's icon → Optimize → Display, and in turn "dark colour enhancement", "text bolding" and "background bleaching". For each: is the page easier to read, does the pen still feel the same, does the highlighter still look yellow, do snips look right when pasted.
-- [ ] **Step 3: Write up the trial** and the owner's verdict. If one of the tablet's settings does the job with no side effects, drop Task 3 (contrast) from this plan and say so in `TODO.md`.
-- [ ] **Step 4: Commit.** `git commit -m "docs: what the tablet's own display settings do for the app"`
+- [x] **Step 1: Look at what the tablet applies to the app now:** `adb shell dumpsys oec_service | grep -A30 com.fzizzle.epapernotes` (the app had no entry on 2026-11-10, so it used the system defaults). Record it.
+- [x] **Step 2: Ask the owner to try,** on one slide deck they find hard to read: long-press the app's icon → Optimize → Display, and in turn "dark colour enhancement", "text bolding" and "background bleaching". For each: is the page easier to read, does the pen still feel the same, does the highlighter still look yellow, do snips look right when pasted.
+- [x] **Step 3: Write up the trial** and the owner's verdict. If one of the tablet's settings does the job with no side effects, drop Task 3 (contrast) from this plan and say so in `TODO.md`.
+- [x] **Step 4: Commit.** `git commit -m "docs: what the tablet's own display settings do for the app"`
 
 ### Task 2: Sharp text when zoomed in (decision 1)
 
@@ -67,17 +69,17 @@ These are new features, so each needs a yes or no. Any can be left out.
   - `fun Viewport.visiblePagePart(): Box` — the part of the page on screen, in page-display points, clipped to the page.
   - In `PageView`: `var requestRegionRender: (page: Int, part: Box, pxPerPt: Float, token: Int) -> Unit` and `fun regionRendered(page: Int, part: Box, token: Int, version: Int, bitmap: Bitmap)`. One "sharp patch" is kept at a time: `private class Patch(val page: Int, val part: Box, val bitmap: Bitmap, val version: Int)`. A request made when the fingers lift carries a rising `token`; an answer with an old token, or for a page no longer on show, is recycled and dropped.
 
-- [ ] **Step 1: Write the failing tests** in `ViewportTest`: `visiblePagePartMatchesTheScreen` (at zoom 2 around the centre of a 600×800 pt page in a 1200×1600 view: the part is the middle 300×400 pt); `visiblePagePartIsClippedToThePage` (a short page at zoom 1.5); `atNormalSizeThePartIsTheWholePage`.
-- [ ] **Step 2: Run and confirm they fail.**
-- [ ] **Step 3: Implement.**
+- [x] **Step 1: Write the failing tests** in `ViewportTest`: `visiblePagePartMatchesTheScreen` (at zoom 2 around the centre of a 600×800 pt page in a 1200×1600 view: the part is the middle 300×400 pt); `visiblePagePartIsClippedToThePage` (a short page at zoom 1.5); `atNormalSizeThePartIsTheWholePage`.
+- [x] **Step 2: Run and confirm they fail.**
+- [x] **Step 3: Implement.**
   - Asking: when a finger gesture ends with `zoom > 1.05`, and again whenever the page's ink changes while zoomed (`pageChanged`), ask for `visiblePagePart()` at `pxPerPt()`. The size is at most the view's size in pixels, so it needs less memory than today's 1.5× whole page.
   - Drawing: `onDraw` draws the whole-page picture as today (it is what shows while fingers move), then, when the patch is for this page, this exact part and not stale (`InkOverlay.isStale`), draws the patch over it at its place with **no** bitmap filtering. Overlay strokes newer than the patch's version are drawn on top, as for the page.
   - Dropping: any zoom, move, page turn or rotation drops the patch at once and recycles it; the whole-page picture is on screen until the next one arrives.
   - `renderWidth`: zoomed in, use the fitted width (1×) instead of 1.5×; the patch now carries the sharpness. This is what pays for the patch.
   - Showing: a patch arriving calls `onPageShown`, so it reaches the panel through the existing pause. After a zoom, hold the clean refresh until the patch has arrived or 300 ms have passed, so a zoom ends in one panel update and not two (review 4.6).
-- [ ] **Step 4: Run laptop tests** — pass.
-- [ ] **Step 5: Check on the tablet.** On a text-heavy page: zoom to about 3×; small text is crisp within a moment of lifting the fingers. Write a word: it lands under the pen. Erase it: the patch redraws without it. Move the page with one finger, turn the page, zoom back out: no stale patch is ever shown in the wrong place. Logcat shows one region render per gesture, and its time (`Log.i` it) is under 300 ms on a slide.
-- [ ] **Step 6: Commit.** `git commit -m "notes: zoomed-in text is drawn at its true size"`
+- [x] **Step 4: Run laptop tests** — pass.
+- [x] **Step 5: Check on the tablet.** (Owner, 2026-11-10: "works well"; tablet tests 85 pass.) On a text-heavy page: zoom to about 3×; small text is crisp within a moment of lifting the fingers. Write a word: it lands under the pen. Erase it: the patch redraws without it. Move the page with one finger, turn the page, zoom back out: no stale patch is ever shown in the wrong place. Logcat shows one region render per gesture, and its time (`Log.i` it) is under 300 ms on a slide.
+- [x] **Step 6: Commit.** `git commit -m "notes: zoomed-in text is drawn at its true size"`
 
 ### Task 3: Contrast (decision 2; skip if Task 1 made it unnecessary)
 
@@ -94,13 +96,13 @@ These are new features, so each needs a yes or no. Any can be left out.
   - `class ReadingPrefs(context: Context) { var contrast: Contrast; var trimMargins: Boolean }` over `getSharedPreferences("reading", MODE_PRIVATE)`.
   - `fun PageView.dropAllRenderings()`: forgets every page picture and the sharp patch, and asks for the page on show again.
 
-- [ ] **Step 1: Write the failing tests** in `PageLookTest`: `whiteStaysWhiteAndBlackStaysBlack` (for every step: entry 0 is 0, entry 255 is 255); `normalChangesNothing`; `strongerDarkensMidGrey` (128 maps below 128, and Strongest below Stronger); `tablesNeverGoBackwards` (each table is non-decreasing); `aPaleHighlightStaysLighterThanTheText` (highlighter yellow over white, as the page renders it, maps to a value at least 100 levels above black); `alphaIsLeftAlone`.
-- [ ] **Step 2: Run and confirm they fail.**
-- [ ] **Step 3: Implement** `PageLook` and `ReadingPrefs`. In `WritingActivity`, both render paths call `PageLook.applyTo(bitmap, contrast)` on the worker, right after MuPDF returns and before the picture is posted to the UI thread; `contrast` is read from a `@Volatile` field set from the preferences. The snip path is left exactly as it is.
-- [ ] **Step 4: The menu.** In `openPageMenu`, add "Contrast: <current>" which opens a three-entry submenu; choosing one stores it, sets the field, and calls `pages.dropAllRenderings()`. (If decision 5 chose the library's Settings instead, add the row there and read the preference in `onResume`.)
-- [ ] **Step 5: Tablet test** `PageLookDeviceTest.aFullPageTakesUnderAFrameOrTwo`: `applyTo` on a 1860×2480 picture at `STRONGEST` in under 80 ms. If it's slower, skip pixels that are pure white (most of a slide) before the table lookup, and measure again. A colour filter on the paint is not an option: it can't do a gamma curve, and it would run on every redraw.
-- [ ] **Step 6: Check on the tablet** with the owner's hard-to-read deck: each step is visibly darker; the highlighter is still clearly yellow; a snip taken at Strongest and pasted looks like the page beside it, not darker.
-- [ ] **Step 7: Commit.** `git commit -m "notes: a contrast setting for the page on screen"`
+- [x] **Step 1: Write the failing tests** in `PageLookTest`: `whiteStaysWhiteAndBlackStaysBlack` (for every step: entry 0 is 0, entry 255 is 255); `normalChangesNothing`; `strongerDarkensMidGrey` (128 maps below 128, and Strongest below Stronger); `tablesNeverGoBackwards` (each table is non-decreasing); `aPaleHighlightStaysLighterThanTheText` (highlighter yellow over white, as the page renders it, maps to a value at least 100 levels above black); `alphaIsLeftAlone`.
+- [x] **Step 2: Run and confirm they fail.**
+- [x] **Step 3: Implement** `PageLook` and `ReadingPrefs`. In `WritingActivity`, both render paths call `PageLook.applyTo(bitmap, contrast)` on the worker, right after MuPDF returns and before the picture is posted to the UI thread; `contrast` is read from a `@Volatile` field set from the preferences. The snip path is left exactly as it is.
+- [x] **Step 4: The menu.** In `openPageMenu`, add "Contrast: <current>" which opens a three-entry submenu; choosing one stores it, sets the field, and calls `pages.dropAllRenderings()`. (If decision 5 chose the library's Settings instead, add the row there and read the preference in `onResume`.)
+- [x] **Step 5: Tablet test** (2026-11-10: 22 ms at Strongest; tablet suite 86 pass) `PageLookDeviceTest.aFullPageTakesUnderAFrameOrTwo`: `applyTo` on a 1860×2480 picture at `STRONGEST` in under 80 ms. If it's slower, skip pixels that are pure white (most of a slide) before the table lookup, and measure again. A colour filter on the paint is not an option: it can't do a gamma curve, and it would run on every redraw.
+- [x] **Step 6: Check on the tablet** (owner, 2026-11-10: "that works") with the owner's hard-to-read deck: each step is visibly darker; the highlighter is still clearly yellow; a snip taken at Strongest and pasted looks like the page beside it, not darker.
+- [x] **Step 7: Commit.** `git commit -m "notes: a contrast setting for the page on screen"`
 
 ### Task 4: Cleaner page turns, and a gentler refresh after zooming (decision 4)
 
@@ -132,18 +134,18 @@ These are new features, so each needs a yes or no. Any can be left out.
   - `class Viewport(sizes: List<SizePt>, viewWidthPx: Int, viewHeightPx: Int, private val fit: List<Box>? = null)` — when `fit[page]` is given, "fitted" means that box fills the view, zoom 1 shows that box, and moving and zoom limits apply to it. `pageToScreen()` still maps whole-page display points, so everything built on it (the pen's mapping, the selection layer, `visiblePagePart`) keeps working unchanged. The picture of the whole page is still what's drawn; the view clips it.
   - `fun PageView.setPages(pageSizes: List<SizePt>, pdfToDisplay: List<Affine>, startPage: Int, fit: List<Box>? = null)`.
 
-- [ ] **Step 1: Write the failing tests.**
+- [x] **Step 1: Write the failing tests.**
   - `ContentBoundsTest`: `aBlankPageHasNoContent`; `textInTheMiddleIsFound`; `aSingleSpeckIsIgnored`; `aBlankPageIsNotTrimmed`; `aFullBleedPageIsNotTrimmed`; `theBorderNeverLeavesThePage`; `inkInTheMarginWidensTheTrim` (content found on a picture that includes a stroke near the edge reaches that stroke).
   - `ViewportTest`: `aTrimmedPageFillsTheViewWithItsContent` (fit box 100..500 × 100..700 on a 600×800 pt page in a 1200×1800 view: at zoom 1, `screenToPage(0, 0)` is near (100, 100) and `pxPerPt()` is 3); `aTrimmedPageCantBeMovedOutsideItsBox`; `withoutAFitBoxNothingChanges` (every existing test still passes untouched).
-- [ ] **Step 2: Run and confirm they fail.**
-- [ ] **Step 3: Implement.**
+- [x] **Step 2: Run and confirm they fail.**
+- [x] **Step 3: Implement.**
   - Finding the content: on the worker, per page and on demand (the page on show and its two neighbours, not the whole document at open): render at 200 px wide **with ink** (`PdfFile.render(page, 200)`), run `ContentBounds.of`, and keep the box in a map for the session. A page whose ink changes is measured again when it's next arrived at, not while it's on show, so the page never jumps under the pen.
   - Layout: `layOutPages` passes the boxes it has (the whole page for those not measured yet); when a box arrives for the page on show before the owner has zoomed or written on it, lay out again once.
   - `renderWidth` stays the whole page's width at the fitted scale, which with a trim is larger than the view; cap it at 1.5× the view's width, and let Task 2's sharp patch cover the rest when zoomed.
   - The menu: "Trim margins" with a tick, in `openPageMenu` (or the library's Settings, by decision 5). Changing it lays the pages out again and calls `publishPenMapping()`.
-- [ ] **Step 4: Run all laptop tests** — pass.
-- [ ] **Step 5: Check on the tablet,** on a deck with wide margins and on a scanned paper: text is visibly larger with trim on; write right at the trimmed edge, turn the page and come back — the stroke is inside the view; turn the tablet and rotate a page with trim on — the page refits and strokes stay put; lasso, move, resize and paste all land where the pen is; with trim off everything is as before.
-- [ ] **Step 6: Commit.** `git commit -m "notes: pages can be fitted to their printed area"`
+- [x] **Step 4: Run all laptop tests** — pass.
+- [x] **Step 5: Check on the tablet,** (owner, 2026-11-10: "works fine"; tablet suite 86 pass) on a deck with wide margins and on a scanned paper: text is visibly larger with trim on; write right at the trimmed edge, turn the page and come back — the stroke is inside the view; turn the tablet and rotate a page with trim on — the page refits and strokes stay put; lasso, move, resize and paste all land where the pen is; with trim off everything is as before.
+- [x] **Step 6: Commit.** `git commit -m "notes: pages can be fitted to their printed area"`
 
 ### Task 6: Owner session (hard stop)
 
@@ -154,6 +156,50 @@ These are new features, so each needs a yes or no. Any can be left out.
 - [ ] **Step 1: Write the checklist,** in the style of `notes/TESTING-library.md`: sharp zoom on small text; each contrast step on a pale deck; a snip pasted at Strongest; trim on a wide-margin deck, with writing at the edge; page turns on text and on dark slides with the chosen update mode; the same PDF opened on a laptop afterwards, unchanged apart from the owner's ink.
 - [ ] **Step 2: Update the spec** with what was built and which decisions were left out.
 - [ ] **Step 3: Commit, then stop.** The owner runs the checklist; results go in `docs/superpowers/readability-results.md`.
+
+### Task 7: The page drawn on whole pixels (owner, 2026-11-10: "yes do all of that")
+
+Found 2026-11-10: at normal size the page picture is rendered 1:1 (1675 px wide for an A4 page in the 1860×2369 view) but drawn into a `RectF` that starts at x = 92.47 with bitmap filtering on, so every pixel is blended half and half with its neighbour. A screenshot matched that blend (mean difference 0.02 against 1.28 for a pixel-aligned picture). It softens every edge by half a pixel.
+
+**Files:**
+- Modify: `main/ui/Viewport.kt` (`pageToScreen`, `screenToPage`), `main/ui/PageView.kt` (`onDraw`)
+- Test: `test/ui/ViewportTest.kt`
+
+**Interfaces:**
+- `Viewport` keeps `x0`, `y0` as floats (so slow one-finger moves don't lose sub-pixel motion), but `pageToScreen()` and `screenToPage()` use them rounded to whole pixels. Everything built on them (the pen's mapping, the selection layer, `visiblePagePart`, the sharp patch's place, `pageBoundsPx` and so the pen limit) then agrees with where the picture is drawn.
+
+- [x] **Step 1: Write the failing tests** in `ViewportTest`: `thePageStartsOnAWholePixel` (an A4 page, 595.28×841.89 pt, fitted in a 1860×2369 view: `pageToScreen().map(Pt(0f, 0f))` has whole-number x and y); `screenToPageUndoesPageToScreen` (for a few points, at zoom 1 and zoom 2.3 after a pan by a fraction of a pixel); `aSlowMoveIsNotLost` (ten `panBy(0.3f, 0f)` at zoom 2 move the page 3 px, not 0).
+- [x] **Step 2: Run and confirm they fail.**
+- [x] **Step 3: Implement.** In `onDraw`, when the kept picture's size is within 1 px of the page's on-screen size in both directions (normal size, and any zoom that happens to match), draw it unscaled at the page's whole-pixel origin with no filtering; otherwise draw it into `dst` as today.
+- [x] **Step 4: Run all laptop tests** — pass.
+- [ ] **Step 5: Check on the tablet** (controller): a screenshot at normal size matches a 1:1 render of the page placed on whole pixels. Owner: text is a little crisper; ink still lands under the pen, at normal size and zoomed.
+- [x] **Step 6: Commit.** `git commit -m "notes: the page is drawn on whole pixels"`
+
+### Task 8: Dark text as black (owner, 2026-11-10: "yes do all of that")
+
+Found 2026-11-10: in the owner's workbook 90% of the text pixels are coloured: body text and headings in dark slate (43, 47, 64), formulas in green and blue; only 3% is black. The Note Air 6 C's colour screen shows black and grey at 300 ppi, but colour only at 150 ppi through its colour filter, dithered, so nearly-black tinted text looks low-resolution.
+
+**The decision (owner):** a switch under ⋯, "Dark text as black", remembered for all documents like Contrast. Pixels that are nearly grey (low colour) are shown as neutral grey of the same lightness, darkened so that dark text becomes black; clearly coloured pixels (green and blue formulas, the highlighter's yellow) keep their colour. Screen only, like Contrast: snips, thumbnails and the PDF are untouched.
+
+**Files:**
+- Modify: `main/ui/PageLook.kt`, `main/ui/ReadingPrefs.kt`, `main/ui/WritingActivity.kt` (the two render callbacks, `openPageMenu`)
+- Test: `test/ui/PageLookTest.kt`, `androidTest/ui/PageLookDeviceTest.kt`
+
+**Interfaces:**
+- `ReadingPrefs.darkTextAsBlack: Boolean` (default true: on until turned off, owner 2026-11-10; first planned as false), stored next to `contrast`.
+- `PageLook` gains the dark-text step, applied in the same single pass as the contrast step, on the worker, once per rendering:
+  - `chroma = max(r, g, b) - min(r, g, b)`. A pixel with `chroma <= NEARLY_GREY = 40` is nearly grey: it becomes neutral `v = (299·r + 587·g + 114·b) / 1000`, then `v' = clamp((v - DARK = 96) · 255 / (255 - 96), 0, 255)`, written to r, g and b alike. Then the contrast table, if any, applies to `v'`.
+  - Any other pixel keeps its colour; only the contrast table, if any, applies to each channel, as today.
+  - Alpha is left alone. With the switch off and Normal contrast, nothing is read or written (a no-op, as today).
+- Order in ⋯: Rotate this page, Rotate all pages, Contrast…, Dark text as black (with a tick), Trim margins (with a tick), then the temporary toolbar entry.
+
+- [ ] **Step 1: Write the failing tests** in `PageLookTest`: `darkSlateBecomesBlack` ((43, 47, 64) → (0, 0, 0)); `aTintedGreyBecomesNeutral` ((149, 151, 160) → r = g = b); `whiteStaysWhite`; `greenFormulaKeepsItsColour` ((46, 147, 102) unchanged with Normal contrast); `blueKeepsItsColour` ((62, 125, 232)); `highlighterYellowKeepsItsColour` (the highlighter over white, as the page renders it, from `StrokeStyle.kt`); `offWithNormalChangesNothing`; `contrastAppliesAfterDarkText` (a neutral pixel with both on gets the table applied to `v'`); `alphaIsLeftAlone`.
+- [ ] **Step 2: Run and confirm they fail.**
+- [ ] **Step 3: Implement** in `PageLook` and `ReadingPrefs`; both render callbacks pass the switch with the contrast (a `@Volatile` field, set from the preferences, as for contrast).
+- [ ] **Step 4: The menu.** "Dark text as black" with a tick; changing it stores it, sets the field and calls `pages.dropAllRenderings()`.
+- [ ] **Step 5: Tablet test** in `PageLookDeviceTest`: a full 1860×2480 picture with the switch on and Strongest in under 80 ms.
+- [ ] **Step 6: Check on the tablet** with the owner's workbook: headings and body text sharp and black; green and blue formulas still coloured; highlighter still yellow; a snip pasted with the switch on looks like the page with it off.
+- [ ] **Step 7: Commit.** `git commit -m "notes: dark text can be shown as black"`
 
 ## Not in this plan
 

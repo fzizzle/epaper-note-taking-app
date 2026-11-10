@@ -105,27 +105,35 @@ class PdfFile private constructor(private val doc: PDFDocument) : PdfPages {
         val p = doc.loadPage(page) as PDFPage
         try {
             if (smoothInk) return AndroidDrawDevice.drawPageFitWidth(p, widthPx)
-            val annots = p.annotations ?: emptyArray()
-            val isSolid = BooleanArray(annots.size) { annots[it].type == PDFAnnotation.TYPE_INK && annots[it].opacity >= 0.99f }
-            if (!isSolid.any { it }) return AndroidDrawDevice.drawPageFitWidth(p, widthPx)
             val ctm = AndroidDrawDevice.fitPageWidth(p, widthPx)
             val box = RectI(p.bounds.transform(ctm))
             val bmp = Bitmap.createBitmap(box.x1 - box.x0, box.y1 - box.y0, Bitmap.Config.ARGB_8888)
-            // The usual order, with the solid ink left out: the page, annotations, form fields.
-            val dev = AndroidDrawDevice(bmp, box.x0, box.y0)
-            try {
-                p.runPageContents(dev, ctm, null)
-                annots.forEachIndexed { i, a -> if (!isSolid[i]) a.run(dev, ctm, null) }
-                p.runPageWidgets(dev, ctm, null)
-                dev.close()
-            } finally {
-                dev.destroy()
-            }
-            drawSolid(bmp, box, annots.filterIndexed { i, _ -> isSolid[i] }, ctm)
+            drawWithSolidInk(p, bmp, box, ctm)
             return bmp
         } finally {
             p.destroy()
         }
+    }
+
+    /**
+     * Draws [p] with [ctm] onto [bmp], whose pixels are [box] of the page's device space:
+     * everything smoothed, as MuPDF draws it, except ink at full strength, which is drawn
+     * solid ([drawSolid]; see [render] for why).
+     */
+    private fun drawWithSolidInk(p: PDFPage, bmp: Bitmap, box: RectI, ctm: Matrix) {
+        val annots = p.annotations ?: emptyArray()
+        val isSolid = BooleanArray(annots.size) { annots[it].type == PDFAnnotation.TYPE_INK && annots[it].opacity >= 0.99f }
+        // The usual order, with the solid ink left out: the page, annotations, form fields.
+        val dev = AndroidDrawDevice(bmp, box.x0, box.y0)
+        try {
+            p.runPageContents(dev, ctm, null)
+            annots.forEachIndexed { i, a -> if (!isSolid[i]) a.run(dev, ctm, null) }
+            p.runPageWidgets(dev, ctm, null)
+            dev.close()
+        } finally {
+            dev.destroy()
+        }
+        if (isSolid.any { it }) drawSolid(bmp, box, annots.filterIndexed { i, _ -> isSolid[i] }, ctm)
     }
 
     /**
@@ -310,19 +318,28 @@ class PdfFile private constructor(private val doc: PDFDocument) : PdfPages {
 
     /**
      * The page as shown (rotation applied, ink included), cut to [displayBox] in display points
-     * (origin top-left, y down), at [pxPerPt] pixels per point. Used for snips.
+     * (origin top-left, y down), at [pxPerPt] pixels per point. Snips use it as it is, with
+     * all ink smoothed. With [smoothInk] false, ink is drawn as [render] draws it: the sharp
+     * patch over a zoomed page must look like the page's own picture.
      */
-    fun renderRegion(page: Int, displayBox: Box, pxPerPt: Float): Bitmap {
-        val p = doc.loadPage(page)
+    fun renderRegion(page: Int, displayBox: Box, pxPerPt: Float, smoothInk: Boolean = true): Bitmap {
+        val p = doc.loadPage(page) as PDFPage
         try {
             val w = Math.round((displayBox.x1 - displayBox.x0) * pxPerPt).coerceAtLeast(1)
             val h = Math.round((displayBox.y1 - displayBox.y0) * pxPerPt).coerceAtLeast(1)
             val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
             // MuPDF's page space is the page as shown, so scaling it gives display pixels. The
             // device's origin says which of those pixels lands at the bitmap's top-left.
-            val dev = AndroidDrawDevice(bmp, Math.round(displayBox.x0 * pxPerPt), Math.round(displayBox.y0 * pxPerPt))
+            val x0 = Math.round(displayBox.x0 * pxPerPt)
+            val y0 = Math.round(displayBox.y0 * pxPerPt)
+            val ctm = Matrix.Scale(pxPerPt)
+            if (!smoothInk) {
+                drawWithSolidInk(p, bmp, RectI(x0, y0, x0 + w, y0 + h), ctm)
+                return bmp
+            }
+            val dev = AndroidDrawDevice(bmp, x0, y0)
             try {
-                p.run(dev, Matrix.Scale(pxPerPt), null)
+                p.run(dev, ctm, null)
                 dev.close()
             } finally {
                 dev.destroy()

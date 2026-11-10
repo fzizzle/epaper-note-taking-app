@@ -103,6 +103,30 @@ class PdfFileStrokesTest {
         PdfFile.open(file).use { assertTrue("the page is still smoothed", greys(it.render(0, 1700)) > 100) }
     }
 
+    /**
+     * The sharp patch of a zoomed page (PageView) is a region drawn like the page's picture:
+     * ink solid, and in the same place as in the whole page at that scale. Snips keep the
+     * smoothed ink (smoothInk's default).
+     */
+    @Test fun regionCanDrawInkSolidInItsPlace() {
+        val wavy = Stroke(StrokeKind.PEN, (0..80).map { StrokePoint(100f + it * 5, 400f + 30f * kotlin.math.sin(it / 6f), 0.5f) })
+        PdfFile.open(TestPdfs.blank(dir)).use { pdf ->
+            pdf.add(0, wavy)
+            val full = pdf.render(0, 1224) // 2 px per point
+            // Display (150, 300)-(450, 500): the ink, at display y 392 ± 30, runs out past both side edges.
+            val region = pdf.renderRegion(0, Box(150f, 300f, 450f, 500f), 2f, smoothInk = false)
+            assertEquals(600, region.width)
+            assertEquals(400, region.height)
+            assertEquals(0, greys(region))
+            val inFull = android.graphics.Bitmap.createBitmap(full, 300, 600, 600, 400)
+            val px = IntArray(600 * 400).also { region.getPixels(it, 0, 600, 0, 0, 600, 400) }
+            val expected = IntArray(600 * 400).also { inFull.getPixels(it, 0, 600, 0, 0, 600, 400) }
+            val differ = px.indices.count { (Color.red(px[it]) < 128) != (Color.red(expected[it]) < 128) }
+            assertTrue("ink where the whole page has it: $differ pixels differ", darks(region) > 1000 && differ < darks(region) / 100)
+            assertTrue("a snip's region is still smoothed", greys(pdf.renderRegion(0, Box(150f, 300f, 450f, 500f), 2f)) > 100)
+        }
+    }
+
     @Test fun appearanceKeepsPressureAfterSave() {
         val out = File(dir, "ap.pdf")
         val wedge = Stroke(StrokeKind.PEN, listOf(StrokePoint(100f, 400f, 0f), StrokePoint(500f, 400f, 1f)))
