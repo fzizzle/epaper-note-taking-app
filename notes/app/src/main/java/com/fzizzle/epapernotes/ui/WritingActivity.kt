@@ -224,6 +224,7 @@ class WritingActivity : Activity() {
         layer = SelectionLayer(handlePx = resources.displayMetrics.heightPixels * 0.05f / 3f, listener = selectionListener) { pages.invalidate() }
         pages.selectionLayer = layer
         pages.onFingerTap = { x, y -> pages.frame()?.let { layer.onFingerTap(x, y, it) } }
+        pages.onFingerLongPress = { x, y -> offerPaste(x, y) }
         val gap = stripHeight / 8
         val side = stripHeight - 2 * gap
         val left = StripRow(this, side = side, gap = gap)
@@ -610,6 +611,53 @@ class WritingActivity : Activity() {
         toolStateChanged()
     }
 
+    /**
+     * A finger long-press on the page while something is copied: a small Paste button at that
+     * spot, and tapping it pastes there (owner, 2026-11-10: paste with a finger, confirmed so a
+     * stray press can't). Fast-ink is off while it shows, as for the page menu.
+     */
+    private fun offerPaste(x: Float, y: Float) {
+        if (toolState.clipboard == null || pen.isWriting || dialogOpen) return
+        val frame = pages.frame() ?: return
+        val at = frame.displayToScreen.inverse().map(Pt(x, y))
+        if (at.x < 0 || at.y < 0 || at.x > frame.size.w || at.y > frame.size.h) return // beside the page
+        // Straight after Copy the selection is still there: let go of it, as a tap outside would.
+        if (toolState.hasSelection) {
+            letGo()
+            toolStateChanged()
+        }
+        val button = TextView(this).apply {
+            text = "Paste"
+            textSize = 20f
+            setTextColor(Color.BLACK)
+            val pad = (resources.displayMetrics.density * 14).toInt()
+            setPadding(pad * 2, pad, pad * 2, pad)
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(Color.WHITE)
+                setStroke((resources.displayMetrics.density * 2).toInt(), Color.BLACK)
+                cornerRadius = resources.displayMetrics.density * 8
+            }
+        }
+        val popup = android.widget.PopupWindow(button, LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT, true)
+        button.setOnClickListener {
+            popup.dismiss()
+            Log.i(TAG, "paste by long-press")
+            selectionListener.pasteAt(at)
+        }
+        dialogOpen = true
+        pausePenAndRedraw()
+        popup.setOnDismissListener {
+            dialogOpen = false
+            handler.removeCallbacks(resumeFastInk)
+            handler.postDelayed(resumeFastInk, SHOW_PAUSE_MS)
+        }
+        val origin = IntArray(2).also { pages.getLocationOnScreen(it) }
+        // Just above the finger, so the finger doesn't hide it.
+        button.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
+        popup.showAtLocation(pages, Gravity.NO_GRAVITY,
+            (origin[0] + x - button.measuredWidth / 2f).toInt(), (origin[1] + y - button.measuredHeight * 1.5f).toInt())
+    }
+
     /** What the selection layer reports, turned into changes. UI thread. */
     private val selectionListener = object : SelectionLayer.Listener {
         override fun moved(pdfTransform: Affine) {
@@ -625,6 +673,7 @@ class WritingActivity : Activity() {
             toolState.clipboard = Clipboard(selected, pdfToDisplay[selectedPage])
             Log.i(TAG, "copied page=$selectedPage items=${selected.size}")
             updateStrip() // Paste appears
+            toast(PASTE_HINT)
         }
 
         override fun delete() {
@@ -696,6 +745,7 @@ class WritingActivity : Activity() {
                 runOnUiThread {
                     toolState.clipboard = Clipboard(listOf(item), toDisplay)
                     updateStrip() // Paste appears
+                    toast(PASTE_HINT)
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "snip failed page=$page", e)
@@ -979,7 +1029,7 @@ class WritingActivity : Activity() {
      * begun in a pause gets no live line. With fast-ink off it's on screen already.
      */
     private fun showStripChange(changed: Boolean) {
-        if (changed && fastInkWanted()) pen.refreshAlone(stripView)
+        if (changed && fastInkWanted()) pen.showAlone(stripView)
     }
 
     /** Full screen while writing: the status bar comes back for a moment with a swipe down from the top. */
@@ -1004,6 +1054,25 @@ class WritingActivity : Activity() {
         Log.i(TAG, "leave: back")
         finish()
     }
+
+    /**
+     * The volume buttons turn the page (owner, 2026-11-10): down for the next page, up for the
+     * previous one; Page Down and Up too, as a clip-on page turner sends. Held down, a key
+     * repeats; only the first press turns. Not while the pen is writing: the stroke would land
+     * on the new page.
+     */
+    override fun onKeyDown(keyCode: Int, event: android.view.KeyEvent): Boolean {
+        val forward = when (keyCode) {
+            android.view.KeyEvent.KEYCODE_VOLUME_DOWN, android.view.KeyEvent.KEYCODE_PAGE_DOWN -> true
+            android.view.KeyEvent.KEYCODE_VOLUME_UP, android.view.KeyEvent.KEYCODE_PAGE_UP -> false
+            else -> return super.onKeyDown(keyCode, event)
+        }
+        if (event.repeatCount == 0 && documentShown && !pen.isWriting && !screenPenDown) turn(forward)
+        return true // taken, so the system's volume panel doesn't open over the page
+    }
+
+    override fun onKeyUp(keyCode: Int, event: android.view.KeyEvent): Boolean =
+        keyCode in PAGE_KEYS || super.onKeyUp(keyCode, event)
 
     @Deprecated("Logged for the leave timings; then the usual back.")
     override fun onBackPressed() {
@@ -1112,6 +1181,13 @@ class WritingActivity : Activity() {
 
     companion object {
         const val EXTRA_PATH = "path"
+
+        /** After Copy or a snip, which otherwise only show as the Paste button appearing (owner, 2026-11-10). */
+        private const val PASTE_HINT = "Copied. To paste, hold a finger on the page, or tap Paste."
+        private val PAGE_KEYS = setOf(
+            android.view.KeyEvent.KEYCODE_VOLUME_DOWN, android.view.KeyEvent.KEYCODE_VOLUME_UP,
+            android.view.KeyEvent.KEYCODE_PAGE_DOWN, android.view.KeyEvent.KEYCODE_PAGE_UP,
+        )
         private const val NO_PAGE = -1
         const val SHOW_PAUSE_MS = 150L
 

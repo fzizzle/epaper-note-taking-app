@@ -100,14 +100,20 @@ class PenInput(
     }
 
     /**
-     * Puts [view]'s new look on the panel while fast-ink stays on, for the strip. Fast-ink
-     * ignores normal drawing, `EpdController.invalidate(view, GU)` and `refreshScreenRegion`
-     * didn't show either; Onyx's handwriting repaint does, with one quick flash (owner,
-     * 2026-11-10). Posted, so the view has drawn its new look first.
+     * Puts [view]'s new look on the panel while fast-ink stays on. While fast-ink is on, Onyx
+     * stops passing the app's drawing to the panel ("post", for the whole window), which froze
+     * the strip; Onyx's handwriting repaint, used before, didn't reliably get it through.
+     * Posting is let through for a moment, the strip draws, and posting stops again; the pen
+     * keeps working throughout. Opening posting makes the panel refresh the whole screen once
+     * (owner, 2026-11-10; an explicit GU update of the strip didn't change that). If fast-ink
+     * was paused in between, the pause has let posting through already, and stopping it would
+     * freeze the screen.
      */
-    fun refreshAlone(view: View) {
+    fun showAlone(view: View) {
+        if (!drawsInk) return view.invalidate()
+        EpdController.leaveScribbleMode(view)
         view.invalidate()
-        view.post { EpdController.handwritingRepaint(view, android.graphics.Rect(0, 0, view.width, view.height)) }
+        view.postDelayed({ if (drawsInk) EpdController.enterScribbleMode(view) }, POST_OPEN_MS)
     }
 
     fun setLimit(limit: Rect) {
@@ -139,9 +145,11 @@ class PenInput(
                 h.setStrokeColor(StripButton.HIGHLIGHTER_YELLOW)
                 h.setStrokeWidth(StrokeStyle.of(StrokeKind.HIGHLIGHTER).maxWidth * pxPerPt)
             }
-            // The eraser's and the lasso's trail: just where the pen went, at any zoom.
+            // The eraser's and the lasso's trail: just where the pen went, at any zoom. Fountain,
+            // as for the pen: Onyx's pencil (a textured line) refreshed the whole screen at
+            // every switch to the eraser (owner, 2026-11-10). At 2 px pressure makes no difference.
             LiveLine.THIN_GREY -> {
-                h.setStrokeStyle(TouchHelper.STROKE_STYLE_PENCIL)
+                h.setStrokeStyle(TouchHelper.STROKE_STYLE_FOUNTAIN)
                 h.setStrokeColor(Color.GRAY)
                 h.setStrokeWidth(THIN_GREY_PX)
             }
@@ -185,5 +193,8 @@ class PenInput(
 
     companion object {
         private const val THIN_GREY_PX = 2f
+
+        /** How long posting stays open for [showAlone]: the strip's frame, drawn and composed, with room to spare. */
+        private const val POST_OPEN_MS = 150L
     }
 }

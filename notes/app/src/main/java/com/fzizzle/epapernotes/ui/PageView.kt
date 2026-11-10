@@ -34,7 +34,13 @@ import kotlin.math.abs
  */
 class PageView(context: Context) : View(context) {
 
-    /** Fast-ink must pause while fingers move the page, so these tell the screen when. */
+    /**
+     * Fast-ink must pause while fingers move the page, so these tell the screen when. Only a
+     * gesture that starts to pinch or to move a zoomed page counts: a touch that stays put, as
+     * a palm's does, says nothing, so it doesn't pause fast-ink and redraw the page (owner,
+     * 2026-11-10: palm touches made the screen refresh). [onFingerGestureEnd] follows every
+     * [onFingerGestureStart], when the last finger lifts.
+     */
     var onFingerGestureStart: () -> Unit = {}
     /** [moved] is true when the gesture zoomed or moved the page. */
     var onFingerGestureEnd: (moved: Boolean) -> Unit = {}
@@ -66,6 +72,9 @@ class PageView(context: Context) : View(context) {
 
     /** A one-finger tap, in view pixels. */
     var onFingerTap: (x: Float, y: Float) -> Unit = { _, _ -> }
+
+    /** A finger held still on the page for about half a second, in view pixels. */
+    var onFingerLongPress: (x: Float, y: Float) -> Unit = { _, _ -> }
 
     /** The selection box, snip rectangle and so on, drawn on top of the page. */
     var selectionLayer: SelectionLayer? = null
@@ -120,6 +129,16 @@ class PageView(context: Context) : View(context) {
         private set
     private var pastEdge = 0f
     private var movedThisGesture = false
+
+    /** True once this finger gesture has begun to pinch or move the page ([onFingerGestureStart] said so). */
+    private var gestureStarted = false
+
+    /**
+     * When the pen was last seen, hovering or touching. Hover events keep coming while it's in
+     * range. A finger landing while the pen is near, or just after, is taken for the palm and
+     * ignored (probe results §4: a palm leaks short touches just after the pen lifts).
+     */
+    private var penSeenAt = Long.MIN_VALUE / 2
 
     private val placeholder = Paint().apply { color = Color.rgb(235, 235, 235) }
     private val pagePaint = Paint(Paint.FILTER_BITMAP_FLAG)
@@ -342,8 +361,10 @@ class PageView(context: Context) : View(context) {
 
     override fun onDraw(canvas: Canvas) {
         val started = System.nanoTime()
-        canvas.drawColor(Color.WHITE)
-        val v = viewport ?: return
+        val v = viewport ?: return canvas.drawColor(Color.WHITE)
+        // Beside the page is shaded, so it's clear where the page, and writing, ends (owner,
+        // 2026-11-10: the white band at the sides looked like page the pen wouldn't write on).
+        canvas.drawColor(BESIDE_PAGE)
         val page = v.page
         val toScreen = v.pageToScreen()
         val topLeft = toScreen.map(Pt(0f, 0f))
@@ -441,10 +462,13 @@ class PageView(context: Context) : View(context) {
             return true
         }
 
+        override fun onLongPress(e: MotionEvent) = onFingerLongPress(e.x, e.y)
+
         override fun onScroll(e1: MotionEvent?, e2: MotionEvent, dx: Float, dy: Float): Boolean {
             val v = viewport ?: return true
             // At normal size the whole page is showing: a swipe does nothing (spec §6.2).
             if (v.zoom <= 1.05f) return true
+            startGesture()
             movedThisGesture = true
             val beyond = v.panBy(dx, dy)
             pastEdge = if (beyond != 0f && (pastEdge == 0f || (beyond > 0) == (pastEdge > 0))) pastEdge + beyond else 0f
@@ -455,6 +479,7 @@ class PageView(context: Context) : View(context) {
 
     private val scaler = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
         override fun onScaleBegin(d: ScaleGestureDetector): Boolean {
+            startGesture()
             pinching = true
             return true
         }
@@ -476,6 +501,7 @@ class PageView(context: Context) : View(context) {
     // Diagnostics for the owner's "have to wait 2 seconds to zoom after a stroke": when does the
     // pen leave the screen's range, and how late do finger touches arrive?
     override fun onHoverEvent(event: MotionEvent): Boolean {
+        if (isPen(event)) penSeenAt = event.eventTime
         if (event.actionMasked == MotionEvent.ACTION_HOVER_ENTER || event.actionMasked == MotionEvent.ACTION_HOVER_EXIT) {
             android.util.Log.i("Notes", "pen ${MotionEvent.actionToString(event.actionMasked)} tool=${event.getToolType(0)} button=${penButtonOf(event)}")
         }
@@ -487,6 +513,7 @@ class PageView(context: Context) : View(context) {
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
         val m = event.actionMasked
+        if (isPen(event)) penSeenAt = event.eventTime
         if (m == MotionEvent.ACTION_DOWN && isPen(event)) onStylusDown(penButtonOf(event))
         if (m == MotionEvent.ACTION_DOWN || m == MotionEvent.ACTION_POINTER_DOWN) {
             val lag = android.os.SystemClock.uptimeMillis() - event.eventTime
@@ -501,8 +528,9 @@ class PageView(context: Context) : View(context) {
         if (event.getToolType(0) != MotionEvent.TOOL_TYPE_FINGER) return false
 
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {
-            ignoringFingers = !fingersAllowed()
-            if (ignoringFingers) android.util.Log.i("Notes", "fingers ignored: the pen is writing")
+            val penNear = event.eventTime - penSeenAt < PEN_NEAR_MS
+            ignoringFingers = penNear || !fingersAllowed()
+            if (ignoringFingers) android.util.Log.i("Notes", "fingers ignored: ${if (penNear) "the pen is near" else "the pen is writing"}")
         }
         // Taken (true), so the rest of the gesture comes here too and is dropped the same way.
         if (ignoringFingers) return true
@@ -511,17 +539,16 @@ class PageView(context: Context) : View(context) {
             MotionEvent.ACTION_DOWN -> {
                 pastEdge = 0f
                 movedThisGesture = false
-                if (!fingersDown) {
-                    fingersDown = true
-                    onFingerGestureStart()
-                }
+                gestureStarted = false
+                fingersDown = true
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 // Pushed well past the top or bottom of a zoomed page: turn the page.
                 if (abs(pastEdge) > height * TURN_PUSH_FRACTION && turn(forward = pastEdge > 0)) movedThisGesture = true
                 pastEdge = 0f
-                if (fingersDown) {
-                    fingersDown = false
+                fingersDown = false
+                if (gestureStarted) {
+                    gestureStarted = false
                     onFingerGestureEnd(movedThisGesture)
                 }
             }
@@ -531,12 +558,22 @@ class PageView(context: Context) : View(context) {
         return true
     }
 
+    /** The gesture begins to pinch or move the page: fast-ink pauses now, before the page moves. */
+    private fun startGesture() {
+        if (gestureStarted) return
+        gestureStarted = true
+        onFingerGestureStart()
+    }
+
     private fun isPen(event: MotionEvent): Boolean = when (event.getToolType(0)) {
         MotionEvent.TOOL_TYPE_STYLUS, MotionEvent.TOOL_TYPE_ERASER -> true
         else -> false
     }
 
     companion object {
+        /** Beside the page: a light grey, darker than [placeholder]'s page-not-drawn-yet grey. */
+        private val BESIDE_PAGE = Color.rgb(215, 215, 215)
+
         /** A draw is only logged when it takes longer than this: half of a 60-a-second frame. */
         private const val SLOW_DRAW_MS = 8L
 
@@ -555,6 +592,9 @@ class PageView(context: Context) : View(context) {
             event.isButtonPressed(MotionEvent.BUTTON_STYLUS_PRIMARY) -> PenButton.LASSO_BUTTON
             else -> PenButton.NONE
         }
+
+        /** A finger landing this soon after the pen was last seen is taken for the palm. */
+        const val PEN_NEAR_MS = 500L
 
         /** How far past the edge a zoomed page must be pushed to turn, as a share of the screen height. */
         const val TURN_PUSH_FRACTION = 0.15f
