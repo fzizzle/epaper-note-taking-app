@@ -979,7 +979,7 @@ class WritingActivity : Activity() {
      * begun in a pause gets no live line. With fast-ink off it's on screen already.
      */
     private fun showStripChange(changed: Boolean) {
-        if (changed && fastInkWanted()) pen.refreshAlone(stripView)
+        if (changed && fastInkWanted()) pen.showAlone(stripView)
     }
 
     /** Full screen while writing: the status bar comes back for a moment with a swipe down from the top. */
@@ -1004,6 +1004,25 @@ class WritingActivity : Activity() {
         Log.i(TAG, "leave: back")
         finish()
     }
+
+    /**
+     * The volume buttons turn the page (owner, 2026-11-10): down for the next page, up for the
+     * previous one; Page Down and Up too, as a clip-on page turner sends. Held down, a key
+     * repeats; only the first press turns. Not while the pen is writing: the stroke would land
+     * on the new page.
+     */
+    override fun onKeyDown(keyCode: Int, event: android.view.KeyEvent): Boolean {
+        val forward = when (keyCode) {
+            android.view.KeyEvent.KEYCODE_VOLUME_DOWN, android.view.KeyEvent.KEYCODE_PAGE_DOWN -> true
+            android.view.KeyEvent.KEYCODE_VOLUME_UP, android.view.KeyEvent.KEYCODE_PAGE_UP -> false
+            else -> return super.onKeyDown(keyCode, event)
+        }
+        if (event.repeatCount == 0 && documentShown && !pen.isWriting && !screenPenDown) turn(forward)
+        return true // taken, so the system's volume panel doesn't open over the page
+    }
+
+    override fun onKeyUp(keyCode: Int, event: android.view.KeyEvent): Boolean =
+        keyCode in PAGE_KEYS || super.onKeyUp(keyCode, event)
 
     @Deprecated("Logged for the leave timings; then the usual back.")
     override fun onBackPressed() {
@@ -1112,6 +1131,10 @@ class WritingActivity : Activity() {
 
     companion object {
         const val EXTRA_PATH = "path"
+        private val PAGE_KEYS = setOf(
+            android.view.KeyEvent.KEYCODE_VOLUME_DOWN, android.view.KeyEvent.KEYCODE_VOLUME_UP,
+            android.view.KeyEvent.KEYCODE_PAGE_DOWN, android.view.KeyEvent.KEYCODE_PAGE_UP,
+        )
         private const val NO_PAGE = -1
         const val SHOW_PAUSE_MS = 150L
 
