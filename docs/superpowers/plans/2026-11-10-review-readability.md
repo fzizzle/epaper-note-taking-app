@@ -16,6 +16,8 @@ Paths below are under `notes/app/src/`. `main/…` means `main/java/com/fzizzle/
 
 ## Decisions for the owner (approve before Task 1)
 
+**Approved, all five (owner, 2026-11-10).** Decision 4 first, during Task 4; decisions 1–3 and 5 afterwards. Decision 5: the page menu (⋯).
+
 These are new features, so each needs a yes or no. Any can be left out.
 
 1. **Sharp zoom.** After a zoom or a move, the part of the page on screen is drawn again at its true size. It arrives a moment after the fingers lift, with the clean refresh that already follows a zoom. No setting, always on.

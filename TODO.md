@@ -67,11 +67,11 @@ From using the app on the tablet. Worked through on the branch `owner-feedback-f
 
 [Plan](docs/superpowers/plans/2026-11-10-review-readability.md), ending in an owner session (hard stop). Nothing in it changes the PDF.
 
-- [ ] Owner approves the plan and its 5 decisions.
+- [x] Owner approved all 5 decisions (2026-11-10); the two settings go under ⋯ in the writing screen.
 - [ ] Try the tablet's own display settings first, no code (Task 1).
 - [ ] Sharp text when zoomed in (Task 2).
 - [ ] A contrast setting (Task 3; skipped if Task 1 is enough).
-- [x] Cleaner page turns and a gentler refresh after zooming (Task 4): REGAL for both, owner's choice (2026-11-10). Decision 4 approved; decisions 1–3 and 5 still open.
+- [x] Cleaner page turns and a gentler refresh after zooming (Task 4): REGAL for both, owner's choice (2026-11-10).
 - [ ] Trim margins (Task 5).
 - [ ] Owner session (Task 6, hard stop).
 
