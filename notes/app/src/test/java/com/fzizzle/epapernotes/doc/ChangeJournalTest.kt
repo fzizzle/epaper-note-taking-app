@@ -107,4 +107,46 @@ class ChangeJournalTest {
         all.forEach { j.append(it) }
         assertEquals(all, j.read()!!.changes)
     }
+
+    /** Review 2.1: the journal notes a save just before the PDF is swapped in, and how many changes it holds. */
+    @Test fun savingLineIsReadBack() {
+        val j = journal()
+        val saved = FileIdentity(200L, 1700000001000L, "ab".repeat(32))
+        j.start(base)
+        j.append(add(0, dot))
+        j.append(add(1, dot))
+        j.markSaving(saved, 2)
+        j.append(add(2, line)) // written while the save ran
+        val read = j.read()!!
+        assertEquals(listOf(add(0, dot), add(1, dot), add(2, line)), read.changes)
+        assertEquals(PendingSave(saved, 2), read.pendingSave)
+        assertEquals(base, read.base)
+    }
+
+    @Test fun noSavingLineMeansNoPendingSave() {
+        val j = journal()
+        j.start(base)
+        j.append(add(0, dot))
+        assertNull(j.read()!!.pendingSave)
+    }
+
+    /** Cut short it could still look whole, with a smaller count (1 instead of 12 here). It must be dropped. */
+    @Test fun aCutShortSavingLineIsIgnored() {
+        val j = journal()
+        j.start(base)
+        j.append(add(0, dot))
+        j.file.appendText("saving 200 1700000001000 ${"ab".repeat(32)} 1")
+        val read = j.read()!!
+        assertNull(read.pendingSave)
+        assertEquals(listOf(add(0, dot)), read.changes)
+    }
+
+    /** A new journal after a save has no saving line: that save is over. */
+    @Test fun rewriteDropsTheSavingLine() {
+        val j = journal()
+        j.start(base)
+        j.markSaving(base, 0)
+        j.rewrite(base, listOf(add(0, dot)))
+        assertNull(j.read()!!.pendingSave)
+    }
 }

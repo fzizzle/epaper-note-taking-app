@@ -30,9 +30,11 @@ import java.util.concurrent.TimeoutException
  * - The PDF is saved in the background a few seconds after the pen stops, and at once when
  *   the owner leaves the document or the app goes to the background.
  * - A save never writes over a file that something else has changed, or over a damaged file
- *   the owner hasn't decided about. The writing stays in the journal instead.
+ *   the owner hasn't decided about. The writing stays in the journal instead. "Changed" means
+ *   its contents: a file whose date alone is different is the same file.
  * - The journal is only emptied after a save has succeeded, and changes that arrived during
- *   that save are written back into it.
+ *   that save are written back into it. Just before the new PDF is swapped in, the journal
+ *   notes what it looks like, so a kill between the two is understood on the next open.
  * - Undo and redo cover this session's changes. The history is in memory only; an undo is
  *   just one more change, journaled and saved like any other.
  * - Two sessions on the same file take turns: a new one waits until the previous one has
@@ -68,8 +70,9 @@ class DocumentSession(
     private val unsaved = ArrayList<Change>()
     private val undoable = ArrayDeque<Change>()
     private val redoable = ArrayDeque<Change>()
-    // Guarded by lock too. The last journal write failed, and the owner has been told. Cleared
-    // when the journal is next rewritten whole, so the message isn't shown at every stroke.
+    // Guarded by lock too. A journal write failed, and the owner has been told. From then on
+    // the journal file may not hold the same changes as `unsaved`. Cleared when the journal is
+    // next rewritten whole, so the message isn't shown at every stroke.
     private var journalBroken = false
 
     /** Opened once the journal is ready, so no stroke can be written before its header. */
@@ -125,13 +128,23 @@ class DocumentSession(
         val replay: List<Change>
         synchronized(lock) {
             val old = journal.read()
+            val pending = old?.pendingSave
             replay = when {
-                // The journal already holds exactly this. Rewrite it anyway: a plan-2 (pnj1)
-                // journal becomes pnj2 with fixed item ids before anything new is appended,
-                // or the new lines would be read back as plan-2 lines and dropped.
-                old != null && old.base == identity -> {
+                // The journal was started on this very file (its date may differ: only the
+                // contents count). Rewrite it anyway: a plan-2 (pnj1) journal becomes pnj2
+                // with fixed item ids before anything new is appended, or the new lines would
+                // be read back as plan-2 lines and dropped.
+                old != null && old.base.sameContentAs(identity) -> {
                     journal.rewrite(identity, old.changes)
                     old.changes
+                }
+                // The app was killed in the middle of a save: the new PDF was swapped in, but
+                // the journal never heard. The file is the one that save was writing, so it
+                // already holds the first changes; only the ones after them are put back.
+                old != null && pending != null && pending.result.sameContentAs(identity) -> {
+                    val rest = old.changes.drop(pending.count)
+                    journal.rewrite(identity, rest)
+                    rest
                 }
                 else -> {
                     if (old != null && old.changes.isNotEmpty()) {
@@ -483,7 +496,8 @@ class DocumentSession(
 
         try {
             val now = try { FileIdentity.of(file) } catch (e: Exception) { null }
-            if (now != known) {
+            // Contents only: a sync app that just reset the file's date changed nothing.
+            if (now?.sameContentAs(known) != true) {
                 // A laptop or sync app changed, moved or deleted the file. Writing over it
                 // would lose their change, so stop saving into it. The changes stay in the
                 // journal (plan 5 adds the copy).
@@ -492,10 +506,18 @@ class DocumentSession(
                 return
             }
 
-            SafeSave.replace(file) { p.saveTo(it) }
-            known = FileIdentity.of(file)
+            // The new version is read once, while it's still the temporary file: moving it
+            // into place changes nothing about it, so the file needn't be read again after.
+            var next: FileIdentity? = null
+            SafeSave.replace(file, beforeSwap = { temp ->
+                val result = FileIdentity.of(temp)
+                next = result
+                markSaving(result, inThisSave)
+            }) { p.saveTo(it) }
+            val saved = next!!
+            known = saved
             inkRedrawn = false
-            restartJournal(known!!, inThisSave)
+            restartJournal(saved, inThisSave)
             events(SessionEvent.Saved)
         } catch (e: Throwable) {
             // Throwable, not Exception: running out of memory while saving must be told and
@@ -504,6 +526,32 @@ class DocumentSession(
             events(SessionEvent.SaveFailed(e.message ?: "The file couldn't be saved."))
             scheduler.postDelayed(AUTOSAVE, RETRY_DELAY_MS) { save() }
         }
+    }
+
+    /**
+     * Worker thread only, just before a save's new PDF is swapped in: the journal notes what
+     * that PDF looks like and that it holds the first [count] changes. If the app is killed
+     * after the swap but before [restartJournal], the next opening can tell from this that
+     * those changes are in the file (see [openOnWorker]).
+     *
+     * Skipped while the journal is broken: its lines may then not be the same as `unsaved`,
+     * so "the first [count]" could point at the wrong ones. Without the note, a kill at that
+     * moment sets the journal aside, as it always did: nothing is lost either way. And a note
+     * that can't be written must not stop the save; it's a journal failure like any other.
+     */
+    private fun markSaving(result: FileIdentity, count: Int) {
+        var tellOwner = false
+        synchronized(lock) {
+            if (journalBroken) return
+            try {
+                journal.markSaving(result, count)
+            } catch (e: IOException) {
+                System.err.println("DocumentSession: the journal couldn't be written: $e")
+                journalBroken = true
+                tellOwner = true
+            }
+        }
+        if (tellOwner) events(SessionEvent.JournalFailed)
     }
 
     /**

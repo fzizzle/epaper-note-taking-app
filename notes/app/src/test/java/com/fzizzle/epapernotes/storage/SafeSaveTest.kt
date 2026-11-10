@@ -61,4 +61,24 @@ class SafeSaveTest {
         assertThrows(IOException::class.java) { SafeSave.replace(f) { it.writeText("") } }
         assertEquals("old", f.readText())
     }
+
+    /** The journal is told about the new version at this moment: finished, but not yet swapped in. */
+    @Test fun beforeSwapSeesTheNewVersionAndTheOldIsStillInPlace() {
+        val f = tmp.newFile("a.pdf").apply { writeText("old") }
+        var seen = ""
+        var inPlace = ""
+        SafeSave.replace(f, beforeSwap = { seen = it.readText(); inPlace = f.readText() }) { it.writeText("new") }
+        assertEquals("new", seen)
+        assertEquals("old", inPlace)
+        assertEquals("new", f.readText())
+    }
+
+    @Test fun aThrowingBeforeSwapLeavesTheOriginal() {
+        val f = tmp.newFile("a.pdf").apply { writeText("old") }
+        assertThrows(IOException::class.java) {
+            SafeSave.replace(f, beforeSwap = { throw IOException("no") }) { it.writeText("new") }
+        }
+        assertEquals("old", f.readText())
+        assertFalse(SafeSave.tempFileFor(f).exists())
+    }
 }
