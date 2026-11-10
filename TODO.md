@@ -6,17 +6,18 @@ The four sections below come from the [project review of 2026-11-10](docs/superp
 
 [Plan](docs/superpowers/plans/2026-11-10-review-bug-fixes.md), ending in an owner checklist (hard stop).
 
-- [ ] Owner approves the plan and its 6 decisions.
-- [ ] Stroke ends and corners are filled; old strokes are drawn again (Task 1).
-- [ ] The pen follows a zoomed page moved with one finger (Task 2).
-- [ ] A stroke is kept even when the journal can't be written (Task 3).
-- [ ] Nothing fails silently on the document's worker (Task 4).
-- [ ] A kill mid-save or a changed date no longer sets writing aside (Task 5).
-- [ ] The "damaged file" question pauses the pen; a copy is what's continued (Task 6).
-- [ ] A short zoomed page doesn't turn; the pen can't write beside the page (Task 7).
-- [ ] The pen's on, off and palm rules (Task 8; each checked on the tablet first).
-- [ ] Tall first pages get a capped thumbnail (Task 9).
-- [ ] Owner checklist (Task 10, hard stop).
+- [x] Owner said "fix the bugs" (2026-11-10), taken as approval of the 6 decisions; any can still be overturned.
+- [x] Stroke ends and corners are filled; old strokes are drawn again (Task 1). Tablet tests still to run.
+- [x] The pen follows a zoomed page moved with one finger (Task 2).
+- [x] A stroke is kept even when the journal can't be written (Task 3).
+- [x] Nothing fails silently on the document's worker (Task 4).
+- [x] A kill mid-save or a changed date no longer sets writing aside (Task 5).
+- [x] The "damaged file" question pauses the pen; a copy is what's continued (Task 6).
+- [x] A short zoomed page doesn't turn; the pen can't write beside the page (Task 7).
+- [x] The pen's on, off and palm rules (Task 8). A stroke begun during a screen update (review 1.5) is only logged so far: fix it if the checklist's R6 shows it.
+- [x] Tall first pages get a capped thumbnail (Task 9). Tablet tests still to run.
+- [ ] Run the tablet tests on a quiet tablet (built and tested on the laptop only; see the top of the checklist).
+- [ ] Owner checklist: [notes/TESTING-review-fixes.md](notes/TESTING-review-fixes.md) (Task 10, hard stop).
 
 ## Review: speed
 

@@ -334,6 +334,7 @@ class WritingActivity : Activity() {
             // onViewportChanged (that would call Onyx on every finger movement). Fast-ink is
             // off until here anyway, so telling the pen now is in time for the next stroke.
             publishPenMapping()
+            pages.viewport?.let { Log.i(TAG, "fingers up: pen mapping page=${it.page} zoom=${it.zoom}") }
             if (moved) {
                 // Wipe fast-ink's leftover copy of the strokes, then hand the pen back.
                 Log.i(TAG, "fingers up after moving: clean refresh, then resume fast-ink")
@@ -425,7 +426,6 @@ class WritingActivity : Activity() {
         val v = pages.viewport ?: return
         if (displayToPdf.isEmpty()) return
         penMapping = v.page to v.pageToScreen().inverse().then(displayToPdf[v.page])
-        Log.i(TAG, "pen mapping page=${v.page} zoom=${v.zoom}")
     }
 
     /** UI thread: whenever the chosen tool or the held button changes. Also sets the live line to match. */
