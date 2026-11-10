@@ -32,9 +32,17 @@ class Viewport(
     var zoom = 1f
         private set
 
-    // Where the page's top-left corner is on screen, in pixels.
+    // Where the page's top-left corner is on screen, in pixels. Kept to fractions of a pixel,
+    // so slow drags add up, but the page is shown at [shownX0], [shownY0].
     private var x0 = 0f
     private var y0 = 0f
+
+    // The corner on whole pixels: at normal size the picture is drawn 1:1 there, each of its
+    // pixels on one of the screen's, not blended across two (half a pixel off blurs every
+    // edge). Everything that says where the page is on screen reads these, so the pen, the
+    // selection and the sharp patch agree with the picture.
+    private val shownX0: Float get() = Math.round(x0).toFloat()
+    private val shownY0: Float get() = Math.round(y0).toFloat()
 
     init {
         require(sizes.isNotEmpty()) { "a document has at least one page" }
@@ -106,10 +114,10 @@ class Viewport(
      * even with a box to fit: the page round the box that is on screen can be written on too.
      */
     fun pageBoundsPx(): FloatArray = floatArrayOf(
-        maxOf(x0, 0f),
-        maxOf(y0, 0f),
-        minOf(x0 + pageWidthPx(), viewWidthPx.toFloat()),
-        minOf(y0 + pageHeightPx(), viewHeightPx.toFloat()),
+        maxOf(shownX0, 0f),
+        maxOf(shownY0, 0f),
+        minOf(shownX0 + pageWidthPx(), viewWidthPx.toFloat()),
+        minOf(shownY0 + pageHeightPx(), viewHeightPx.toFloat()),
     )
 
     /**
@@ -125,10 +133,10 @@ class Viewport(
     }
 
     /** Display points on the page to screen pixels: what drawing the page needs. */
-    fun pageToScreen(): Affine = Affine.scale(pxPerPt()).then(Affine.translate(x0, y0))
+    fun pageToScreen(): Affine = Affine.scale(pxPerPt()).then(Affine.translate(shownX0, shownY0))
 
     /** Where a screen pixel is on the page, in display points. It can be off the page's edges. */
-    fun screenToPage(x: Float, y: Float): Pt = Pt((x - x0) / pxPerPt(), (y - y0) / pxPerPt())
+    fun screenToPage(x: Float, y: Float): Pt = Pt((x - shownX0) / pxPerPt(), (y - shownY0) / pxPerPt())
 
     /** What fills the screen at normal size: [page]'s box to fit, or the whole page. */
     private fun box(page: Int): Box = fit?.get(page) ?: Box(0f, 0f, sizes[page].w, sizes[page].h)

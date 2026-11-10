@@ -168,12 +168,12 @@ Found 2026-11-10: at normal size the page picture is rendered 1:1 (1675 px wide 
 **Interfaces:**
 - `Viewport` keeps `x0`, `y0` as floats (so slow one-finger moves don't lose sub-pixel motion), but `pageToScreen()` and `screenToPage()` use them rounded to whole pixels. Everything built on them (the pen's mapping, the selection layer, `visiblePagePart`, the sharp patch's place, `pageBoundsPx` and so the pen limit) then agrees with where the picture is drawn.
 
-- [ ] **Step 1: Write the failing tests** in `ViewportTest`: `thePageStartsOnAWholePixel` (an A4 page, 595.28×841.89 pt, fitted in a 1860×2369 view: `pageToScreen().map(Pt(0f, 0f))` has whole-number x and y); `screenToPageUndoesPageToScreen` (for a few points, at zoom 1 and zoom 2.3 after a pan by a fraction of a pixel); `aSlowMoveIsNotLost` (ten `panBy(0.3f, 0f)` at zoom 2 move the page 3 px, not 0).
-- [ ] **Step 2: Run and confirm they fail.**
-- [ ] **Step 3: Implement.** In `onDraw`, when the kept picture's size is within 1 px of the page's on-screen size in both directions (normal size, and any zoom that happens to match), draw it unscaled at the page's whole-pixel origin with no filtering; otherwise draw it into `dst` as today.
-- [ ] **Step 4: Run all laptop tests** — pass.
+- [x] **Step 1: Write the failing tests** in `ViewportTest`: `thePageStartsOnAWholePixel` (an A4 page, 595.28×841.89 pt, fitted in a 1860×2369 view: `pageToScreen().map(Pt(0f, 0f))` has whole-number x and y); `screenToPageUndoesPageToScreen` (for a few points, at zoom 1 and zoom 2.3 after a pan by a fraction of a pixel); `aSlowMoveIsNotLost` (ten `panBy(0.3f, 0f)` at zoom 2 move the page 3 px, not 0).
+- [x] **Step 2: Run and confirm they fail.**
+- [x] **Step 3: Implement.** In `onDraw`, when the kept picture's size is within 1 px of the page's on-screen size in both directions (normal size, and any zoom that happens to match), draw it unscaled at the page's whole-pixel origin with no filtering; otherwise draw it into `dst` as today.
+- [x] **Step 4: Run all laptop tests** — pass.
 - [ ] **Step 5: Check on the tablet** (controller): a screenshot at normal size matches a 1:1 render of the page placed on whole pixels. Owner: text is a little crisper; ink still lands under the pen, at normal size and zoomed.
-- [ ] **Step 6: Commit.** `git commit -m "notes: the page is drawn on whole pixels"`
+- [x] **Step 6: Commit.** `git commit -m "notes: the page is drawn on whole pixels"`
 
 ### Task 8: Dark text as black (owner, 2026-11-10: "yes do all of that")
 

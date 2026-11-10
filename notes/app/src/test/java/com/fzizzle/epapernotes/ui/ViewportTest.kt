@@ -260,4 +260,43 @@ class ViewportTest {
         assertEquals(150f, back.x, 0.5f)
         assertEquals(842f, back.y, 0.5f)
     }
+
+    // Task 7: the page picture, 1:1 at normal size, is drawn on whole pixels, not blended across two.
+    private fun a4() = Viewport(listOf(SizePt(595.28f, 841.89f)), viewWidthPx = 1860, viewHeightPx = 2369)
+
+    @Test fun thePageStartsOnAWholePixel() {
+        val v = a4() // fits by height: 1675.06 px wide, so it would start at x = 92.47
+        val tl = v.pageToScreen().map(Pt(0f, 0f))
+        assertEquals(92f, tl.x, 0f)
+        assertEquals(0f, tl.y, 0f)
+        // The pen's limit is of the same place.
+        assertEquals(92f, v.pageBoundsPx()[0], 0f)
+    }
+
+    @Test fun screenToPageUndoesPageToScreen() {
+        val v = a4()
+        val points = listOf(Pt(0f, 0f), Pt(100.3f, 200.7f), Pt(595.28f, 841.89f))
+        fun check() = points.forEach {
+            val screen = v.pageToScreen().map(it)
+            val back = v.screenToPage(screen.x, screen.y)
+            assertEquals(it.x, back.x, 1e-3f)
+            assertEquals(it.y, back.y, 1e-3f)
+        }
+        check()
+        v.zoomAround(2.3f, 700f, 1000f)
+        v.panBy(10.37f, -20.61f)
+        val tl = v.pageToScreen().map(Pt(0f, 0f))
+        assertEquals(Math.round(tl.x).toFloat(), tl.x, 0f)
+        assertEquals(Math.round(tl.y).toFloat(), tl.y, 0f)
+        check()
+    }
+
+    /** The page is shown on whole pixels, but where it is is kept finer: slow drags add up. */
+    @Test fun aSlowMoveIsNotLost() {
+        val v = a4()
+        v.zoomAround(2f, 930f, 1184f)
+        val before = v.pageToScreen().map(Pt(0f, 0f)).x
+        repeat(10) { v.panBy(0.3f, 0f) }
+        assertEquals(before - 3f, v.pageToScreen().map(Pt(0f, 0f)).x, 0f)
+    }
 }

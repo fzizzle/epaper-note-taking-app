@@ -204,8 +204,9 @@ class PageView(context: Context) : View(context) {
 
     private val placeholder = Paint().apply { color = Color.rgb(235, 235, 235) }
     private val pagePaint = Paint(Paint.FILTER_BITMAP_FLAG)
-    // Pixel for pixel: the patch is drawn at its true size, and smoothing would only blur it.
-    private val patchPaint = Paint().apply { isFilterBitmap = false }
+    // Pixel for pixel: for a picture drawn at its true size (the page at normal size, the
+    // sharp patch) on whole pixels, smoothing would only blur it.
+    private val unscaledPaint = Paint().apply { isFilterBitmap = false }
     // Not smoothed: solid, like Onyx's live ink and the page's renderings of it (PdfFile.render).
     // This is what the panel shows of a new stroke once Onyx hands it back after a pause.
     private val inkPaint = Paint().apply { strokeCap = Paint.Cap.ROUND }
@@ -629,14 +630,22 @@ class PageView(context: Context) : View(context) {
             bitmaps.invalidate(page) // so ensureRendered below asks for a fresh one
             shown = null
         }
-        if (shown != null) canvas.drawBitmap(shown.bitmap, null, dst, pagePaint) else canvas.drawRect(dst, placeholder)
+        when {
+            shown == null -> canvas.drawRect(dst, placeholder)
+            // The picture is the page's size on screen (normal size, or a zoom that happens to
+            // match): drawn as it is, at the page's corner, which is on a whole pixel (Viewport).
+            abs(shown.bitmap.width - dst.width()) <= 1f && abs(shown.bitmap.height - dst.height()) <= 1f ->
+                canvas.drawBitmap(shown.bitmap, dst.left, dst.top, unscaledPaint)
+            // Zoomed in, or a picture kept from another size: scaled to fit the page.
+            else -> canvas.drawBitmap(shown.bitmap, null, dst, pagePaint)
+        }
 
         // Zoomed in and still, the sharp patch goes over it, at its own place and size. Only
         // while it's this view's part: it's dropped as soon as the page moves, so this is a check.
         val sharp = patch?.takeIf { patchCovers(page) && it.part == v.visiblePagePart() }
         if (sharp != null) {
             val at = toScreen.map(Pt(sharp.part.x0, sharp.part.y0))
-            canvas.drawBitmap(sharp.bitmap, Math.round(at.x).toFloat(), Math.round(at.y).toFloat(), patchPaint)
+            canvas.drawBitmap(sharp.bitmap, Math.round(at.x).toFloat(), Math.round(at.y).toFloat(), unscaledPaint)
         }
 
         // Whatever the picture on top is missing, whenever it was made. The patch covers all
