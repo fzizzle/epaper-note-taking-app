@@ -94,3 +94,14 @@ The four sections below come from the [project review of 2026-11-10](docs/superp
 - Partial eraser
 - Copy and paste between documents
 - More pen colours
+
+## Ideas to explore: getting the buttons out of the way
+
+From the 2026-11-10 discussion. None are decided. The aim: buttons that stay out of the way of the work but are still quick to reach. Useful input first: which strip buttons get tapped most during the test sessions.
+
+- **Gestures for the frequent actions:** a finger swipe to turn the page at normal size, a two-finger tap or swipe for undo and redo. Reverses spec §6.2 (a swipe at normal size does nothing), and a resting palm could trigger a swipe.
+- **Invisible edge tap zones:** a finger tap at the left or right edge turns the page. The pen never moves the page, so it can't be confused with writing, and a tap is harder for a palm to trigger than a swipe.
+- **Hide the strip on demand:** a finger double tap hides or shows it, as the Notable app does. One refresh when asked for. Weakest of these, since the strip is only about 5% of the screen.
+- **A shorter strip:** keep only the buttons that get used, put the rest behind the menu button, and let the short row sit in a corner.
+- **A transparent strip:** glyphs float over the page, each with a thin white outline so it stays readable over dark content, and the page gains the strip's 5%. The buttons would be cut out of the pen's area with the exclude list of `setLimitRect`. Costs nothing in speed; the risk is legibility over a dense page header.
+- **Not this:** a strip that turns solid when the pen hovers over it. Each change is an e-ink refresh, it would probably need fast-ink paused each time (untested), and writing near the top of the page would trigger it constantly.
