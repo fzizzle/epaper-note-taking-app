@@ -22,23 +22,21 @@ The stock Boox Notes app writes well but gets in the way:
 
 ## What it does
 
-Jot does a small set of things and aims to do each one well.
-
-- **Your folders as the library:** a thumbnail grid of one folder, folders first, with a breadcrumb to go back up and a refresh button. Long-press a tile to rename, move or delete it, and make new folders from the top bar. Changes made outside the app show up by themselves. To import a batch of PDFs, copy them into a folder. The library folder can be on the SD card, and a "Continue" row reopens the last file.
-- **Fast pen:** Boox's fast-ink drawing mode, with pressure-sensitive black ink.
-- **Highlighter:** a see-through yellow stroke that never hides the text under it.
-- **Stroke eraser:** touch a stroke and the whole stroke goes.
-- **Lasso select:** move, resize, copy, paste and delete your handwriting within a document.
-- **Snip:** copy a region of the page as a picture (printed content and ink together) and paste it onto another page.
+- **Library:** your folders as a thumbnail grid. Rename, move, delete and make folders. Changes made outside the app show up by themselves. Works from the SD card.
+- **Pen:** fast, pressure-sensitive black ink.
+- **Highlighter:** see-through yellow.
+- **Eraser:** removes a whole stroke.
+- **Lasso:** move, resize, copy, paste and delete handwriting.
+- **Snip:** copy part of a page as a picture and paste it on another page.
 - **Undo and redo.**
-- **Pen side buttons:** hold button 1 to lasso-select and button 2 to erase. Let go and you're back to the pen.
-- **Page rotation:** rotate one page or all of them, saved into the PDF itself.
-- **Pages and touch:** one page at a time. Turn pages with the ‹ › buttons or the volume buttons. The pen writes, two fingers zoom and one finger moves a zoomed page. A resting palm is ignored.
-- **Easier-to-read pages:** sharp text when zoomed in, a contrast setting, trimmed margins, and dark text drawn pure black so the colour screen shows it at full sharpness.
-- **Minimal interface:** one thin toolbar strip, and nothing else on screen. The status bar comes back with a swipe down from the top.
-- **Never loses writing:** autosave and crash-safe saving. Coming in plan 5: if the file changed on disk while you were writing, both versions are kept.
+- **Pen buttons:** hold button 1 to lasso, button 2 to erase.
+- **Rotate pages:** one or all, saved in the PDF.
+- **Pages:** one at a time. Turn with the ‹ › buttons or the volume buttons. Two fingers zoom, one finger moves a zoomed page. Palms are ignored.
+- **Readability:** sharp zoomed text, a contrast setting, trimmed margins, dark text as pure black.
+- **One toolbar strip,** nothing else on screen.
+- **Autosave** and crash-safe saving.
 
-Handwriting is stored as standard PDF annotations, a separate layer over the original page. Any PDF viewer on your laptop shows it, and the page underneath is never modified.
+Handwriting is saved as standard PDF annotations, so any PDF viewer shows it. The original page is never changed.
 
 ## Not in the first version
 
