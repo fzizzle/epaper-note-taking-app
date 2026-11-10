@@ -30,6 +30,14 @@ To do: on one slide deck that is hard to read, long-press the app's icon → Opt
 - Is the highlighter still yellow?
 - Does a pasted snip look like the page beside it?
 
+## What changed during the trial
+
+Read again at 18:19, after the owner's trial: `paintConfig.textBold` false → true, `paintConfig.textEACType` 0 → 3, `paintConfig.antiAlisingType` 0 → 1, `refreshConfig.animationDuration` 50 → 10. `globalActivityConfig.enable` is still false, and `displayConfig` (contrast, enhancement) is unchanged.
+
 ## Verdict
 
-To come.
+Owner, 2026-11-10: the settings "seem to be doing very little".
+
+That is what to expect. The `paintConfig` options (text bolding, text enhancement, anti-aliasing) act on what the app draws through Android's own text and shape calls, such as the strip's labels. A PDF page reaches the screen as one bitmap from MuPDF, so they have no text in it to act on. Only whole-screen options (`displayConfig`) could change the page, and they darken everything, the strip and ink included.
+
+**Task 3 (the app's own contrast setting) stays in the plan.**

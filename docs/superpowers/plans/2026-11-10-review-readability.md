@@ -52,10 +52,10 @@ These are new features, so each needs a yes or no. Any can be left out.
 **Files:**
 - Create: `docs/superpowers/readability-trial.md`
 
-- [ ] **Step 1: Look at what the tablet applies to the app now:** `adb shell dumpsys oec_service | grep -A30 com.fzizzle.epapernotes` (the app had no entry on 2026-11-10, so it used the system defaults). Record it.
-- [ ] **Step 2: Ask the owner to try,** on one slide deck they find hard to read: long-press the app's icon → Optimize → Display, and in turn "dark colour enhancement", "text bolding" and "background bleaching". For each: is the page easier to read, does the pen still feel the same, does the highlighter still look yellow, do snips look right when pasted.
-- [ ] **Step 3: Write up the trial** and the owner's verdict. If one of the tablet's settings does the job with no side effects, drop Task 3 (contrast) from this plan and say so in `TODO.md`.
-- [ ] **Step 4: Commit.** `git commit -m "docs: what the tablet's own display settings do for the app"`
+- [x] **Step 1: Look at what the tablet applies to the app now:** `adb shell dumpsys oec_service | grep -A30 com.fzizzle.epapernotes` (the app had no entry on 2026-11-10, so it used the system defaults). Record it.
+- [x] **Step 2: Ask the owner to try,** on one slide deck they find hard to read: long-press the app's icon → Optimize → Display, and in turn "dark colour enhancement", "text bolding" and "background bleaching". For each: is the page easier to read, does the pen still feel the same, does the highlighter still look yellow, do snips look right when pasted.
+- [x] **Step 3: Write up the trial** and the owner's verdict. If one of the tablet's settings does the job with no side effects, drop Task 3 (contrast) from this plan and say so in `TODO.md`.
+- [x] **Step 4: Commit.** `git commit -m "docs: what the tablet's own display settings do for the app"`
 
 ### Task 2: Sharp text when zoomed in (decision 1)
 
