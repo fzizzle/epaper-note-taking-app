@@ -60,9 +60,15 @@ class StripButton(context: Context, private val glyph: Glyph, description: Strin
         invalidate()
     }
 
+    /**
+     * Whether a press is drawn (inverted while held). Off on the writing strip: fast-ink keeps
+     * it off the panel anyway, and each redraw there costs a full-screen e-ink update.
+     */
+    var showsPress = true
+
     override fun drawableStateChanged() {
         super.drawableStateChanged()
-        invalidate() // pressed on, pressed off
+        if (showsPress) invalidate() // pressed on, pressed off
     }
 
     /** The pen's mark: a wave that starts heavy and thins out, like a pressed pen lifting away. Built once per size. */
@@ -110,7 +116,7 @@ class StripButton(context: Context, private val glyph: Glyph, description: Strin
     }
 
     override fun onDraw(canvas: Canvas) {
-        val inverted = isEnabled && (isSelected || isPressed)
+        val inverted = isEnabled && (isSelected || (isPressed && showsPress))
         val onBlack = island == IslandStyle.BLACK
         // Greyed out when there's nowhere to go (‹ on the first page, › on the last, undo with nothing to undo).
         val fg = when {

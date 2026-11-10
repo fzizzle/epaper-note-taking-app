@@ -75,6 +75,7 @@ class WritingActivity : Activity() {
     private lateinit var pasteButton: StripButton
     private lateinit var menuButton: StripButton
     private lateinit var island: IslandRow
+    private lateinit var stripView: View
     private lateinit var previousButton: StripButton
     private lateinit var nextButton: StripButton
     private val toolState = ToolState()
@@ -188,8 +189,9 @@ class WritingActivity : Activity() {
             pages.penHandler = null
             screenHasPen = false
         }
-        // Onyx writing means fast-ink is on already.
-        if (fastInkWanted() && !pen.isWriting) {
+        // Onyx writing means fast-ink is on already. Switching it on again when it was never
+        // paused (choosing another tool) makes Onyx refresh the whole screen, so not then.
+        if (fastInkWanted() && !pen.isWriting && !pen.drawsInk) {
             Log.i(TAG, "resume fast-ink")
             pen.resume()
         }
@@ -221,6 +223,7 @@ class WritingActivity : Activity() {
         val right = StripRow(this, side = side, gap = gap)
         fun button(row: StripRow, glyph: Glyph, description: String, gaps: Int = 1, onClick: () -> Unit) =
             StripButton(this, glyph, description).also {
+                it.showsPress = false
                 it.setOnClickListener { onClick() }
                 row.addSquare(it, gaps)
             }
@@ -248,6 +251,7 @@ class WritingActivity : Activity() {
         val strip = CentredStrip(this, gap = gap, start = left, middle = island, end = right, middleHeight = side).apply {
             setBackgroundColor(Color.WHITE)
         }
+        stripView = strip
         setContentView(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.WHITE)
@@ -681,19 +685,20 @@ class WritingActivity : Activity() {
         val stripChanged = updateStrip()
         layer.snipping = toolState.chosen == Tool.SNIP
         layer.pasteArmed = toolState.pasteArmed
-        handler.removeCallbacks(resumeFastInk)
-        pages.invalidate()
         if (toolState.fastInkOn()) {
             pauseWhenLifted = false
-            // With fast-ink running the screen ignores the strip's redraw: a short pause shows it.
-            if (stripChanged && fastInkWanted()) {
-                showWithoutFastInk()
-                return
-            }
+            showStripChange(stripChanged)
+            // Fast-ink on before and after (one drawing tool for another): the page has nothing
+            // new to show, and redrawing it would make the panel refresh the whole screen.
+            if (pen.drawsInk) return
+            handler.removeCallbacks(resumeFastInk)
+            pages.invalidate()
             // Once the screen has drawn the page without the box or rectangle.
             handler.postDelayed(resumeFastInk, SHOW_PAUSE_MS)
             return
         }
+        handler.removeCallbacks(resumeFastInk)
+        pages.invalidate()
         // Set before the check, so a lift from here on sees it and does the pause.
         pauseWhenLifted = true
         if (pen.isWriting) {
@@ -927,10 +932,11 @@ class WritingActivity : Activity() {
 
     /**
      * The screen ignores normal drawing while fast-ink is on, so a strip that [changed] then
-     * needs the short pause a new page gets. With fast-ink off it's on screen already.
+     * is put on the panel by itself (owner-tested: it shows). No pause: a pause refreshes the
+     * page, and a stroke begun in it gets no live line. With fast-ink off it's on screen already.
      */
     private fun showStripChange(changed: Boolean) {
-        if (changed && fastInkWanted()) showWithoutFastInk()
+        if (changed && fastInkWanted()) pen.refreshAlone(stripView)
     }
 
     /** Full screen while writing: the status bar comes back for a moment with a swipe down from the top. */
