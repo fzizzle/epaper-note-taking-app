@@ -235,6 +235,7 @@ class PageView(context: Context) : View(context) {
     }
 
     override fun onDraw(canvas: Canvas) {
+        val started = System.nanoTime()
         canvas.drawColor(Color.WHITE)
         val v = viewport ?: return
         val page = v.page
@@ -263,6 +264,11 @@ class PageView(context: Context) : View(context) {
                 if (page > 0) ensureRendered(page - 1, renderWidth(v, page - 1))
             }
         }
+
+        // Only the slow ones, so the log shows the draws that could make the pen or a drag
+        // stutter. "overlay" is how many strokes were drawn here on top of the page's picture.
+        val ms = (System.nanoTime() - started) / 1_000_000
+        if (ms > SLOW_DRAW_MS) android.util.Log.i("Notes", "draw ms=$ms overlay=${missing.size}")
     }
 
     /** A close version of the saved ink, standing in until the page re-renders. */
@@ -393,6 +399,9 @@ class PageView(context: Context) : View(context) {
     }
 
     companion object {
+        /** A draw is only logged when it takes longer than this: half of a 60-a-second frame. */
+        private const val SLOW_DRAW_MS = 8L
+
         /**
          * Button 2 makes the pen report as an eraser; button 1 is an ordinary button flag
          * (probe results §1). Button 1's flag is ignored on the eraser, which wins.

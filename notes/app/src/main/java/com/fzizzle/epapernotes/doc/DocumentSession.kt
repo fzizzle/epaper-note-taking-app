@@ -393,6 +393,8 @@ class DocumentSession(
         if (applyFailed) return
         val touched = HashSet<Int>()
         var rotated = false
+        val started = System.nanoTime()
+        var changes = 0
         while (true) {
             val next = synchronized(lock) { unsaved.getOrNull(applied) } ?: break
             try {
@@ -406,9 +408,13 @@ class DocumentSession(
                 break
             }
             applied++
+            changes++
             touched += next.pages
             rotated = rotated || next is RotatePages
         }
+        // Only the slow ones: a line for every stroke would itself slow the pen's worker down.
+        val ms = (System.nanoTime() - started) / 1_000_000
+        if (ms > SLOW_APPLY_MS) System.err.println("DocumentSession: apply ms=$ms changes=$changes")
         if (touched.isNotEmpty()) events(SessionEvent.PageChanged(touched, rotated))
     }
 
@@ -496,6 +502,10 @@ class DocumentSession(
         if (applyFailed || stoppedBecauseChanged || checkRepair(p)) return
 
         try {
+            // Timed in three parts, to see where a slow save spends its time: checking the
+            // file is still ours, writing the new PDF, and the rest (reading the new file,
+            // the journal, moving it into place).
+            val started = System.nanoTime()
             val now = try { FileIdentity.of(file) } catch (e: Exception) { null }
             // Contents only: a sync app that just reset the file's date changed nothing.
             if (now?.sameContentAs(known) != true) {
@@ -509,16 +519,27 @@ class DocumentSession(
 
             // The new version is read once, while it's still the temporary file: moving it
             // into place changes nothing about it, so the file needn't be read again after.
+            val checkNs = System.nanoTime() - started
+            var writeNs = 0L
             var next: FileIdentity? = null
             SafeSave.replace(file, beforeSwap = { temp ->
                 val result = FileIdentity.of(temp)
                 next = result
                 markSaving(result, inThisSave)
-            }) { p.saveTo(it) }
+            }) {
+                val writeStarted = System.nanoTime()
+                p.saveTo(it)
+                writeNs = System.nanoTime() - writeStarted
+            }
             val saved = next!!
             known = saved
             inkRedrawn = false
             restartJournal(saved, inThisSave)
+            val totalNs = System.nanoTime() - started
+            System.err.println(
+                "DocumentSession: save ms=${totalNs / 1_000_000} check=${checkNs / 1_000_000} write=${writeNs / 1_000_000} " +
+                    "swap=${(totalNs - checkNs - writeNs) / 1_000_000} bytes=${file.length()}",
+            )
             events(SessionEvent.Saved)
         } catch (e: Throwable) {
             // Throwable, not Exception: running out of memory while saving must be told and
@@ -639,6 +660,9 @@ class DocumentSession(
         const val AUTOSAVE_DELAY_MS = 3000L
         const val HISTORY_LIMIT = 200
         const val RETRY_DELAY_MS = 30_000L
+
+        /** Applying changes is only logged when it takes longer than this. */
+        private const val SLOW_APPLY_MS = 5L
         private const val AUTOSAVE = "autosave"
         private const val REDRAW_INK = "redraw-ink"
 
