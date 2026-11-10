@@ -158,26 +158,42 @@ class DocumentSession(
     /**
      * Strokes an earlier version saved mirrored are drawn again, and saved like an edit. It
      * starts a moment after opening, so the first page shows at once (owner's choice; about
-     * 21 ms a stroke, 1.4 s for the test file), and goes one page per task, each posting the
-     * next, so the screen's requests for pages get in between. A page on show is drawn again
-     * once its strokes are fixed ([SessionEvent.InkRedrawn]). If the app stops before the
-     * save, the next opening simply does it again. Worker thread only.
+     * 21 ms a stroke, 1.4 s for the test file), and goes at most [REDRAW_CHUNK] strokes per
+     * task, each posting the next, so the screen's requests for pages, an erase, a lasso, an
+     * autosave or [close] get in between (a full page could hold the worker for seconds). A
+     * page on show is drawn again once all its strokes are fixed ([SessionEvent.InkRedrawn]).
+     * A save in the middle keeps what's fixed so far; if the app stops before the last save,
+     * the next opening simply finds the rest and does it. Worker thread only.
+     *
+     * Changes recorded meanwhile need no special care, whichever comes first on the worker. A
+     * redraw changes only how a stroke is drawn (its /AP and /Rect): never its id, its
+     * recorded points, or its place in the page's list. Applying a change reads and writes
+     * only those, so it does the same before or after a redraw: an erased or moved stroke
+     * goes either way (redrawn first, it just cost a moment), and anything a change adds or
+     * puts back is drawn the new way already. And a save in between holds whole strokes,
+     * since each is redrawn within one task. So `applied`, and the ordering rule, are untouched.
+     *
+     * [redrawnHere] counts this page's strokes fixed by earlier chunks, for the one InkRedrawn.
      */
-    private fun redrawFaultyInkFrom(page: Int) {
+    private fun redrawFaultyInkFrom(page: Int, redrawnHere: Int = 0) {
         val p = pages ?: return // closed
         if (page >= p.pageCount) {
             if (inkRedrawn) scheduleAutosave()
             return
         }
+        var redrawn = redrawnHere
+        var more = false
         try {
-            if (p.redrawFaultyInk(page)) {
-                inkRedrawn = true
-                events(SessionEvent.InkRedrawn(page))
-            }
+            val chunk = p.redrawFaultyInk(page, REDRAW_CHUNK)
+            if (chunk.redrawn > 0) inkRedrawn = true
+            redrawn += chunk.redrawn
+            more = chunk.more
         } catch (e: Exception) {
             // Never a reason to stop: the strokes just stay as they were.
             System.err.println("DocumentSession: redrawing ink on page $page failed: $e")
         }
+        if (more) return scheduler.post { redrawFaultyInkFrom(page, redrawn) }
+        if (redrawn > 0) events(SessionEvent.InkRedrawn(page))
         scheduler.post { redrawFaultyInkFrom(page + 1) }
     }
 
@@ -387,6 +403,7 @@ class DocumentSession(
             try {
                 SafeSave.replace(copy) { p.saveTo(it) }
                 switchTo(copy)
+                inkRedrawn = false // the redrawn strokes are in the copy, which is now the file
             } catch (e: Exception) {
                 events(SessionEvent.SaveFailed(e.message ?: "The copy couldn't be saved."))
                 return@post
@@ -532,6 +549,9 @@ class DocumentSession(
 
         /** Long enough for the first page to be drawn before old strokes are fixed. */
         const val REDRAW_INK_DELAY_MS = 1500L
+
+        /** Strokes redrawn per worker task: about half a second of work at most. */
+        const val REDRAW_CHUNK = 25
 
         /** How long a new session waits for the previous one on the same file to close. */
         private const val PREVIOUS_SESSION_WAIT_MS = 15_000L

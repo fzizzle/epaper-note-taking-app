@@ -10,6 +10,7 @@ import com.artifex.mupdf.fitz.PDFPage
 import com.artifex.mupdf.fitz.android.AndroidDrawDevice
 import com.fzizzle.epapernotes.doc.AddItems
 import com.fzizzle.epapernotes.doc.Change
+import com.fzizzle.epapernotes.doc.InkRedraw
 import com.fzizzle.epapernotes.doc.PdfPages
 import com.fzizzle.epapernotes.doc.RemoveItems
 import com.fzizzle.epapernotes.doc.ReplaceItems
@@ -108,8 +109,27 @@ class PdfFile private constructor(private val doc: PDFDocument) : PdfPages {
      */
     fun foreignAnnotationCount(page: Int): Int = annotationDicts(page).count { !annotations.isOurs(it) }
 
-    override fun redrawFaultyInk(page: Int): Boolean =
-        annotationDicts(page).count { annotations.isFaulty(it) && annotations.redraw(it) } > 0
+    /** Strokes whose redraw failed while this file is open, by id: tried again only at the next opening. */
+    private val notRedrawable = HashSet<String>()
+
+    /**
+     * Each stroke is tried on its own, so one that can't be read or drawn leaves the others
+     * redrawn, and counted, so they're saved. Only strokes really drawn again are counted.
+     */
+    override fun redrawFaultyInk(page: Int, limit: Int): InkRedraw {
+        val faulty = annotationDicts(page).filter { annotations.isFaulty(it) && annotations.idOf(it) !in notRedrawable }
+        var redrawn = 0
+        for (dict in faulty.take(limit)) {
+            val ok = try {
+                annotations.redraw(dict)
+            } catch (e: RuntimeException) {
+                System.err.println("PdfFile: redrawing a stroke on page $page failed: $e")
+                false
+            }
+            if (ok) redrawn++ else annotations.idOf(dict)?.let { notRedrawable += it }
+        }
+        return InkRedraw(redrawn, more = faulty.size > limit)
+    }
 
     /**
      * An add skips ids already on the page, so a replay can't double an item, and a move only

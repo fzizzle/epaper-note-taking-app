@@ -120,15 +120,20 @@ internal class ItemAnnotations(private val doc: PDFDocument) {
         form.put("Resources", opacityResources(StrokeStyle.of(stroke.kind).opacity))
         val ap = doc.newDictionary()
         ap.put("N", doc.addStream(buffer(contents), form))
+        // Everything is made before the annotation is touched, so a failure above leaves it as it was.
+        val rect = rectArray(box)
         dict.put("AP", ap)
-        dict.put("Rect", rectArray(box))
+        dict.put("Rect", rect)
         // MuPDF's own drawing padded /Rect with /RD; ours is the outline's box exactly.
         dict.delete("RD")
     }
 
-    /** True for one of the app's strokes whose drawing has a /Matrix other than "as is" (see [drawInk]). */
+    /**
+     * True for one of the app's strokes whose drawing has a /Matrix other than "as is" (see
+     * [drawInk]). Only one with a usable id ([isOurs]): anything else is never touched.
+     */
     fun isFaulty(dict: PDFObject): Boolean {
-        if (!looksOurs(dict) || dict.get("Subtype").asName() != "Ink") return false
+        if (!isOurs(dict) || dict.get("Subtype").asName() != "Ink") return false
         val m = dict.get("AP").get("N").get("Matrix")
         if (!m.isArray) return false
         if (m.size() != 6) return true

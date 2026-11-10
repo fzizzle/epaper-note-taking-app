@@ -89,7 +89,7 @@ class DocumentSessionTest {
 
     /** Owner: strokes saved before the fix are drawn mirrored. Opening redraws them, and that's saved like an edit. */
     @Test fun redrawnInkIsSavedWithNothingJournaled() {
-        fake.faultyPages += setOf(1, 3)
+        fake.faultyStrokes += mapOf(1 to 2, 3 to 1)
         session()
         scheduler.runDelayed() // the redraw, a moment after opening
         assertEquals(0, fake.saves)
@@ -102,7 +102,7 @@ class DocumentSessionTest {
 
     /** Each redrawn page is announced, so the screen draws it again if it's showing. */
     @Test fun eachRedrawnPageIsAnnounced() {
-        fake.faultyPages += setOf(1, 3)
+        fake.faultyStrokes += mapOf(1 to 2, 3 to 1)
         session()
         assertTrue(events.none { it is SessionEvent.InkRedrawn }) // not before the first page is drawn
         scheduler.runDelayed()
@@ -135,11 +135,60 @@ class DocumentSessionTest {
 
     /** A repaired file waits for the owner's decision before anything is saved into it, the redraw too. */
     @Test fun redrawnInkWaitsForTheRepairDecision() {
-        fake = FakePdfPages(wasRepaired = true).apply { faultyPages += 1 }
+        fake = FakePdfPages(wasRepaired = true).apply { faultyStrokes[1] = 1 }
         session()
         scheduler.runDelayed()
         scheduler.runDelayed()
         assertEquals(0, fake.saves)
+    }
+
+    /**
+     * A page full of old strokes is redrawn a part at a time ([DocumentSession.REDRAW_CHUNK]
+     * each), so the pen's changes, the screen's pages, a save or closing get in between; a
+     * stroke written meanwhile is applied before the next part and saved with the redraw.
+     */
+    @Test fun aFullPageIsRedrawnInPartsWithChangesInBetween() {
+        fake.faultyStrokes[0] = 60
+        val s = session()
+        val order = mutableListOf<String>()
+        fake.duringRedraw = { page ->
+            if (page == 0) {
+                order += "redraw part, strokes on page: ${fake.pageItems[0].orEmpty().size}"
+                if (order.size == 1) s.addStroke(0, dot) // the pen, while the first part runs
+            }
+        }
+        scheduler.runDelayed()
+        assertEquals(
+            listOf("redraw part, strokes on page: 0", "redraw part, strokes on page: 1", "redraw part, strokes on page: 1"),
+            order, // three worker tasks for page 0 (25 + 25 + 10), the stroke applied between the first two
+        )
+        assertTrue(fake.faultyStrokes.isEmpty())
+        assertEquals(listOf(SessionEvent.InkRedrawn(0)), events.filterIsInstance<SessionEvent.InkRedrawn>()) // once the page is done
+        scheduler.runDelayed() // the autosave
+        assertEquals(1, fake.saves)
+        assertEquals("items=1", pdf.readText())
+        assertEquals(0, journalStrokes())
+    }
+
+    /** Closing in the middle saves what's redrawn so far; the next opening finds the rest. */
+    @Test fun closingMidwaySavesWhatIsRedrawnSoFar() {
+        fake.faultyStrokes[0] = 60
+        val s = session()
+        fake.duringRedraw = { if (fake.faultyStrokes[0] == 35) s.close() } // as the second part starts
+        scheduler.runDelayed()
+        assertEquals(1, fake.saves)
+        assertEquals(10, fake.faultyStrokes[0]) // the part that was running finished; the third never ran
+    }
+
+    /** Review: once the copy holds the redrawn strokes, they aren't saved into it a second time. */
+    @Test fun redrawnInkSavedToTheCopyIsNotSavedAgain() {
+        fake = FakePdfPages(wasRepaired = true).apply { faultyStrokes[1] = 1 }
+        val s = session()
+        scheduler.runDelayed() // the redraw; its autosave waits for the decision
+        s.saveRepairedToCopy()
+        assertEquals(1, fake.saves)
+        scheduler.runDelayed()
+        assertEquals(1, fake.saves)
     }
 
     @Test fun newStrokeReschedulesAutosave() {
