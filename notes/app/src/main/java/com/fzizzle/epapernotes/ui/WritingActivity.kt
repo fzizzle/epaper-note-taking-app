@@ -469,6 +469,8 @@ class WritingActivity : Activity() {
             }
         }
         pages.quietTime = { pen.drawsInk && !pen.isWriting }
+        // Its picture then reaches the panel the usual way (onPageShown, below).
+        pages.onRefitReady = { refitShownPage() }
         pages.onPageShown = { page, version ->
             if (page == pages.viewport?.page) {
                 if (version >= previewShownFrom) layer.pageRedrawn()
@@ -672,17 +674,32 @@ class WritingActivity : Activity() {
         printedAreas[page] = PrintedArea(box, inkVersion)
         if (!trimMargins || box == had) return
         val v = pages.viewport ?: return
-        if (page == v.page && shownPageUntouched && !pen.isWriting && !screenPenDown) {
-            Log.i(TAG, "refit page=$page to its printed area")
-            fitPagesAgain()
-            // The panel ignores the view's drawing while fast-ink is on. The page's picture at
-            // its new width shows it when it comes (onPageShown), in one panel update. Only if
-            // one at that width is kept already (both widths at the cap, or one from earlier)
-            // does nothing come, and it's shown here instead. With a menu or dialog open fast-ink is paused anyway.
-            if (pages.pictureReady() && !dialogOpen) showWithoutFastInk()
+        val boxes = fitBoxes() ?: return
+        if (page == v.page && mayRefitShownPage()) {
+            // Not yet: the layout, and the pen's mapping with it, change only once the page's
+            // picture for the new box is here (pages.onRefitReady), so what the panel shows and
+            // where the pen writes change together. If that picture is kept already (from an
+            // earlier visit with this box), the page refits and is shown now. With a menu or
+            // dialog open fast-ink is paused anyway.
+            if (pages.refitWhenDrawn(boxes) && refitShownPage() && !dialogOpen) showWithoutFastInk()
         } else {
-            pages.refitLater(fitBoxes())
+            pages.refitLater(boxes)
         }
+    }
+
+    /** Only a page nothing has touched since it was arrived at, with the pen up, may be refitted: it must never move under the pen. */
+    private fun mayRefitShownPage() = trimMargins && shownPageUntouched && !pen.isWriting && !screenPenDown
+
+    /**
+     * UI thread. Fits the page on show to its new box, if it still may be: returns false, and
+     * changes nothing, once the owner has started on the page (it takes the box when next
+     * arrived at, PageView.refitLater).
+     */
+    private fun refitShownPage(): Boolean {
+        if (!mayRefitShownPage()) return false
+        Log.i(TAG, "refit page=${pages.viewport?.page} to its printed area")
+        fitPagesAgain()
+        return true
     }
 
     private fun publishPenMapping() {

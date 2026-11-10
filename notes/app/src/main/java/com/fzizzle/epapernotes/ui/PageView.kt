@@ -80,6 +80,14 @@ class PageView(context: Context) : View(context) {
     /** The selection box, snip rectangle and so on, drawn on top of the page. */
     var selectionLayer: SelectionLayer? = null
 
+    /**
+     * The picture a refit of the page on show waited for has come ([refitWhenDrawn]). The
+     * screen lays the page out with its new box now, so the pen's mapping changes with what
+     * the panel shows, and returns true; or false if the owner has started on the page since,
+     * and then nothing in view changes. UI thread.
+     */
+    var onRefitReady: () -> Boolean = { false }
+
     /** Called after a fresh page rendering, made at the page's ink [version], is put on screen. */
     var onPageShown: (page: Int, version: Int) -> Unit = { _, _ -> }
 
@@ -109,6 +117,22 @@ class PageView(context: Context) : View(context) {
 
     /** [fit] has boxes the viewport doesn't have yet ([refitLater]): it takes them at the next page turn. */
     private var fitWaiting = false
+
+    // The page on show and the picture width its new box needs, while that picture is on its
+    // way for a refit ([refitWhenDrawn]). Forgotten if the page is left, turned or laid out
+    // again first: the box then waits for the next page turn, as [refitLater] keeps it.
+    private var refitPage = NO_REFIT
+    private var refitWidth = 0
+
+    // Meanwhile a picture for the page's present layout came, and showing it was held (its ink
+    // version), so the panel goes straight to the refitted page: shown after all if the refit is
+    // given up. Null when none was held.
+    private var heldForRefit: Int? = null
+
+    private fun forgetRefit() {
+        refitPage = NO_REFIT
+        heldForRefit = null
+    }
 
     /** A page rendering, and the page's ink version it contains. */
     private class Rendered(val bitmap: Bitmap, val version: Int)
@@ -200,6 +224,7 @@ class PageView(context: Context) : View(context) {
         toDisplay = pdfToDisplay
         this.fit = fit
         fitWaiting = false
+        forgetRefit()
         dropPatch()
         viewport = Viewport(pageSizes, width, height, fit).also { it.goTo(startPage) }
         invalidate()
@@ -221,6 +246,26 @@ class PageView(context: Context) : View(context) {
         if (!pinching) readyNeighbours(v)
     }
 
+    /**
+     * [fit] has a new box for the page on show, and nothing has touched the page since it was
+     * arrived at. Its picture at the width that box needs is asked for first; the layout, and
+     * with it the pen's mapping and limit, stay as they are until it comes, then
+     * [onRefitReady] makes the change and the picture shows it, in one panel update. Returns
+     * true if that picture is here already: the screen refits and shows it now. Like
+     * [refitLater], the next page turn takes the new boxes in any case. UI thread.
+     */
+    fun refitWhenDrawn(fit: List<Box>): Boolean {
+        refitLater(fit)
+        val v = viewport ?: return false
+        val w = widthWithBox(v.page)
+        val have = bitmaps.get(v.page, w)
+        if (have != null && !ink.isStale(v.page, have.version)) return true
+        refitPage = v.page
+        refitWidth = w
+        ensureRendered(v.page, w)
+        return false
+    }
+
     /** Lays the pages out with boxes [refitLater] kept, if any, on the page just turned to. */
     private fun takeWaitingFit() {
         if (!fitWaiting) return
@@ -235,6 +280,7 @@ class PageView(context: Context) : View(context) {
         val leaving = v.page
         val moved = if (forward) v.next() else v.previous()
         if (!moved) return false
+        forgetRefit()
         takeWaitingFit()
         dropPatch()
         forget(leaving)
@@ -249,6 +295,7 @@ class PageView(context: Context) : View(context) {
         val leaving = v.page
         if (page == leaving) return
         v.goTo(page)
+        forgetRefit()
         takeWaitingFit()
         dropPatch()
         forget(leaving)
@@ -271,6 +318,7 @@ class PageView(context: Context) : View(context) {
     }
 
     private fun dropRenderings(page: Int) {
+        if (page == refitPage) forgetRefit() // that picture is dropped when it comes, and fresh ones asked for
         bitmaps.invalidate(page)
         inFlight.keys.filter { it.first == page }.forEach {
             inFlight.remove(it)
@@ -378,6 +426,12 @@ class PageView(context: Context) : View(context) {
         if (dropped.remove(page to widthPx)) return
         inFlight.remove(page to widthPx)
         quietRenders.remove(page to widthPx)
+        if (page == refitPage && widthPx == refitWidth) {
+            // No refit then: the page stays as it is, with the picture held for it, if any.
+            val held = heldForRefit
+            forgetRefit()
+            if (held != null) showPicture(page, held)
+        }
     }
 
     /** Where the page on show is, for the selection layer. Null until the pages are laid out. */
@@ -394,6 +448,7 @@ class PageView(context: Context) : View(context) {
         dropPatch()
         // The page refits anyway, so boxes waiting for a page turn come in now too.
         fitWaiting = false
+        forgetRefit()
         viewport = Viewport(sizes, w, h, fit).also { it.goTo(old.page) }
         invalidate()
         onViewportChanged()
@@ -408,6 +463,9 @@ class PageView(context: Context) : View(context) {
         }
         val version = inFlight.remove(page to widthPx) ?: 0
         val quiet = quietRenders.remove(page to widthPx)
+        val forRefit = page == refitPage && widthPx == refitWidth
+        val held = if (forRefit) heldForRefit else null
+        if (forRefit) forgetRefit()
         val stale = ink.isStale(page, version)
         android.util.Log.i("Notes", "rendered page=$page width=$widthPx version=$version of ${ink.version(page)}${if (stale) " (stale, asking again)" else ""}${if (quiet) " (quiet)" else ""}")
         if (quiet && !stale && page == viewport?.page) {
@@ -434,12 +492,31 @@ class PageView(context: Context) : View(context) {
         }
         // Otherwise even a stale one is kept: it's closer to the page than what's showing. Drawing asks again.
         bitmaps.put(page, widthPx, Rendered(bitmap, version))
+        // A refit is waiting for its picture (refitWhenDrawn): this one, for the layout on
+        // show, is kept but not shown, so the panel goes once, straight to the refitted page.
+        if (page == refitPage) {
+            if (!stale) heldForRefit = version
+            return
+        }
+        // The picture the refit waited for: it's for the new layout, so it's shown only along
+        // with it. If the page changed meanwhile, or the screen won't refit it now, it's kept
+        // for later, and what was held is shown instead (nothing, if nothing was).
+        if (forRefit && (stale || !onRefitReady())) {
+            if (held != null) showPicture(page, held)
+            return
+        }
         // Under a good sharp patch this picture isn't seen (onDraw), so nothing in view changes:
         // showing it would be a second panel update after the patch's own. Used once the patch goes.
         if (!stale && patchCovers(page)) return
         // Only the page on show: a neighbour got ready for the next page turn changes nothing in view.
         if (page == viewport?.page) invalidate()
         if (!stale) onPageShown(page, version)
+    }
+
+    /** A picture of the page on show, made at ink [version], held back until now: on screen and to the panel. */
+    private fun showPicture(page: Int, version: Int) {
+        invalidate()
+        onPageShown(page, version)
     }
 
     /** A sharp patch arrived from the worker, asked for with [token] at the page's ink [version]. UI thread. */
@@ -500,11 +577,15 @@ class PageView(context: Context) : View(context) {
      * [MAX_PICTURE_WIDTH] views wide all the same, for memory, and the sharp patch makes up
      * for it once zoomed in.
      */
-    private fun renderWidth(v: Viewport, page: Int): Int {
-        val pxPerPt = if (page == v.page) v.fittedPxPerPt(page) else
-            Viewport.scaleToFit(fit?.get(page) ?: Box(0f, 0f, sizes[page].w, sizes[page].h), width, height)
-        return minOf(Math.round(sizes[page].w * pxPerPt), Math.round(width * MAX_PICTURE_WIDTH))
-    }
+    private fun renderWidth(v: Viewport, page: Int): Int =
+        if (page == v.page) pictureWidth(page, v.fittedPxPerPt(page)) else widthWithBox(page)
+
+    /** [page]'s picture width with the box it gets from [fit] when next laid out or turned to. */
+    private fun widthWithBox(page: Int): Int =
+        pictureWidth(page, Viewport.scaleToFit(fit?.get(page) ?: Box(0f, 0f, sizes[page].w, sizes[page].h), width, height))
+
+    private fun pictureWidth(page: Int, pxPerPt: Float): Int =
+        minOf(Math.round(sizes[page].w * pxPerPt), Math.round(width * MAX_PICTURE_WIDTH))
 
     /** At normal size, the pages either side of the one on show are made ahead, so turning to one is instant. */
     private fun readyNeighbours(v: Viewport) {
@@ -513,15 +594,6 @@ class PageView(context: Context) : View(context) {
         if (v.page > 0) ensureRendered(v.page - 1, renderWidth(v, v.page - 1))
     }
 
-    /**
-     * True when the page on show already has an up-to-date picture at the width it needs now,
-     * so no picture is coming whose arrival would show it ([onPageShown]). UI thread.
-     */
-    fun pictureReady(): Boolean {
-        val v = viewport ?: return false
-        val have = bitmaps.get(v.page, renderWidth(v, v.page)) ?: return false
-        return !ink.isStale(v.page, have.version)
-    }
 
     private fun ensureRendered(page: Int, widthPx: Int) {
         val have = bitmaps.get(page, widthPx)
@@ -767,6 +839,8 @@ class PageView(context: Context) : View(context) {
     }
 
     companion object {
+        private const val NO_REFIT = -1
+
         /** A page's picture is at most this many times the view's width (see renderWidth). */
         private const val MAX_PICTURE_WIDTH = 1.5f
 
