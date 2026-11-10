@@ -69,7 +69,7 @@ From using the app on the tablet. Worked through on the branch `owner-feedback-f
 
 - [x] Owner approved all 5 decisions (2026-11-10); the two settings go under ⋯ in the writing screen.
 - [x] Try the tablet's own display settings first, no code (Task 1): they do very little, since the page is a picture to them ([trial](docs/superpowers/readability-trial.md)). Task 3 stays.
-- [ ] Sharp text when zoomed in (Task 2).
+- [x] Sharp text when zoomed in (Task 2): owner-checked 2026-11-10, "works well".
 - [ ] A contrast setting (Task 3; skipped if Task 1 is enough).
 - [x] Cleaner page turns and a gentler refresh after zooming (Task 4): REGAL for both, owner's choice (2026-11-10).
 - [ ] Trim margins (Task 5).

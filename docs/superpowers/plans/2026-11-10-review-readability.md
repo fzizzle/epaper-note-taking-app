@@ -78,7 +78,7 @@ These are new features, so each needs a yes or no. Any can be left out.
   - `renderWidth`: zoomed in, use the fitted width (1×) instead of 1.5×; the patch now carries the sharpness. This is what pays for the patch.
   - Showing: a patch arriving calls `onPageShown`, so it reaches the panel through the existing pause. After a zoom, hold the clean refresh until the patch has arrived or 300 ms have passed, so a zoom ends in one panel update and not two (review 4.6).
 - [x] **Step 4: Run laptop tests** — pass.
-- [ ] **Step 5: Check on the tablet.** On a text-heavy page: zoom to about 3×; small text is crisp within a moment of lifting the fingers. Write a word: it lands under the pen. Erase it: the patch redraws without it. Move the page with one finger, turn the page, zoom back out: no stale patch is ever shown in the wrong place. Logcat shows one region render per gesture, and its time (`Log.i` it) is under 300 ms on a slide.
+- [x] **Step 5: Check on the tablet.** (Owner, 2026-11-10: "works well"; tablet tests 85 pass.) On a text-heavy page: zoom to about 3×; small text is crisp within a moment of lifting the fingers. Write a word: it lands under the pen. Erase it: the patch redraws without it. Move the page with one finger, turn the page, zoom back out: no stale patch is ever shown in the wrong place. Logcat shows one region render per gesture, and its time (`Log.i` it) is under 300 ms on a slide.
 - [x] **Step 6: Commit.** `git commit -m "notes: zoomed-in text is drawn at its true size"`
 
 ### Task 3: Contrast (decision 2; skip if Task 1 made it unnecessary)
