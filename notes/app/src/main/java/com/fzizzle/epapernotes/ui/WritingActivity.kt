@@ -120,6 +120,12 @@ class WritingActivity : Activity() {
      */
     private val redrawWhenChanged = HashSet<Int>()
 
+    /**
+     * EXPERIMENT (owner: erasing refreshes too much). Pages an erase changed, to be put on the
+     * panel by themselves without pausing fast-ink, like the strip. UI thread.
+     */
+    private val quietRedraw = HashSet<Int>()
+
     /** An undo or redo changed this page, not the one on show: go there once it's changed (decision 10). UI thread. */
     private var goToWhenChanged = NO_PAGE
 
@@ -371,7 +377,12 @@ class WritingActivity : Activity() {
         pages.onPageShown = { page, version ->
             if (page == pages.viewport?.page) {
                 if (version >= previewShownFrom) layer.pageRedrawn()
-                showWithoutFastInk()
+                if (quietRedraw.remove(page) && pen.drawsInk && !pen.isWriting) {
+                    Log.i(TAG, "erased: quiet refresh (experiment)")
+                    pen.refreshAlone(pages)
+                } else {
+                    showWithoutFastInk()
+                }
             }
         }
         choose(Tool.PEN)
@@ -508,7 +519,17 @@ class WritingActivity : Activity() {
         session.erase(page, trail) { hits ->
             Log.i(TAG, "erase page=$page hits=$hits ms=${SystemClock.uptimeMillis() - started}")
             // Posted before the PageChanged that follows a hit, so it's marked in time.
-            runOnUiThread { if (hits > 0) expectRedraw(page) else showWithoutFastInk() }
+            runOnUiThread {
+                if (hits > 0) {
+                    expectRedraw(page)
+                    quietRedraw += page
+                } else if (pen.drawsInk) {
+                    Log.i(TAG, "erase missed: quiet refresh (experiment)")
+                    pen.refreshAlone(pages)
+                } else {
+                    showWithoutFastInk()
+                }
+            }
         }
     }
 
@@ -902,6 +923,10 @@ class WritingActivity : Activity() {
 
     /** Choosing a tool lets go of the selection and cancels an armed paste. */
     private fun choose(newTool: Tool) {
+        // The pen's last button outlives its hover (a lift looks like leaving), so after
+        // erasing with button 2 the strip would go on showing Eraser over the tool just tapped.
+        // Nobody taps the strip while holding a button over the page; the next hover sets it again.
+        hoverButton = PenButton.NONE
         if (toolState.hasSelection) letGo()
         toolState.pasteArmed = false
         toolState.chosen = newTool

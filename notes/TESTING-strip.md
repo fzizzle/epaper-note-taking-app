@@ -23,3 +23,10 @@ About 10 minutes. These check the redesigned strip at the top of the writing scr
 - [ ] **S7. Turn the tablet.** In landscape, does the strip still fit, with the island in the middle?
 
 When done, the results go in `docs/superpowers/strip-results.md`.
+
+## Open (2026-11-10, end of session)
+
+- **Erase without a refresh (experiment in this build).** After an erase, the page is put on the panel by itself instead of pausing fast-ink, and an eraser stroke that hits nothing gets the same quiet refresh to wipe its grey trail. Not tried yet. Check: do erased words vanish without a flash? Does the grey trail clear? If either fails, this goes back to the pause.
+- **Button 2 still a bit buggy** (owner). What exactly is still to be found out: the log shows it erasing.
+- **The highlight sometimes doesn't change on a tap** (owner). Not reproduced over adb: every scripted tap changed it. The tool may still change while only the highlight lags; to check, write a stroke right after the tap.
+- **Finger or palm touches** pause and resume fast-ink even without moving, which refreshes the screen. This was already so before this branch.
