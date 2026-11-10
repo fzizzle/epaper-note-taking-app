@@ -69,7 +69,7 @@ class LibraryChanges(
 
     private fun askWhereTo(root: File, here: File, entry: Entry) {
         FolderChooser(
-            activity, disk, top = root, topName = root.name, title = "Move '${entry.file.name}' to…", use = "Move here",
+            activity, disk, tops = listOf(FolderChooser.Top(root.name, root)), title = "Move '${entry.file.name}' to…", use = "Move here",
             leaveOut = entry.file.takeIf { entry is FolderEntry },
         ) { into -> change(root, { it.move(entry.file, into) }) { lastOpenedMoved(entry.file, File(into, entry.file.name)) } }
             .show(here)

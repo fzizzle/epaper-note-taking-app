@@ -20,8 +20,11 @@ import java.util.concurrent.Executor
 /**
  * A simple folder chooser: the folder it's in, a row to go up, and the folders inside to tap
  * into; then [use] picks the folder on show. It picks the library folder (decision 1) and
- * where a tile moves to (decision 5). It never goes above [top], and paths stay under it as
- * given, never canonicalized (Ruling L1).
+ * where a tile moves to (decision 5). It never goes above its [tops], and paths stay under
+ * them as given, never canonicalized (Ruling L1).
+ *
+ * With more than one top (the tablet's storage and a memory card), it starts from a list of
+ * them; "Up" from the top of one goes back to that list. With one, it's the top itself.
  *
  * Folders are listed on [disk], the library's background thread: the screen's thread never
  * reads the disk. Make a new chooser for each choice.
@@ -29,9 +32,8 @@ import java.util.concurrent.Executor
 class FolderChooser(
     private val activity: Activity,
     private val disk: Executor,
-    private val top: File,
-    /** What the breadcrumb calls [top]. */
-    private val topName: String,
+    /** Where it can go no higher, each with what the breadcrumb calls it. */
+    private val tops: List<Top>,
     private val title: String,
     private val use: String,
     /** A folder marked "(suggested)" and listed first. */
@@ -41,7 +43,10 @@ class FolderChooser(
     private val onCancel: () -> Unit = {},
     private val onChosen: (File) -> Unit,
 ) {
-    private class Row(val label: String, val folder: File) {
+    class Top(val name: String, val folder: File)
+
+    /** [folder] null is the list of [tops]. */
+    private class Row(val label: String, val folder: File?) {
         override fun toString() = label
     }
 
@@ -60,12 +65,14 @@ class FolderChooser(
                 background = LibraryLook.pressedFeedback()
             }
     }
-    private var folder = top
+    /** The folder on show; null while the list of [tops] is. */
+    private var folder: File? = null
     /** Only the newest listing is shown, if taps come quicker than the disk. */
     private var asked = 0
     private var dialog: AlertDialog? = null
 
-    fun show(start: File) {
+    /** Opens at [start], or at the top it's under; null (or under none) starts at the list of tops. */
+    fun show(start: File?) {
         val list = ListView(activity).apply {
             adapter = rows
             divider = ColorDrawable(LibraryLook.RULE)
@@ -84,16 +91,22 @@ class FolderChooser(
         dialog = AlertDialog.Builder(activity)
             .setTitle(title)
             .setView(content)
-            .setPositiveButton(use) { _, _ -> onChosen(folder) }
+            .setPositiveButton(use) { _, _ -> folder?.let(onChosen) ?: onCancel() }
             .setNegativeButton("Cancel") { _, _ -> onCancel() }
             .setOnCancelListener { onCancel() }
             .show()
             .apply { setCanceledOnTouchOutside(false) } // a stray tap beside it mustn't throw the choice away
-        goTo(if (start.startsWith(top)) start else top)
+        // Set now, as "use" may be tapped before the first listing is in.
+        folder = if (start != null && topOf(start) != null) start else tops.singleOrNull()?.folder
+        goTo(folder)
     }
 
-    private fun goTo(target: File) {
+    /** The innermost top [file] is under. */
+    private fun topOf(file: File): Top? = tops.filter { file.startsWith(it.folder) }.maxByOrNull { it.folder.path.length }
+
+    private fun goTo(target: File?) {
         val ask = ++asked
+        if (target == null) return showTops()
         disk.execute {
             val inside = target.listFiles().orEmpty()
                 .filter { it.isDirectory && !it.name.startsWith(".") && it != leaveOut }
@@ -103,12 +116,30 @@ class FolderChooser(
     }
 
     private fun shown(target: File, inside: List<File>) {
+        val top = topOf(target) ?: return showTops()
         folder = target
-        where.text = Breadcrumb.parts(top, target).mapIndexed { i, (name, _) -> if (i == 0) topName else name }.joinToString(" › ")
+        where.text = Breadcrumb.parts(top.folder, target).mapIndexed { i, (name, _) -> if (i == 0) top.name else name }.joinToString(" › ")
+        showRows {
+            when {
+                target != top.folder -> add(Row("‹  Up", target.parentFile!!))
+                tops.size > 1 -> add(Row("‹  Up", null))
+            }
+            for (f in inside) add(Row(if (f == suggested) "${f.name}  (suggested)" else "${f.name}  ›", f))
+        }
+    }
+
+    /** The tablet's storage and the memory card, to pick one; nothing to "use" here. */
+    private fun showTops() {
+        folder = null
+        where.text = "Storage"
+        showRows { for (t in tops) add(Row("${t.name}  ›", t.folder)) }
+    }
+
+    private fun showRows(fill: ArrayAdapter<Row>.() -> Unit) {
+        dialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.isEnabled = folder != null
         rows.setNotifyOnChange(false)
         rows.clear()
-        if (target != top) rows.add(Row("‹  Up", target.parentFile!!))
-        for (f in inside) rows.add(Row(if (f == suggested) "${f.name}  (suggested)" else "${f.name}  ›", f))
+        rows.fill()
         rows.notifyDataSetChanged()
     }
 }

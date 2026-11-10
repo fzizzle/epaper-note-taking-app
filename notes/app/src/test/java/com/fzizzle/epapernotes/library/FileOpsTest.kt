@@ -322,4 +322,37 @@ class FileOpsTest {
         val setAside = journals.listFiles()!!.filter { it.name.startsWith(stale.name + ".kept-") }
         assertEquals(listOf("stale writing\n"), setAside.map { it.readText() })
     }
+
+    /**
+     * On the memory card a rename that only changes case reports success and does nothing
+     * (found on the tablet). The fake disk here does the same, so only the step through a
+     * hidden name gets the new case on, and the journal and page follow it.
+     */
+    @Test fun renameChangingOnlyCaseGoesByAHiddenName() {
+        val caseBlind = FileOps(root, journals, pages, moveOnDisk = { from, to ->
+            if (from.name.equals(to.name, ignoreCase = true)) true else from.renameTo(to)
+        })
+        val a = pdf("lecture.pdf")
+        withAppData(a, page = 2)
+
+        assertEquals(FileOps.Result.Done, caseBlind.rename(a, "Lecture"))
+
+        assertEquals(listOf("Lecture.pdf"), root.list()!!.toList())
+        assertTrue(journalOf(File(root, "Lecture.pdf")).exists())
+        assertEquals(mapOf(File(root, "Lecture.pdf").path to 2), pages.map)
+    }
+
+    @Test fun caseOnlyRenameThatFailsHalfwayPutsTheFileBack() {
+        val failsSecond = FileOps(root, journals, pages, moveOnDisk = { from, to ->
+            !to.name.equals("Lecture.pdf") && from.renameTo(to)
+        })
+        val a = pdf("lecture.pdf")
+        val journal = withAppData(a, page = 2)
+
+        assertTrue(failsSecond.rename(a, "Lecture") is FileOps.Result.Refused)
+
+        assertEquals(listOf("lecture.pdf"), root.list()!!.toList())
+        assertTrue(journal.exists())
+        assertEquals(mapOf(a.path to 2), pages.map)
+    }
 }

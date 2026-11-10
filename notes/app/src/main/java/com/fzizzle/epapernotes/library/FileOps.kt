@@ -108,13 +108,29 @@ class FileOps(
         val pdfs = pdfsAt(from)
         waitForSessions(pdfs)?.let { return Result.Refused(it) }
         // No copy-and-delete fallback: renameTo fails across storage devices, and that's refused.
-        if (!moveOnDisk(from, to)) return Result.Refused(failed)
+        if (!moveKeepingCase(from, to)) return Result.Refused(failed)
         for (pdf in pdfs) {
             val moved = if (pdf == from) to else File(to, pdf.relativeTo(from).path)
             moveJournals(pdf, moved)
             lastPages.move(pdf.path, moved.path)
         }
         return Result.Done
+    }
+
+    /**
+     * A memory card ignores case, and through Android's storage layer a rename that only
+     * changes case ("lecture.pdf" to "Lecture.pdf") reports success yet changes nothing. So
+     * that one goes by a hidden name in between, and is put back if the second step fails.
+     */
+    private fun moveKeepingCase(from: File, to: File): Boolean {
+        if (from.parentFile != to.parentFile || from.name == to.name || !from.name.equals(to.name, ignoreCase = true)) {
+            return moveOnDisk(from, to)
+        }
+        val between = File(from.parentFile, ".${from.name}$CASE_RENAME")
+        if (between.exists() || !moveOnDisk(from, between)) return false
+        if (moveOnDisk(between, to)) return true
+        if (!moveOnDisk(between, from)) log("couldn't put ${from.name} back from ${between.name}")
+        return false
     }
 
     /** The reason to refuse, or null once every session on [pdfs] has closed. */
@@ -223,5 +239,6 @@ class FileOps(
     companion object {
         /** A second or two is normal; this only gives up on a session that's stuck. */
         const val SESSION_WAIT_MS = 15_000L
+        private const val CASE_RENAME = ".pnotes-rename"
     }
 }

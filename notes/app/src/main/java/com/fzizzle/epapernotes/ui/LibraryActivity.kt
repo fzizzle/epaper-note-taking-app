@@ -31,6 +31,7 @@ import com.fzizzle.epapernotes.library.FolderWatch
 import com.fzizzle.epapernotes.library.HookPath
 import com.fzizzle.epapernotes.library.PdfEntry
 import com.fzizzle.epapernotes.library.ThumbnailCache
+import com.fzizzle.epapernotes.library.Volumes
 import com.fzizzle.epapernotes.ui.StripButton.Glyph
 import java.io.File
 import java.util.concurrent.Executors
@@ -46,7 +47,8 @@ import java.util.concurrent.Executors
  *
  * For checks over adb (`am start -S -n com.fzizzle.epapernotes/.ui.LibraryActivity …`):
  * `--es path <pdf>` opens a file straight away, and `--es root <folder>` sets the library
- * folder (and shows it) without the chooser. Both take `/sdcard/…` or `/storage/emulated/0/…`.
+ * folder (and shows it) without the chooser. Both take `/sdcard/…`, `/storage/emulated/0/…`, or a
+ * path on a memory card that's in (`/storage/3331-3031/…`).
  */
 class LibraryActivity : Activity() {
     private lateinit var prefs: LibraryPrefs
@@ -134,10 +136,10 @@ class LibraryActivity : Activity() {
         list(afterSaveOf = if (backFromDocument && shownFolder != null) prefs.lastOpened else null)
     }
 
-    /** A check hook's path, as the library writes paths (Ruling L1); one outside the storage is refused. */
+    /** A check hook's path, as the library writes paths (Ruling L1); one outside every volume that's in is refused. */
     private fun hookPath(raw: String): File? =
-        HookPath.under(Environment.getExternalStorageDirectory(), raw)
-            ?: null.also { toast("Not on the tablet's storage: $raw") }
+        HookPath.under(StorageVolumes.mounted(this).map { it.directory }, raw)
+            ?: null.also { toast("Not on the tablet's storage or a memory card that's in: $raw") }
 
     override fun onStop() {
         super.onStop()
@@ -157,7 +159,7 @@ class LibraryActivity : Activity() {
     private fun chooseFirstRoot() {
         if (choosingRoot) return
         choosingRoot = true
-        chooseLibraryFolder(this, disk, start = STORAGE, onCancel = { choosingRoot = false; finish() }) {
+        chooseLibraryFolder(this, disk, start = null, onCancel = { choosingRoot = false; finish() }) {
             choosingRoot = false
             useRoot(it)
         }
@@ -187,9 +189,7 @@ class LibraryActivity : Activity() {
             strip.addSquare(StripButton(this, glyph, description).apply { setOnClickListener { onClick() } }, gaps)
         button(Glyph.REFRESH, "Refresh") { refresh() }
         button(Glyph.NEW_FOLDER, "New folder") { root?.let { changes.askForNewFolder(it, shownFolder ?: it) } }
-        button(Glyph.MENU, "Settings", gaps = 0) {
-            showLibrarySettings(this, prefs, disk, onRootChosen = ::useRoot, onThumbnailsChanged = ::switchThumbnails)
-        }
+        button(Glyph.MENU, "Settings", gaps = 0) { showSettings() }
 
         continueRow = TextView(this).apply {
             textSize = 20f
@@ -225,6 +225,9 @@ class LibraryActivity : Activity() {
             setTextColor(LibraryLook.GRAPHITE)
             gravity = Gravity.CENTER
             visibility = View.GONE
+            // Only clickable while it says the library folder is missing: then it leads to Settings.
+            setOnClickListener { showSettings() }
+            isClickable = false
         }
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -281,7 +284,14 @@ class LibraryActivity : Activity() {
         continueRow.visibility = if (resume != null) View.VISIBLE else View.GONE
         val changed = redrawTiles || entries != adapter.entries || adapter.thumbnails != (thumbnails != null)
         if (changed) adapter.show(entries, thumbnails = thumbnails != null, dropPictures = redrawTiles)
-        emptyNote.text = if (rootMissing) "The library folder isn't there. Choose another in Settings (⋯)." else "No folders or PDFs here."
+        emptyNote.text = when {
+            !rootMissing -> "No folders or PDFs here."
+            Volumes.isOnCardThatsOut(StorageVolumes.mounted(this), root ?: shown) ->
+                "The library folder is on the SD card, which isn't in. Put the card back, or tap here to choose another folder in Settings (⋯)."
+            else -> "The library folder isn't there. Tap here to choose another in Settings (⋯)."
+        }
+        emptyNote.isClickable = rootMissing
+        emptyNote.background = if (rootMissing) LibraryLook.pressedFeedback() else null
         emptyNote.visibility = if (entries.isEmpty()) View.VISIBLE else View.GONE
         tilesOnScreenChanged()
         logShown(waitForDraw = changed)
@@ -313,6 +323,9 @@ class LibraryActivity : Activity() {
         folder = target
         list()
     }
+
+    private fun showSettings() =
+        showLibrarySettings(this, prefs, disk, onRootChosen = ::useRoot, onThumbnailsChanged = ::switchThumbnails)
 
     /** The tiles on screen get their thumbnails first. */
     private fun tilesOnScreenChanged() {

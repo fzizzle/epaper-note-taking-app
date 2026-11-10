@@ -13,6 +13,7 @@ import android.view.Gravity
 import android.view.View
 import android.widget.LinearLayout
 import android.widget.TextView
+import com.fzizzle.epapernotes.library.Volumes
 import java.io.File
 import java.util.concurrent.Executor
 
@@ -61,17 +62,22 @@ class LibraryPrefs(context: Context) {
     }
 }
 
-/** The tablet's own storage, where the folder chooser starts (Ruling L1: /storage/emulated/0, never /sdcard). */
-val STORAGE: File get() = Environment.getExternalStorageDirectory()
-
-/** The chooser for the library folder (decision 1), at the storage, with Documents suggested. */
-fun chooseLibraryFolder(activity: Activity, disk: Executor, start: File, onCancel: () -> Unit = {}, onChosen: (File) -> Unit) =
+/**
+ * The chooser for the library folder (decision 1), with Documents suggested on the tablet's
+ * storage. With a memory card in, it can be there too: the chooser then starts from the list
+ * of both, unless [start] is in one.
+ */
+fun chooseLibraryFolder(activity: Activity, disk: Executor, start: File?, onCancel: () -> Unit = {}, onChosen: (File) -> Unit) {
+    val volumes = StorageVolumes.mounted(activity)
+    // Alone, the tablet's storage keeps the name it always had here.
+    val tops = volumes.map { FolderChooser.Top(if (volumes.size == 1) "Storage" else it.label, it.directory) }
     FolderChooser(
-        activity, disk, top = STORAGE, topName = "Storage",
+        activity, disk, tops = tops,
         title = "Choose the folder that holds your notes", use = "Use this folder",
         suggested = File(STORAGE, Environment.DIRECTORY_DOCUMENTS),
         onCancel = onCancel, onChosen = onChosen,
     ).show(start)
+}
 
 /**
  * Settings, from ⋯ (decision 10): **Library folder** opens the chooser; **Show thumbnails**
@@ -102,8 +108,7 @@ fun showLibrarySettings(
     val folderRow = row("Library folder")
     fun showRoot() {
         val root = prefs.root ?: return
-        val inStorage = runCatching { root.relativeTo(STORAGE).path }.getOrNull()?.takeUnless { it.startsWith("..") }
-        folderRow.detail().text = inStorage?.split(File.separatorChar)?.joinToString(" › ") ?: root.path
+        folderRow.detail().text = Volumes.whereIs(StorageVolumes.mounted(activity), root)
     }
     showRoot()
     folderRow.setOnClickListener {
