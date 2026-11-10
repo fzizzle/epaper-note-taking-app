@@ -28,6 +28,7 @@ import com.fzizzle.epapernotes.library.Entry
 import com.fzizzle.epapernotes.library.FolderEntry
 import com.fzizzle.epapernotes.library.FolderListing
 import com.fzizzle.epapernotes.library.FolderWatch
+import com.fzizzle.epapernotes.library.HookPath
 import com.fzizzle.epapernotes.library.PdfEntry
 import com.fzizzle.epapernotes.library.ThumbnailCache
 import com.fzizzle.epapernotes.ui.StripButton.Glyph
@@ -45,7 +46,7 @@ import java.util.concurrent.Executors
  *
  * For checks over adb (`am start -S -n com.fzizzle.epapernotes/.ui.LibraryActivity …`):
  * `--es path <pdf>` opens a file straight away, and `--es root <folder>` sets the library
- * folder without the chooser.
+ * folder (and shows it) without the chooser. Both take `/sdcard/…` or `/storage/emulated/0/…`.
  */
 class LibraryActivity : Activity() {
     private lateinit var prefs: LibraryPrefs
@@ -84,7 +85,7 @@ class LibraryActivity : Activity() {
         prefs = LibraryPrefs(this)
         thumbnailCache = ThumbnailCache(File(cacheDir, "thumbnails"))
         adapter = LibraryAdapter { thumbnails?.bitmapFor(it) }
-        changes = LibraryChanges(this, disk, prefs) { list() }
+        changes = LibraryChanges(this, disk, prefs) { done -> list(then = done) }
         library = buildLibrary()
     }
 
@@ -110,14 +111,16 @@ class LibraryActivity : Activity() {
         // Started only now: its daily tidy-up, without file access, would think every PDF gone.
         if (prefs.showThumbnails && thumbnails == null) thumbnails = newThumbnails()
 
-        intent.getStringExtra(EXTRA_ROOT)?.let { path ->
+        intent.getStringExtra(EXTRA_ROOT)?.let { raw ->
             intent.removeExtra(EXTRA_ROOT)
-            prefs.root = File(path)
-            prefs.folderOnShow = null
+            val chosen = hookPath(raw) ?: return@let
+            prefs.root = chosen
+            prefs.folderOnShow = chosen
+            this.root = null // the folder on show starts again at this root, even if it's the root already
         }
-        intent.getStringExtra(WritingActivity.EXTRA_PATH)?.let { path ->
+        intent.getStringExtra(WritingActivity.EXTRA_PATH)?.let { raw ->
             intent.removeExtra(WritingActivity.EXTRA_PATH)
-            open(File(path))
+            hookPath(raw)?.let(::open)
         }
         val root = prefs.root ?: return chooseFirstRoot()
         if (root != this.root) {
@@ -130,6 +133,11 @@ class LibraryActivity : Activity() {
         // notices 0.4 s later. The folder as it was stays on screen meanwhile.
         list(afterSaveOf = if (backFromDocument && shownFolder != null) prefs.lastOpened else null)
     }
+
+    /** A check hook's path, as the library writes paths (Ruling L1); one outside the storage is refused. */
+    private fun hookPath(raw: String): File? =
+        HookPath.under(Environment.getExternalStorageDirectory(), raw)
+            ?: null.also { toast("Not on the tablet's storage: $raw") }
 
     override fun onStop() {
         super.onStop()
@@ -233,9 +241,13 @@ class LibraryActivity : Activity() {
     /** About 5 tiles across in portrait, 7 in landscape (decision 2). */
     private fun columnsFor(config: Configuration) = if (config.orientation == Configuration.ORIENTATION_LANDSCAPE) 7 else 5
 
-    /** Reads the folder on show on [disk], then shows it. Unchanged contents leave the screen alone (no e-ink refresh). */
-    private fun list(redrawTiles: Boolean = false, afterSaveOf: File? = null) {
-        val root = root ?: return
+    /**
+     * Reads the folder on show on [disk], then shows it. Unchanged contents leave the screen
+     * alone (no e-ink refresh). [then] runs on the main thread afterwards, even if a newer
+     * listing took this one's place.
+     */
+    private fun list(redrawTiles: Boolean = false, afterSaveOf: File? = null, then: () -> Unit = {}) {
+        val root = root ?: return then()
         val wanted = folder ?: root
         val ask = ++listed
         val last = prefs.lastOpened
@@ -249,7 +261,10 @@ class LibraryActivity : Activity() {
             val rootMissing = !root.isDirectory
             val resume = if (shown == root) last?.takeIf { it.isFile } else null
             Log.i(TAG, "library listed ${shown.path} n=${entries.size} ms=${SystemClock.uptimeMillis() - start}")
-            main.post { if (ask == listed && !isDestroyed) showListing(shown, entries, resume, rootMissing, redrawTiles) }
+            main.post {
+                if (ask == listed && !isDestroyed) showListing(shown, entries, resume, rootMissing, redrawTiles)
+                then()
+            }
         }
     }
 

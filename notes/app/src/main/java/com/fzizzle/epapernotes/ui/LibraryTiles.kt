@@ -133,6 +133,12 @@ class TileView(context: Context) : View(context) {
         setMeasuredDimension(width, pad + boxSide + pad / 2 + 2 * nameLine + countLine + pad)
     }
 
+    /** The name is laid out for the tile's width: turning the tablet changes it. */
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        if (w != oldw) nameLayout = null
+    }
+
     override fun drawableStateChanged() {
         super.drawableStateChanged()
         invalidate() // pressed on, pressed off

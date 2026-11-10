@@ -30,15 +30,22 @@ class LibraryChanges(
     private val activity: Activity,
     private val disk: Executor,
     private val prefs: LibraryPrefs,
-    private val afterwards: () -> Unit,
+    /** Re-reads the folder, then calls its argument once the new listing is on screen. */
+    private val afterwards: (done: () -> Unit) -> Unit,
 ) {
     private val main = Handler(Looper.getMainLooper())
 
-    /** A change is running: documents don't open until it's done, so none opens mid-rename. */
-    var busy = false
-        private set
+    /** Changes running, each until the folder has been re-read after it. Main thread. */
+    private var running = 0
+
+    /**
+     * A change is running: documents don't open and no other change starts until it's done
+     * and the folder shows it, so none opens mid-rename or acts on a tile that's gone.
+     */
+    val busy: Boolean get() = running > 0
 
     fun askForNewFolder(root: File, here: File) {
+        if (busy) return
         askForText("New folder", "", "Make") { name -> change(root, { it.newFolder(here, name) }) }
     }
 
@@ -111,7 +118,7 @@ class LibraryChanges(
 
     private fun change(root: File, operation: (FileOps) -> FileOps.Result, onDone: () -> Unit = {}) {
         val ops = ops(root)
-        busy = true
+        running++
         disk.execute {
             val result = try {
                 operation(ops)
@@ -120,13 +127,15 @@ class LibraryChanges(
                 FileOps.Result.Refused("That didn't work: ${e.message}")
             }
             main.post {
-                busy = false
-                if (activity.isDestroyed) return@post
+                if (activity.isDestroyed) {
+                    running--
+                    return@post
+                }
                 when (result) {
                     FileOps.Result.Done -> onDone()
                     is FileOps.Result.Refused -> Toast.makeText(activity, result.reason, Toast.LENGTH_LONG).show()
                 }
-                afterwards()
+                afterwards { running-- }
             }
         }
     }

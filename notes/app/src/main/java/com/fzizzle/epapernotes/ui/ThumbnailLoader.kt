@@ -129,9 +129,15 @@ class ThumbnailLoader(private val cache: ThumbnailCache, private val onReady: (P
         if (cached != null && !intoMemory) return finished(key, ok = true)
         // A cached file can vanish before it's read, or be damaged: then it's rendered again.
         val decoded = cached?.let { BitmapFactory.decodeFile(it.path, SMALL) }
-        val bitmap = decoded ?: render(pdf) ?: return finished(key, ok = false)
+        val bitmap = decoded ?: try {
+            render(pdf, forScreen = intoMemory)
+        } catch (e: Exception) {
+            // Damaged, password-protected, or gone: the tile keeps what it shows (a grey page, or the old picture).
+            Log.w(TAG, "thumbnail ${pdf.name} failed: ${e.message}")
+            return finished(key, ok = false)
+        }
         finished(key, ok = true)
-        if (!intoMemory) return
+        if (bitmap == null) return
         memory.put(key, bitmap)
         main.post { if (!synchronized(lock) { stopped }) onReady(pdf, bitmap) }
     }
@@ -141,21 +147,25 @@ class ThumbnailLoader(private val cache: ThumbnailCache, private val onReady: (P
         if (!ok) failed += key
     }
 
-    /** Renders the first page, stores it in the cache, and returns a small copy for memory; null if it can't be read. */
-    private fun render(pdf: PdfEntry): Bitmap? {
+    /**
+     * Renders the first page and stores it in the cache. [forScreen]: also returns a small copy
+     * for memory (else null). Throws if the PDF can't be read. A thumbnail the cache can't keep
+     * (storage full, say) is still shown; it's just drawn again next time.
+     */
+    private fun render(pdf: PdfEntry, forScreen: Boolean): Bitmap? {
         val start = SystemClock.uptimeMillis()
-        return try {
-            val full = PdfFile.open(pdf.file).use { it.render(0, THUMB_WIDTH_PX) }
-            val png = ByteArrayOutputStream().also { full.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
-            cache.store(pdf, png)
-            val small = full.copy(Bitmap.Config.RGB_565, false)
-            full.recycle()
+        val full = PdfFile.open(pdf.file).use { it.render(0, THUMB_WIDTH_PX) }
+        try {
+            try {
+                val png = ByteArrayOutputStream().also { full.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
+                cache.store(pdf, png)
+            } catch (e: Exception) {
+                Log.w(TAG, "thumbnail ${pdf.name} not cached: ${e.message}")
+            }
             Log.i(TAG, "thumbnail ${pdf.name} ms=${SystemClock.uptimeMillis() - start}")
-            small
-        } catch (e: Exception) {
-            // Damaged, password-protected, or gone: the tile keeps its grey page.
-            Log.w(TAG, "thumbnail ${pdf.name} failed: ${e.message}")
-            null
+            return if (forScreen) full.copy(Bitmap.Config.RGB_565, false) else null
+        } finally {
+            full.recycle()
         }
     }
 

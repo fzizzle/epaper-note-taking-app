@@ -78,6 +78,13 @@ class SelectionLayer(private val handlePx: Float, private val listener: Listener
     private class Paste(val at: Pt) : Gesture
     private class Trace(val button: PenButton) : Gesture {
         val points = mutableListOf<FloatArray>()
+
+        /** The event's points, batched ones first. A lift often reports no pressure: it keeps the last. */
+        fun add(event: MotionEvent) {
+            for (i in 0 until event.historySize) points += point(event.getHistoricalX(i), event.getHistoricalY(i), event.getHistoricalPressure(i))
+            val pressure = if (event.pressure > 0f || points.isEmpty()) event.pressure else points.last()[2] / PenPoints.MAX_PRESSURE
+            points += point(event.x, event.y, pressure)
+        }
     }
     private object Swallow : Gesture
 
@@ -129,13 +136,16 @@ class SelectionLayer(private val handlePx: Float, private val listener: Listener
                     redraw()
                 }
                 is Trace -> {
-                    for (i in 0 until event.historySize) g.points += point(event.getHistoricalX(i), event.getHistoricalY(i), event.getHistoricalPressure(i))
-                    g.points += point(here.x, here.y, event.pressure)
+                    g.add(event)
                     redraw()
                 }
                 else -> Unit
             }
-            MotionEvent.ACTION_UP -> finish(gesture, here, frame)
+            MotionEvent.ACTION_UP -> {
+                // The lift is where the stroke ends: it keeps that point, as Onyx's strokes do.
+                (gesture as? Trace)?.add(event)
+                finish(gesture, here, frame)
+            }
             MotionEvent.ACTION_CANCEL -> {
                 gesture = null
                 redraw()

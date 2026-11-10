@@ -151,6 +151,9 @@ class WritingActivity : Activity() {
     /** Whether the screen follows the pen stroke under way, rather than Onyx (see [screenPen]). UI thread. */
     private var screenStroke = false
 
+    /** [penMapping] when the screen's stroke began: a traced stroke is placed with the view as it was then. UI thread. */
+    private var screenStrokeMapping: Pair<Int, Affine>? = null
+
     /**
      * True while [PageView.penHandler] is set, which is only while fast-ink is paused for a
      * tool. Onyx's thread reads it at pen-down.
@@ -366,6 +369,13 @@ class WritingActivity : Activity() {
         pen.on(Rect(0, 0, pages.width, pages.height))
         if (!fastInkWanted()) {
             pen.pause()
+            // A tool's pause waiting for a lift that never came (the app was left mid-stroke):
+            // the screen takes the pen now, as the lift would have done.
+            if (!toolState.fastInkOn()) {
+                pauseWhenLifted = false
+                pages.penHandler = screenPen
+                screenHasPen = true
+            }
         } else {
             // A resume that onPause cancelled can leave the screen holding the pen.
             pages.penHandler = null
@@ -552,7 +562,7 @@ class WritingActivity : Activity() {
         }
 
         override fun traced(button: PenButton, points: List<FloatArray>) {
-            val (page, screenToPdf) = penMapping ?: return
+            val (page, screenToPdf) = screenStrokeMapping ?: penMapping ?: return
             val tool = toolState.strokeTool(button)
             Log.i(TAG, "stroke page=$page tool=$tool button=$button points=${points.size} (traced, fast-ink off)")
             val pdf by lazy { points.map { screenToPdf.map(Pt(it[0], it[1])) } }
@@ -657,6 +667,7 @@ class WritingActivity : Activity() {
         if (!screenStroke) return@screen false
         if (m == MotionEvent.ACTION_DOWN) {
             screenPenDown = true
+            screenStrokeMapping = penMapping
             handler.removeCallbacks(retryShow)
         }
         if (m == MotionEvent.ACTION_UP || m == MotionEvent.ACTION_CANCEL) screenPenDown = false
