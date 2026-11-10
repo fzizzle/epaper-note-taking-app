@@ -86,6 +86,9 @@ class WritingActivity : Activity() {
     /** True once the pages are laid out. The pen stays off until then: a stroke would have nowhere to go. */
     private var documentShown = false
 
+    /** True between onResume and onPause: the only time the pen may be switched on. UI thread. */
+    private var resumed = false
+
     /**
      * Screen pixels to PDF space for the page on show, published by the UI thread whenever the
      * view changes, and copied by the pen thread when the pen touches down. Each stroke is
@@ -183,6 +186,11 @@ class WritingActivity : Activity() {
         // Onyx writing means fast-ink is on already.
         if (fastInkWanted() && !pen.isWriting) {
             Log.i(TAG, "resume fast-ink")
+            // Diagnostic for review 1.5: with the pen or highlighter chosen, nothing listens to
+            // the pen while fast-ink is paused for a show. If the pen landed during that pause,
+            // its stroke (or the start of it) may be lost. This line says whether it happens.
+            val sincePenDown = SystemClock.uptimeMillis() - pages.lastPenDownMs
+            if (sincePenDown in 0 until SHOW_PAUSE_MS) Log.i(TAG, "resume fast-ink $sincePenDown ms after a pen-down: a stroke may have begun during the pause")
             pen.resume()
         }
     }
@@ -278,7 +286,9 @@ class WritingActivity : Activity() {
             pages.post {
                 documentShown = true
                 publishPenMapping()
-                penOn()
+                // A slow document can finish opening after the screen was left. The pen must not
+                // come on for a screen in the background; onResume turns it on if the screen comes back.
+                if (resumed) penOn()
             }
         }
 
@@ -311,6 +321,9 @@ class WritingActivity : Activity() {
             publishPenChoice()
             strokeChoice = penChoice
         }
+        // A palm that lands while the pen is writing must not pause fast-ink (that cuts the
+        // stroke) or move the page. Fingers work again as soon as the pen lifts.
+        pages.fingersAllowed = { !pen.isWriting && !screenPenDown }
         pages.onFingerGestureStart = {
             Log.i(TAG, "fingers down: pause fast-ink")
             handler.removeCallbacks(resumeFastInk) // a show's resume mustn't land mid-gesture
@@ -367,7 +380,9 @@ class WritingActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
-        if (documentShown) pages.post { penOn() }
+        resumed = true
+        // Checked again when it runs: the screen may have been left in between.
+        if (documentShown) pages.post { if (resumed) penOn() }
         if (showPending) retryShowWhenIdle()
     }
 
@@ -740,7 +755,10 @@ class WritingActivity : Activity() {
         pen.pause()
         dialog.setOnDismissListener {
             dialogOpen = false
-            resumeFastInk.run()
+            // After the usual pause, not at once: the screen must first draw the page without
+            // the dialog, or fast-ink would freeze bits of it (or the old page) on the panel.
+            handler.removeCallbacks(resumeFastInk)
+            handler.postDelayed(resumeFastInk, SHOW_PAUSE_MS)
         }
         dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
         dialog.show()
@@ -772,7 +790,9 @@ class WritingActivity : Activity() {
         pen.pause()
         menu.setOnDismissListener {
             dialogOpen = false
-            resumeFastInk.run()
+            // After the usual pause, as for "Go to page".
+            handler.removeCallbacks(resumeFastInk)
+            handler.postDelayed(resumeFastInk, SHOW_PAUSE_MS)
         }
         menu.show()
     }
@@ -884,6 +904,7 @@ class WritingActivity : Activity() {
 
     override fun onPause() {
         super.onPause()
+        resumed = false
         val start = SystemClock.uptimeMillis()
         // Nothing may turn fast-ink back on in the background; onResume starts it afresh.
         handler.removeCallbacks(retryShow)
@@ -901,6 +922,8 @@ class WritingActivity : Activity() {
         super.onDestroy()
         val start = SystemClock.uptimeMillis()
         handler.removeCallbacksAndMessages(null)
+        // onPause has done this already; once more in case anything turned the pen on since.
+        if (::pen.isInitialized) pen.off()
         if (::session.isInitialized) session.close()
         Log.i(TAG, "leave: destroy ms=${SystemClock.uptimeMillis() - start}")
     }

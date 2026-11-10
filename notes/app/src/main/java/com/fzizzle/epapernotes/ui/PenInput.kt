@@ -35,7 +35,10 @@ class PenInput(
 
     private var helper: TouchHelper? = null
 
-    /** True while the pen is on the screen. Nothing may pause fast-ink then: it would cut the stroke short. */
+    /**
+     * True while Onyx follows the pen on the screen. Nothing should pause fast-ink then: it
+     * would cut the stroke short. If something does, the stroke is over ([pause]).
+     */
     @Volatile var isWriting = false
         private set
     private var line = LiveLine.PEN
@@ -66,6 +69,7 @@ class PenInput(
         val h = helper ?: return
         h.setRawDrawingEnabled(false)
         drawsInk = false
+        isWriting = false // as in pause()
         h.closeRawDrawing()
         helper = null
     }
@@ -74,6 +78,9 @@ class PenInput(
         val h = helper ?: return
         h.setRawDrawingEnabled(false)
         drawsInk = false
+        // Onyx may send no end callback for a stroke this cut short. Left true, the screen
+        // would wait for a lift that never comes: no page would show, and no finger would work.
+        isWriting = false
     }
 
     fun resume() {

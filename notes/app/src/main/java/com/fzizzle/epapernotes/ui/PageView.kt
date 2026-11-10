@@ -50,6 +50,20 @@ class PageView(context: Context) : View(context) {
      */
     var penHandler: ((MotionEvent) -> Boolean)? = null
 
+    /**
+     * Asked when a finger lands. False means fingers are ignored for now: that whole gesture,
+     * until the last finger lifts, does nothing at all. The screen says false while the pen is
+     * writing, so a palm that lands mid-stroke neither pauses fast-ink nor moves the page (spec §6.2).
+     */
+    var fingersAllowed: () -> Boolean = { true }
+
+    /** True from a finger landing while [fingersAllowed] said no, until the next finger gesture begins. */
+    private var ignoringFingers = false
+
+    /** When the pen last touched down (as SystemClock.uptimeMillis), or 0. For a diagnostic in the writing screen. */
+    var lastPenDownMs = 0L
+        private set
+
     /** A one-finger tap, in view pixels. */
     var onFingerTap: (x: Float, y: Float) -> Unit = { _, _ -> }
 
@@ -333,7 +347,10 @@ class PageView(context: Context) : View(context) {
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
         val m = event.actionMasked
-        if (m == MotionEvent.ACTION_DOWN && isPen(event)) onStylusDown(penButtonOf(event))
+        if (m == MotionEvent.ACTION_DOWN && isPen(event)) {
+            lastPenDownMs = event.eventTime
+            onStylusDown(penButtonOf(event))
+        }
         if (m == MotionEvent.ACTION_DOWN || m == MotionEvent.ACTION_POINTER_DOWN) {
             val lag = android.os.SystemClock.uptimeMillis() - event.eventTime
             android.util.Log.i("Notes", "touch ${MotionEvent.actionToString(m)} tool=${event.getToolType(event.actionIndex)} pointers=${event.pointerCount} deliveredLateMs=$lag")
@@ -345,6 +362,13 @@ class PageView(context: Context) : View(context) {
         // The pen never moves the page (spec §6.2). While fast-ink is off for a tool, it works the tool.
         if (isPen(event)) return penHandler?.invoke(event) ?: false
         if (event.getToolType(0) != MotionEvent.TOOL_TYPE_FINGER) return false
+
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            ignoringFingers = !fingersAllowed()
+            if (ignoringFingers) android.util.Log.i("Notes", "fingers ignored: the pen is writing")
+        }
+        // Taken (true), so the rest of the gesture comes here too and is dropped the same way.
+        if (ignoringFingers) return true
 
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
