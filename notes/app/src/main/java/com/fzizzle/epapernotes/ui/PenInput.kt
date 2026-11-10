@@ -100,12 +100,14 @@ class PenInput(
     }
 
     /**
-     * Redraws [view] on the panel by itself, without pausing fast-ink and without a flash. For
-     * the strip: fast-ink ignores normal drawing, and a pause would refresh the page and drop
-     * the live line of a stroke begun in it.
+     * Puts [view]'s new look on the panel while fast-ink stays on, for the strip. Fast-ink
+     * ignores normal drawing, `EpdController.invalidate(view, GU)` and `refreshScreenRegion`
+     * didn't show either; Onyx's handwriting repaint does, with one quick flash (owner,
+     * 2026-11-10). Posted, so the view has drawn its new look first.
      */
     fun refreshAlone(view: View) {
-        EpdController.invalidate(view, UpdateMode.GU)
+        view.invalidate()
+        view.post { EpdController.handwritingRepaint(view, android.graphics.Rect(0, 0, view.width, view.height)) }
     }
 
     fun setLimit(limit: Rect) {

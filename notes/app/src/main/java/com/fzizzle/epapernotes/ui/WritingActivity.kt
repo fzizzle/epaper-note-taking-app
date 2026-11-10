@@ -332,14 +332,12 @@ class WritingActivity : Activity() {
             if (button != hoverButton) {
                 hoverButton = button
                 publishPenChoice()
-                showStripChange(updateStrip())
             }
         }
         pages.onStylusDown = { button ->
             hoverButton = button
             publishPenChoice()
             strokeChoice = penChoice
-            showStripChange(updateStrip()) // the pen is down: shown once it lifts
         }
         // A palm that lands while the pen is writing must not pause fast-ink (that cuts the
         // stroke) or move the page. Fingers work again as soon as the pen lifts.
@@ -915,12 +913,12 @@ class WritingActivity : Activity() {
     }
 
     /**
-     * The tool the pen would use now picked out: the chosen one, or Lasso or Eraser while pen
-     * button 1 or 2 is held ([penChoice]). Paste there once there's something to paste, picked
-     * out while armed. Returns whether anything on the strip changed.
+     * The chosen tool picked out, and Paste there once there's something to paste, picked out
+     * while armed. Holding a pen button doesn't change it: showing that would flash the screen
+     * at every press (owner's choice, 2026-11-10). Returns whether anything changed.
      */
     private fun updateStrip(): Boolean {
-        val shown = penChoice.second
+        val shown = toolState.chosen
         val pasteVisibility = if (toolState.showPaste) View.VISIBLE else View.GONE
         val changed = toolButtons.any { (tool, button) -> button.isSelected != (tool == shown) } ||
             pasteButton.visibility != pasteVisibility || pasteButton.isSelected != toolState.pasteArmed
@@ -932,8 +930,8 @@ class WritingActivity : Activity() {
 
     /**
      * The screen ignores normal drawing while fast-ink is on, so a strip that [changed] then
-     * is put on the panel by itself (owner-tested: it shows). No pause: a pause refreshes the
-     * page, and a stroke begun in it gets no live line. With fast-ink off it's on screen already.
+     * is put on the panel by itself, with one quick flash (owner-tested). No pause: a stroke
+     * begun in a pause gets no live line. With fast-ink off it's on screen already.
      */
     private fun showStripChange(changed: Boolean) {
         if (changed && fastInkWanted()) pen.refreshAlone(stripView)
