@@ -23,8 +23,9 @@ interface PageMemory {
  * - then do the disk operation;
  * - only if that worked, move (or, for a delete, remove) the journal and the page.
  *
- * A journal is never overwritten, and never deleted except with its own PDF. If one can't be
- * moved, it's left under its old name and logged: stranded, but not lost.
+ * A journal is never overwritten, and never deleted except with its own PDF (and even then
+ * not one set aside as `.kept-`). If one can't be moved, it's left under its old name and
+ * logged: stranded, but not lost.
  *
  * Paths are used as given, absolute and normalized but never canonicalized (Ruling L1): that's
  * how the journals and pages were keyed when the files were opened. Every call blocks (it can
@@ -49,7 +50,7 @@ class FileOps(
 
     fun newFolder(parent: File, name: String): Result {
         val folder = parent.normal()
-        if (!isInLibrary(folder) || !folder.isDirectory) return Result.Refused("That folder isn't in the library.")
+        if (!isFolderInLibrary(folder)) return Result.Refused("That folder isn't in the library.")
         val clean = name.trim()
         nameProblem(clean)?.let { return Result.Refused(it) }
         if (isTaken(folder, clean, except = null)) return Result.Refused("There's already a '$clean' here.")
@@ -74,7 +75,7 @@ class FileOps(
         val from = target.normal()
         val folder = into.normal()
         targetProblem(from)?.let { return Result.Refused(it) }
-        if (!isInLibrary(folder) || !folder.isDirectory) return Result.Refused("That folder isn't in the library.")
+        if (!isFolderInLibrary(folder)) return Result.Refused("That folder isn't in the library.")
         // File.startsWith compares whole names, so "Physics Lab" isn't inside "Physics".
         if (folder.startsWith(from)) return Result.Refused("A folder can't go inside itself.")
         if (folder == from.parentFile) return Result.Done
@@ -92,7 +93,7 @@ class FileOps(
         // After a part-way failure, a PDF still on disk keeps its journal and page.
         for (pdf in pdfs) {
             if (pdf.exists()) continue
-            journalFilesOf(pdf).forEach { if (!it.delete()) log("couldn't delete journal ${it.name}") }
+            liveJournalFilesOf(pdf).forEach { if (!it.delete()) log("couldn't delete journal ${it.name}") }
             lastPages.remove(pdf.path)
         }
         return if (allGone) Result.Done else Result.Refused("Some of '${from.name}' couldn't be deleted.")
@@ -145,6 +146,16 @@ class FileOps(
         return journalDir.listFiles()?.filter { it.name == name || it.name.startsWith("$name.") }.orEmpty()
     }
 
+    /**
+     * What a delete removes: the journal and a rewrite's leftover `.new`. Journals set aside as
+     * `.kept-` hold earlier writing that plan 5 will rescue, and the delete question doesn't
+     * mention them, so they stay.
+     */
+    private fun liveJournalFilesOf(pdf: File): List<File> {
+        val kept = ChangeJournal.journalFileFor(journalDir, pdf).name + ".kept-"
+        return journalFilesOf(pdf).filterNot { it.name.startsWith(kept) }
+    }
+
     /** A name as DocumentSession sets journals aside, which plan 5 will turn into copies. */
     private fun keptName(journal: File): File {
         var time = System.currentTimeMillis()
@@ -179,6 +190,8 @@ class FileOps(
     private fun targetProblem(target: File): String? = when {
         target == root -> "The library folder itself can't be changed here."
         !isInLibrary(target) -> "That isn't in the library."
+        // A link can lead anywhere, even outside the library: leave it alone.
+        isLink(target) -> "'${target.name}' is a link to somewhere else, so it's left alone."
         !target.exists() -> "'${target.name}' is no longer there."
         else -> null
     }
@@ -195,6 +208,9 @@ class FileOps(
         folder.listFiles().orEmpty().any { it.name.equals(name, ignoreCase = true) && it != except }
 
     private fun isInLibrary(file: File) = file.startsWith(root)
+
+    /** A linked folder could lead outside the library, so it doesn't count. */
+    private fun isFolderInLibrary(folder: File) = isInLibrary(folder) && folder.isDirectory && !isLink(folder)
 
     private fun isLink(file: File) = Files.isSymbolicLink(file.toPath())
 

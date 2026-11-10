@@ -5,12 +5,14 @@ import com.fzizzle.epapernotes.doc.ChangeJournal
 import com.fzizzle.epapernotes.doc.DocumentSession
 import com.fzizzle.epapernotes.doc.FakePdfPages
 import com.fzizzle.epapernotes.doc.FakeScheduler
+import com.fzizzle.epapernotes.doc.SessionEvent
 import com.fzizzle.epapernotes.ink.InkItem
 import com.fzizzle.epapernotes.ink.Stroke
 import com.fzizzle.epapernotes.ink.StrokeKind
 import com.fzizzle.epapernotes.ink.StrokePoint
 import com.fzizzle.epapernotes.storage.FileIdentity
 import java.io.File
+import java.nio.file.Files
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -159,12 +161,14 @@ class FileOpsTest {
         assertEquals(2, ops.pdfCountInside(File(root, "Physics")))
 
         assertEquals(FileOps.Result.Done, ops.delete(a))
-        assertFalse(a.exists() || journal.exists() || kept.exists())
+        assertFalse(a.exists() || journal.exists())
+        // Earlier writing set aside stays for plan 5 to rescue: the delete question doesn't mention it.
+        assertTrue(kept.exists())
         assertEquals(FileOps.Result.Done, ops.delete(File(root, "Physics")))
         assertFalse(File(root, "Physics").exists())
         assertFalse(journalOf(other).exists() || journalOf(two).exists())
         assertTrue(pages.map.isEmpty())
-        assertTrue(journals.listFiles()!!.isEmpty())
+        assertEquals(listOf(kept), journals.listFiles()!!.toList())
     }
 
     /**
@@ -225,6 +229,71 @@ class FileOpsTest {
         assertEquals(FileOps.Result.Refused("'Lecture.pdf' is still saving. Try again in a moment."), result)
         assertTrue(a.exists())
         session.close()
+    }
+
+    /** Review: a sibling of the root whose name starts the same is still outside it. */
+    @Test fun rootSiblingWithTheSameStartIsOutside() {
+        val sibling = tmp.newFolder("Documents2")
+        val there = File(sibling, "Notes.pdf").apply { writeText("x") }
+        val a = pdf("Lecture.pdf")
+        assertTrue(ops.rename(there, "x") is FileOps.Result.Refused)
+        assertTrue(ops.delete(there) is FileOps.Result.Refused)
+        assertTrue(ops.move(a, sibling) is FileOps.Result.Refused)
+        assertTrue(ops.newFolder(sibling, "x") is FileOps.Result.Refused)
+        assertTrue(there.exists() && a.exists())
+        assertFalse(File(sibling, "x").exists())
+    }
+
+    /** A link could lead outside the library, so neither a link nor a linked folder is acted on. */
+    @Test fun linksAreRefused() {
+        val elsewhere = tmp.newFolder("Elsewhere")
+        val real = File(elsewhere, "Real.pdf").apply { writeText("x") }
+        val fileLink = Files.createSymbolicLink(File(root, "Link.pdf").toPath(), real.toPath()).toFile()
+        val folderLink = Files.createSymbolicLink(File(root, "Linked").toPath(), elsewhere.toPath()).toFile()
+        val a = pdf("Lecture.pdf")
+        assertTrue(ops.rename(fileLink, "x") is FileOps.Result.Refused)
+        assertTrue(ops.delete(fileLink) is FileOps.Result.Refused)
+        assertTrue(ops.delete(folderLink) is FileOps.Result.Refused)
+        assertTrue(ops.move(a, folderLink) is FileOps.Result.Refused)
+        assertTrue(ops.newFolder(folderLink, "x") is FileOps.Result.Refused)
+        assertTrue(real.exists() && a.exists() && fileLink.exists())
+        assertEquals(listOf(real), elsewhere.listFiles()!!.toList())
+    }
+
+    /**
+     * Review: after "save to a copy" the session writes into the copy, so a rename of the copy
+     * must wait for that session too, not only one of the original.
+     */
+    @Test fun renameOfACopyWaitsForItsSession() {
+        val a = pdf("Lecture.pdf")
+        val events = mutableListOf<SessionEvent>()
+        val fake = FakePdfPages(wasRepaired = true)
+        val session = DocumentSession(a, journals, open = { fake }, scheduler = FakeScheduler(), events = { events += it })
+        session.start()
+        session.addStroke(0, dot)
+        session.saveRepairedToCopy()
+        val copy = events.filterIsInstance<SessionEvent.SavedToCopy>().single().copy
+        // Writing in the copy that its last save won't manage, so it's only in the journal.
+        session.addStroke(0, dot)
+        fake.failNextSave = true
+
+        var stillThereWhenClosing = false
+        val closer = Thread {
+            Thread.sleep(300)
+            stillThereWhenClosing = copy.exists()
+            session.close()
+        }
+        closer.start()
+
+        assertEquals(FileOps.Result.Done, ops.rename(copy, "Week 1"))
+        closer.join()
+
+        assertTrue(stillThereWhenClosing)
+        val renamed = File(root, "Week 1.pdf")
+        assertTrue(renamed.exists())
+        assertEquals(1, ChangeJournal.forDocument(journals, renamed).read()!!.changes.size)
+        // Both of the session's keys are gone once it closed: nothing waits on it any more.
+        assertTrue(DocumentSession.awaitClosed(a, 0) && DocumentSession.awaitClosed(copy, 0))
     }
 
     /** A journal already waiting at the new name (from a file that's gone) is kept, never overwritten. */

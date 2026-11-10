@@ -72,6 +72,8 @@ class DocumentSession(
     /** Completed when this session has saved and closed, for the next session on the file. */
     private val closed = CompletableFuture<Unit>()
     private val gateKey = pdf.absolutePath
+    /** Worker thread only. The copy's path after a "save to a copy": the session gates that file too. */
+    private var copyGateKey: String? = null
 
     // Worker thread only.
     private var pages: PdfPages? = null
@@ -378,6 +380,7 @@ class DocumentSession(
             } finally {
                 closed.complete(Unit)
                 openSessions.remove(gateKey, closed)
+                copyGateKey?.let { openSessions.remove(it, closed) }
             }
         }
         scheduler.shutdown()
@@ -444,6 +447,9 @@ class DocumentSession(
             val remaining = unsaved.drop(applied)
             val oldJournal = journal
             journal = ChangeJournal.forDocument(journalDir, copy)
+            // From now on this session saves into the copy, so the library must wait for it
+            // before renaming, moving or deleting the copy, as it does for the original.
+            copyGateKey = copy.absolutePath.also { openSessions[it] = closed }
             journal.rewrite(base, remaining)
             file = copy
             known = base
