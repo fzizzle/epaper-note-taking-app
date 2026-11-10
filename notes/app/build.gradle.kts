@@ -9,13 +9,25 @@ android {
 
     defaultConfig {
         applicationId = "com.fzizzle.epapernotes"
-        minSdk = 29
+        // Android 11: the library uses its storage calls (All files access, storage volumes).
+        minSdk = 30
         targetSdk = 35
         versionCode = 1
         versionName = "0.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // The tablet is arm64. Leaving out MuPDF's other three CPU builds keeps the app small.
         ndk { abiFilters += "arm64-v8a" }
+    }
+
+    buildTypes {
+        release {
+            // Signed with this computer's debug key, so it installs over the debug build and
+            // keeps the app's own data (remembered pages, journals, file access). A private key
+            // comes with publishing (design-gaps plan, decision 3).
+            signingConfig = signingConfigs.getByName("debug")
+            // Off: shrinking would strip classes MuPDF and Onyx reach through JNI and reflection.
+            isMinifyEnabled = false
+        }
     }
 
     compileOptions {

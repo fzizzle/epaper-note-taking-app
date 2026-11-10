@@ -55,13 +55,13 @@ From using the app on the tablet. Worked through on the branch `owner-feedback-f
 
 ## Review: missing against the design
 
-[Plan](docs/superpowers/plans/2026-11-10-review-design-gaps.md). Start after the SD-card work is committed. Conflict copies stay with plan 5.
+[Plan](docs/superpowers/plans/2026-11-10-review-design-gaps.md). Conflict copies stay with plan 5.
 
-- [ ] Owner approves the plan and its 5 decisions.
-- [ ] Stale temporary files are cleaned up (Task 1).
-- [ ] The library misses no change on disk (Task 2).
-- [ ] A release build, minSdk 30, adb shortcuts only in debug (Task 3).
-- [ ] The fast-ink rules, testable on the laptop (Task 4; only if decision 5 is approved).
+- [x] Owner approved decisions 1–4 (2026-11-10). Decision 5 (Task 4) waits until after the owner's tools and library sessions.
+- [x] Stale temporary files are cleaned up (Task 1): only ones over ten minutes old, never while a document in the folder is open or saving. Checked on the tablet.
+- [x] The library misses no change on disk (Task 2): watched before it's read, again after a folder is recreated, and the subfolders on screen too. Checked on the tablet: a PDF dropped into a subfolder updates its count.
+- [x] A release build, minSdk 30, adb shortcuts only in debug (Task 3): about twice as fast at adding strokes ([speed results](docs/superpowers/review-speed-results.md)); installs over the debug build keeping the app's data. Now on the tablet.
+- [ ] The fast-ink rules, testable on the laptop (Task 4; decision 5, after the owner's tools and library sessions).
 
 ## Review: easier-to-read pages
 

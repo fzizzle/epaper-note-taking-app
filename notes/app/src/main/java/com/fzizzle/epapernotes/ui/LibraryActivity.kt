@@ -2,6 +2,7 @@ package com.fzizzle.epapernotes.ui
 
 import android.app.Activity
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Color
@@ -24,6 +25,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import com.fzizzle.epapernotes.doc.DocumentSession
+import com.fzizzle.epapernotes.storage.SafeSave
 import com.fzizzle.epapernotes.library.Entry
 import com.fzizzle.epapernotes.library.FolderEntry
 import com.fzizzle.epapernotes.library.FolderListing
@@ -95,6 +97,9 @@ class LibraryActivity : Activity() {
         super.onStart()
         started = true
         shownFolder?.let(watch::watch)
+        // The subfolders on screen too, before the listing onResume asks for: a PDF landing in
+        // one meanwhile still updates its count. The grid still holds the last entries.
+        if (shownFolder != null) watch.watchChildren(onScreen().filterIsInstance<FolderEntry>().map { it.file })
         thumbnails?.resume()
     }
 
@@ -113,16 +118,20 @@ class LibraryActivity : Activity() {
         // Started only now: its daily tidy-up, without file access, would think every PDF gone.
         if (prefs.showThumbnails && thumbnails == null) thumbnails = newThumbnails()
 
-        intent.getStringExtra(EXTRA_ROOT)?.let { raw ->
-            intent.removeExtra(EXTRA_ROOT)
-            val chosen = hookPath(raw) ?: return@let
-            prefs.root = chosen
-            prefs.folderOnShow = chosen
-            this.root = null // the folder on show starts again at this root, even if it's the root already
-        }
-        intent.getStringExtra(WritingActivity.EXTRA_PATH)?.let { raw ->
-            intent.removeExtra(WritingActivity.EXTRA_PATH)
-            hookPath(raw)?.let(::open)
+        // The adb shortcuts (--es root, --es path), for checks: only in a debug build. This
+        // screen is the launcher's, so any app could send them otherwise (decision 4).
+        if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+            intent.getStringExtra(EXTRA_ROOT)?.let { raw ->
+                intent.removeExtra(EXTRA_ROOT)
+                val chosen = hookPath(raw) ?: return@let
+                prefs.root = chosen
+                prefs.folderOnShow = chosen
+                this.root = null // the folder on show starts again at this root, even if it's the root already
+            }
+            intent.getStringExtra(WritingActivity.EXTRA_PATH)?.let { raw ->
+                intent.removeExtra(WritingActivity.EXTRA_PATH)
+                hookPath(raw)?.let(::open)
+            }
         }
         val root = prefs.root ?: return chooseFirstRoot()
         if (root != this.root) {
@@ -258,6 +267,8 @@ class LibraryActivity : Activity() {
         val wanted = folder ?: root
         val ask = ++listed
         val last = prefs.lastOpened
+        // Watched before it's read (review 2.10): a file landing while it's read still re-lists.
+        if (started && wanted != watch.watching) watch.watch(wanted)
         disk.execute {
             afterSaveOf?.let { DocumentSession.awaitClosed(it, LEFT_SAVE_WAIT_MS) }
             val start = SystemClock.uptimeMillis()
@@ -265,6 +276,12 @@ class LibraryActivity : Activity() {
             var shown = wanted
             while (shown != root && !shown.isDirectory) shown = shown.parentFile ?: root
             val entries = FolderListing.list(shown)
+            // Hidden copies a crashed save left behind (spec §7.3), never while a document in
+            // this folder is open or still saving: its save may be writing one right now.
+            if (!DocumentSession.anyOpenIn(shown)) {
+                val removed = SafeSave.cleanStale(shown)
+                if (removed > 0) Log.i(TAG, "removed $removed stale temporary file(s) in ${shown.path}")
+            }
             val rootMissing = !root.isDirectory
             val resume = if (shown == root) last?.takeIf { it.isFile } else null
             Log.i(TAG, "library listed ${shown.path} n=${entries.size} ms=${SystemClock.uptimeMillis() - start}")
@@ -277,10 +294,18 @@ class LibraryActivity : Activity() {
 
     private fun showListing(shown: File, entries: List<Entry>, resume: File?, rootMissing: Boolean, redrawTiles: Boolean) {
         folder = shown
+        // Another folder than was asked for (that one went away), or this one was deleted and
+        // perhaps recreated by a sync app since it was watched: watched afresh.
+        val rewatch = watch.needsRewatch
+        if (started && (shown != watch.watching || rewatch)) {
+            watch.watch(shown)
+            // A recreated folder was read before this watch began, so a file landing in
+            // between would go unseen: read once more. If nothing changed, nothing is redrawn.
+            if (rewatch) main.post { list() }
+        }
         if (shown != shownFolder) {
             shownFolder = shown
             prefs.folderOnShow = shown
-            if (started) watch.watch(shown)
             breadcrumb.show(root ?: shown, shown)
             grid.setSelection(0)
         }
@@ -337,18 +362,22 @@ class LibraryActivity : Activity() {
     private fun showSettings() =
         showLibrarySettings(this, prefs, disk, onRootChosen = ::useRoot, onThumbnailsChanged = ::switchThumbnails)
 
-    /** The tiles on screen get their thumbnails first. */
+    /**
+     * The tiles on screen get their thumbnails first, and the folders among them are watched,
+     * so a PDF arriving inside one updates its count (spec §6.1).
+     */
     private fun tilesOnScreenChanged() {
+        if (started) watch.watchChildren(onScreen().filterIsInstance<FolderEntry>().map { it.file })
         val loader = thumbnails ?: return
-        loader.show(adapter.entries.filterIsInstance<PdfEntry>(), pdfsOnScreen())
+        loader.show(adapter.entries.filterIsInstance<PdfEntry>(), onScreen().filterIsInstance<PdfEntry>())
     }
 
-    /** The PDFs whose tiles are on screen now. */
-    private fun pdfsOnScreen(): List<PdfEntry> {
+    /** The entries whose tiles are on screen now. */
+    private fun onScreen(): List<Entry> {
         val entries = adapter.entries
         val first = grid.firstVisiblePosition.coerceIn(0, entries.size)
         val end = (first + grid.childCount).coerceIn(first, entries.size)
-        return entries.subList(first, end).filterIsInstance<PdfEntry>()
+        return entries.subList(first, end)
     }
 
     private fun newThumbnails() = ThumbnailLoader(thumbnailCache) { pdf, bitmap -> thumbnailReady(pdf, bitmap) }
@@ -384,7 +413,7 @@ class LibraryActivity : Activity() {
      */
     private fun refresh() {
         thumbnails?.let { loader ->
-            val showing = pdfsOnScreen().toSet()
+            val showing = onScreen().filterIsInstance<PdfEntry>().toSet()
             val (onScreen, rest) = adapter.entries.filterIsInstance<PdfEntry>().partition { it in showing }
             loader.redraw(onScreen, rest)
         }

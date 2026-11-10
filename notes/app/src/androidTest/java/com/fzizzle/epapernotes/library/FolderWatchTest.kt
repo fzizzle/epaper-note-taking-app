@@ -7,6 +7,8 @@ import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Assert.assertNotEquals
 import org.junit.Before
 import org.junit.Test
@@ -69,5 +71,58 @@ class FolderWatchTest {
         assertEquals(1, calls.get())
         val after = FolderListing.list(scratch).filterIsInstance<PdfEntry>().single()
         assertNotEquals(cache.fileFor(before).name, cache.fileFor(after).name)
+    }
+
+    // Design-gaps Task 2 (spec §6.1, review 2.10).
+
+    /** The library starts the watch before it reads the folder: a file landing meanwhile still re-lists. */
+    @Test fun aFileArrivingDuringTheListingIsSeen() {
+        // setUp started the watch; the "listing" is this read, with a file arriving during it.
+        FolderListing.list(scratch)
+        addPdf("late.pdf")
+        Thread.sleep(1000)
+        assertEquals(1, calls.get())
+    }
+
+    /** A sync app deletes and recreates the folder: the watch says so, and watching again sees new files. */
+    @Test fun aRecreatedFolderIsWatchedAgain() {
+        scratch.deleteRecursively()
+        scratch.mkdirs()
+        Thread.sleep(1000)
+        assertTrue(watch.needsRewatch)
+        assertFalse(watch.needsRewatch) // read once
+        watch.watch(scratch)
+        calls.set(0)
+        addPdf("a.pdf")
+        Thread.sleep(1000)
+        assertEquals(1, calls.get())
+    }
+
+    /** A subfolder's tile shows how many PDFs it has: a PDF added inside it re-lists too. */
+    @Test fun aFileAddedInsideASubfolderIsSeen() {
+        val week = File(scratch, "Week 2").apply { mkdirs() }
+        Thread.sleep(1000)
+        calls.set(0)
+        watch.watchChildren(listOf(week))
+        TestPdfs.blank(context.cacheDir).let { it.copyTo(File(week, "b.pdf")); it.delete() }
+        Thread.sleep(1000)
+        assertEquals(1, calls.get())
+    }
+
+    @Test fun watchingChildrenTwiceKeepsOneObserverEach() {
+        val week = File(scratch, "Week 2").apply { mkdirs() }
+        Thread.sleep(1000)
+        calls.set(0)
+        watch.watchChildren(listOf(week))
+        watch.watchChildren(listOf(week))
+        File(week, "c.pdf").writeText("x")
+        Thread.sleep(1200)
+        assertEquals(1, calls.get())
+        // And a folder no longer passed isn't watched any more.
+        watch.watchChildren(emptyList())
+        calls.set(0)
+        File(week, "d.pdf").writeText("x")
+        Thread.sleep(1000)
+        assertEquals(0, calls.get())
     }
 }

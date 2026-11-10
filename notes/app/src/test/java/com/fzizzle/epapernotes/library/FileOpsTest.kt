@@ -134,6 +134,20 @@ class FileOpsTest {
         assertEquals(mapOf(newOne.path to 1, newTwo.path to 2), pages.map)
     }
 
+    /** Review 2.11: a folder that can't be read can't be checked for a name clash, so nothing goes in. */
+    @Test fun anUnreadableDestinationRefusesTheMove() {
+        val one = pdf("One.pdf")
+        val locked = File(root, "Locked").apply { mkdir() }
+        assertTrue(locked.setReadable(false))
+        try {
+            org.junit.Assume.assumeTrue("running as a user who can still read it", locked.listFiles() == null)
+            assertTrue(ops.move(one, locked) is FileOps.Result.Refused)
+            assertTrue(one.exists())
+        } finally {
+            locked.setReadable(true)
+        }
+    }
+
     @Test fun folderCannotMoveIntoItself() {
         val physics = File(root, "Physics").apply { mkdir() }
         val inside = File(physics, "Week 1").apply { mkdir() }

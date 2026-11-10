@@ -293,6 +293,34 @@ class DocumentSessionTest {
         assertEquals(0, journalStrokes(copy))
     }
 
+    /** The library mustn't clean a folder's temp files while a session there may still save (design-gaps Task 1). */
+    @Test fun anyOpenInIsTrueUntilTheSessionHasClosed() {
+        val folder = pdf.parentFile!!
+        assertFalse(DocumentSession.anyOpenIn(folder))
+        val s = session()
+        assertTrue(DocumentSession.anyOpenIn(folder))
+        assertFalse(DocumentSession.anyOpenIn(journals)) // only the folder the file is in
+        // Posted from the worker, the close task waits its turn: until it runs, the session counts.
+        scheduler.post {
+            s.close()
+            assertTrue(DocumentSession.anyOpenIn(folder))
+        }
+        assertFalse(DocumentSession.anyOpenIn(folder))
+    }
+
+    @Test fun aCopySessionCountsForItsFolderToo() {
+        fake = FakePdfPages(wasRepaired = true)
+        val elsewhere = tmp.newFolder("Week 2")
+        pdf = File(elsewhere, "Lecture.pdf").apply { writeText("original") }
+        val s = session()
+        s.addStroke(0, dot)
+        s.saveRepairedToCopy()
+        assertTrue(DocumentSession.anyOpenIn(elsewhere))
+        // Gone from the original's key too once it closes, so nothing is left behind.
+        s.close()
+        assertFalse(DocumentSession.anyOpenIn(elsewhere))
+    }
+
     @Test fun closeSavesAndClosesThePdf() {
         val s = session()
         s.addStroke(0, dot)

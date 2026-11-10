@@ -70,12 +70,17 @@ object SafeSave {
         }
     }
 
+    /** A temporary file untouched for this long is left from a crash, not a save under way. */
+    const val STALE_AFTER_MS = 10 * 60 * 1000L
+
     /**
-     * Deletes temporary files left in [folder] by a save that crashed. Subfolders aren't
-     * touched. Call it when no save can be running in that folder. Returns how many it removed.
+     * Deletes temporary files left in [folder] by a save that crashed: only ones last changed
+     * more than [olderThanMs] before [now], since a save may be writing a fresh one. Subfolders
+     * aren't touched, nor any other file. Call it when no session is open in that folder
+     * (DocumentSession.anyOpenIn). Returns how many it removed.
      */
-    fun cleanStale(folder: File): Int {
-        val stale = folder.listFiles { f -> f.isFile && isTempFile(f.name) } ?: return 0
+    fun cleanStale(folder: File, olderThanMs: Long = STALE_AFTER_MS, now: Long = System.currentTimeMillis()): Int {
+        val stale = folder.listFiles { f -> f.isFile && isTempFile(f.name) && f.lastModified() < now - olderThanMs } ?: return 0
         return stale.count { it.delete() }
     }
 }

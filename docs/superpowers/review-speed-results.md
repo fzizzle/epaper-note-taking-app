@@ -19,6 +19,26 @@ From `SpeedCheck` (`notes/app/src/androidTest/.../check/SpeedCheck.kt`). The ful
 | Read them again (what each later erase or lasso does) | 1,003 ms | 0 ms |
 | Save a page with 1,500 strokes (`saveTo`) | 160 ms | 155 ms |
 
+### Debug and release builds (design-gaps plan Task 3, 2026-11-10)
+
+The same `SpeedCheck`, on main after the readability plan, once on each build. The release build is the same code without the debug build's overhead (minify stays off).
+
+| | Debug | Release |
+|---|---|---|
+| Add a stroke, nearly empty page (median of strokes 1–50) | 2.65 ms | 0.76 ms |
+| Add a stroke at 500 on the page | 3.14 ms | 1.36 ms |
+| Add a stroke at 1,000 on the page | 4.14 ms | 2.36 ms |
+| Add a stroke at 1,500 on the page | 5.39 ms | 3.54 ms |
+| Add all 1,500 strokes | 5.9 s | 3.1 s |
+| Read the page's 1,500 strokes, first time | 135 ms | 35 ms |
+| Save a page with 1,500 strokes (`saveTo`) | 157 ms | 152 ms |
+| Owner's test file: render pages 2–10 (median) | 83 ms | 81 ms |
+| Owner's test file: add 50 strokes of 200 points | 542 ms | 161 ms |
+| Owner's test file: save with safe replace | 180 ms | 196 ms |
+| Owner's test file: reopen and read strokes | 57 ms | 27 ms |
+
+Rendering and saving are MuPDF's own C code, the same in both. On the release build `addingStrokesToAFullPage` fails its guard (a stroke at 1,500 under 3× one on a nearly empty page: 3.5 ms against 0.75 ms), only because the nearly empty case got so much faster: a full page adds the same 2.8 ms in both builds. The guard is for the debug build, which the tablet tests run on, and is left as it is.
+
 On a copy of the owner's test file (14.1 MB, 125 pages), unchanged by this work and listed for reference: open 2 ms, fingerprint of the whole file 11 ms, pages 2–10 render in 80 ms (median), save with safe replace 190 ms.
 
 ## Measured on the laptop

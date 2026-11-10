@@ -85,6 +85,8 @@ cd notes
 adb shell am instrument -w com.fzizzle.epapernotes.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
+For everyday use, `./gradlew :app:installRelease` instead of `installDebug`: the same app, faster, and signed with the same debug key from step 4, so it installs over the debug build (and back) without losing anything. The adb shortcuts (`--es path`, `--es root`) only work in the debug build.
+
 Things that have gone wrong before:
 
 - **Don't use `./gradlew :app:connectedDebugAndroidTest`.** It uninstalls the app when it finishes, which wipes its data as in step 4. Use the three commands above.
