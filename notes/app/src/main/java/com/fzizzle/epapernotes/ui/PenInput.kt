@@ -90,13 +90,23 @@ class PenInput(
     }
 
     /**
-     * A full, clean e-ink refresh of [view]. Fast-ink's own copy of the strokes can stay on the
-     * panel while the page zooms or moves underneath, showing up as stretched, skewed ghosts
-     * (owner's writing session). A full refresh wipes them. It flashes once, so it's only used
-     * after the page has moved.
+     * A clean e-ink refresh of [view] after the page has zoomed or moved. Fast-ink's own copy
+     * of the strokes can stay on the panel while the page moves underneath, showing up as
+     * stretched, skewed ghosts (owner's writing session); this wipes them. REGAL, the owner's
+     * choice (2026-11-10) over the full GC flash: no ghosts left, and gentler.
      */
     fun cleanRefresh(view: View) {
-        EpdController.invalidate(view, UpdateMode.GC)
+        EpdController.invalidate(view, AFTER_ZOOM)
+    }
+
+    /**
+     * Draws [view] again once fast-ink is paused for a new look of the page: a page turn, or
+     * the page redrawn after an erase, a move or an undo. Left to itself the page view gets
+     * GC, a hard flash; REGAL clears the old page with little flash (owner's choice, 2026-11-10,
+     * over GC and GU).
+     */
+    fun showPage(view: View) {
+        EpdController.invalidate(view, PAGE_SHOW)
     }
 
     /**
@@ -193,6 +203,10 @@ class PenInput(
 
     companion object {
         private const val THIN_GREY_PX = 2f
+
+        /** The panel updates the owner chose (readability plan, Task 4). */
+        private val PAGE_SHOW = UpdateMode.REGAL
+        private val AFTER_ZOOM = UpdateMode.REGAL
 
         /** How long posting stays open for [showAlone]: the strip's frame, drawn and composed, with room to spare. */
         private const val POST_OPEN_MS = 150L

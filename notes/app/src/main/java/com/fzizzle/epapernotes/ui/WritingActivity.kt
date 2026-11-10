@@ -183,6 +183,9 @@ class WritingActivity : Activity() {
     /** Whether the app records the stroke Onyx is following (see where it's set, in onPenDown). */
     @Volatile private var onyxOwnsStroke = true
 
+    /** True from a finger gesture starting to pinch or move the page until its last finger lifts. */
+    private var fingerGesture = false
+
     /** Fast-ink had to go off for a tool while the pen was down; the lift does it. */
     @Volatile private var pauseWhenLifted = false
 
@@ -193,6 +196,9 @@ class WritingActivity : Activity() {
      */
     private val resumeFastInk = Runnable {
         if (screenPenDown) return@Runnable
+        // A page shown mid-pinch (its picture arrived) mustn't turn fast-ink on under the
+        // fingers: the panel would stop following the page. The gesture's end resumes it.
+        if (fingerGesture) return@Runnable
         if (toolState.fastInkOn()) {
             pages.penHandler = null
             screenHasPen = false
@@ -358,10 +364,12 @@ class WritingActivity : Activity() {
         pages.fingersAllowed = { !pen.isWriting && !screenPenDown }
         pages.onFingerGestureStart = {
             Log.i(TAG, "fingers down: pause fast-ink")
+            fingerGesture = true
             handler.removeCallbacks(resumeFastInk) // a show's resume mustn't land mid-gesture
             pausePenAndRedraw()
         }
         pages.onFingerGestureEnd = { moved ->
+            fingerGesture = false
             // Moving a zoomed page with one finger changes where the page is without telling
             // onViewportChanged (that would call Onyx on every finger movement). Fast-ink is
             // off until here anyway, so telling the pen now is in time for the next stroke.
@@ -964,7 +972,9 @@ class WritingActivity : Activity() {
         showPending = false
         handler.removeCallbacks(retryShow)
         Log.i(TAG, "show: pause fast-ink")
-        pausePenAndRedraw()
+        // As pausePenAndRedraw, with the panel update chosen for a new look of the page.
+        pen.pause()
+        pen.showPage(pages)
         // While fast-ink is paused Onyx doesn't follow the pen. With the pen or highlighter
         // chosen nothing else did either, so a stroke begun in this short pause (erase a word,
         // carry straight on writing) was lost or cut. The screen takes the pen for the pause:
@@ -1201,7 +1211,7 @@ class WritingActivity : Activity() {
         /** The hairline under the strip. */
         private val RULE = Color.rgb(200, 200, 200)
 
-        /** A full e-ink refresh takes about this long; the pen comes back after it. */
+        /** The refresh after a zoom (REGAL) takes about this long; the pen comes back after it. The owner found the wait fine (2026-11-10). */
         const val CLEAN_REFRESH_MS = 450L
         private const val TAG = "Notes"
     }

@@ -193,7 +193,7 @@ class ThumbnailLoader(private val cache: ThumbnailCache, private val onReady: (P
         val full = PdfFile.open(pdf.file).use {
             val size = it.displaySize(0)
             // Narrower than usual for a very tall page, so no thumbnail is huge (THUMB_MAX_HEIGHT_PX).
-            it.render(0, thumbWidthPx(size.width, size.height))
+            it.render(0, thumbWidthPx(size.width, size.height), smoothInk = true)
         }
         try {
             try {

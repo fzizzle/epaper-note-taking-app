@@ -7,14 +7,16 @@ The four sections below come from the [project review of 2026-11-10](docs/superp
 From using the app on the tablet. Worked through on the branch `owner-feedback-fixes`. UI and UX points wait for a UI session: [UI feedback](docs/superpowers/ui-feedback.md).
 
 - [x] The writable area stops about 1 cm before the page edge. Found: at the sides the page is narrower than the screen (93 px each side), and ink can't be saved beside the page. That band is now shaded light grey (owner's choice).
-- [ ] Ink changes after it's written: a stroke thins out once you've finished it. Found: not the width (the saved width matches Onyx's own fountain width within 5%). Likely the saved stroke's smoothed grey edges, which look lighter on e-ink than Onyx's hard black line.
+- [x] Ink changes after it's written: a stroke thins out once you've finished it. Found (system log): about a second after the pen leaves, Onyx turns the app's own drawing back on ("Post enabled"), and the panel swaps Onyx's hard black line for the app's copy, whose grey rim was 34–45% of its pixels. Built: ink at full strength is drawn solid on screen at the same width (rim 1% on the owner's page); the page, highlighter and thumbnails stay smoothed. Costs 137 ms instead of 91 ms to draw a page of 1,500 strokes. Owner-checked 2026-11-10: it no longer thins. Tablet tests (84) and laptop tests (289) pass.
 - [x] Paste a copied item with a finger press: a long-press shows a Paste button there (owner's choice: confirmed). Copy and snip now say so in a toast.
 - [x] Turn the page with the volume buttons (also Page Up/Down).
 - [x] Palm presses cause screen refreshes. Fixed: a touch only pauses fast-ink once it pinches or moves a zoomed page, and fingers are ignored while the pen is near.
 - [x] Tool icons still don't respond to every tap. Fixed: Onyx stops passing the app's drawing to the panel while fast-ink is on; the strip now lets it through for a moment, with one flash per tap (owner's choice over no flash). Switching to the eraser no longer refreshes the screen.
 - [x] The battery level can't be checked in the app. Tried in the strip; the owner didn't want it there. The status bar comes back for a moment with a swipe down from the top.
 - [x] The eraser is slow (owner, 2026-11-10): the first erase or lasso on a page read all its strokes, 1 s for 1,500. Stroke text is now parsed in one pass: 131 ms.
-- [ ] Far too many refreshes overall. See the speed plan (Task 4) and the readability plan (Task 4).
+- [x] Far too many refreshes overall. Found: left to itself the page view got GC, a hard flash, for every page turn and every redraw after an erase, move or undo. Readability plan Task 4 (decision 4, approved 2026-11-10): compared on the tablet with the owner, who chose **REGAL** for both a page shown and the refresh after a zoom (over GC and GU): little flash, no ghost left. Fixed in, trial switch removed.
+- [x] A pinch right after writing was dropped: fingers within 0.5 s of the pen were all taken for the palm. A second finger now starts the pinch (a palm is one still touch). Checked with the owner: zooms at once, palm still ignored. Zooming within about a second of writing briefly shows fast-ink's copy of the new ink while the fingers move; the refresh at the lift wipes it (accepted for now).
+- [x] Fast-ink could switch back on mid-pinch when a page picture arrived during the gesture; it now waits for the fingers to lift.
 
 ## Review: bugs to fix first
 
@@ -69,7 +71,7 @@ From using the app on the tablet. Worked through on the branch `owner-feedback-f
 - [ ] Try the tablet's own display settings first, no code (Task 1).
 - [ ] Sharp text when zoomed in (Task 2).
 - [ ] A contrast setting (Task 3; skipped if Task 1 is enough).
-- [ ] Cleaner page turns and a gentler refresh after zooming (Task 4).
+- [x] Cleaner page turns and a gentler refresh after zooming (Task 4): REGAL for both, owner's choice (2026-11-10). Decision 4 approved; decisions 1–3 and 5 still open.
 - [ ] Trim margins (Task 5).
 - [ ] Owner session (Task 6, hard stop).
 
@@ -89,7 +91,7 @@ From using the app on the tablet. Worked through on the branch `owner-feedback-f
 - [x] Carry out plan 1, then review the speed check results (merged as PR #1).
 - [x] Owner decisions: go ahead with plan 2, shrink strokes first, warn before saving into a repaired file.
 - [x] Carry out plan 2: [writing screen](docs/superpowers/plans/2026-11-09-writing-screen.md), ending in an owner writing session (hard stop).
-  - [ ] Gentler refresh after zooming: the full flash works but feels a bit weird (owner, 2026-11-09). Try a softer e-ink mode that still clears fast-ink's leftovers.
+  - [x] Gentler refresh after zooming: REGAL instead of the full flash, the owner's choice (2026-11-10, readability plan Task 4).
   - [ ] Screen-recording test of writing (owner asked, 2026-11-09): record the screen while writing fast, to check no stroke ever disappears.
 - [ ] Plan 3: [tools](docs/superpowers/plans/2026-11-09-tools.md): eraser, lasso, snip, paste, undo/redo, page menu, pen buttons, ending in an owner tool session (hard stop).
   - [x] Owner approves the plan and its 11 decisions.

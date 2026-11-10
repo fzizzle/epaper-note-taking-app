@@ -142,7 +142,9 @@ class PageView(context: Context) : View(context) {
 
     private val placeholder = Paint().apply { color = Color.rgb(235, 235, 235) }
     private val pagePaint = Paint(Paint.FILTER_BITMAP_FLAG)
-    private val inkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeCap = Paint.Cap.ROUND }
+    // Not smoothed: solid, like Onyx's live ink and the page's renderings of it (PdfFile.render).
+    // This is what the panel shows of a new stroke once Onyx hands it back after a pause.
+    private val inkPaint = Paint().apply { strokeCap = Paint.Cap.ROUND }
     private val inkPath = Path() // used again for each see-through stroke, rather than made anew
 
     /** Lays out the document. [pdfToDisplay] is each page's PDF-to-display transform. UI thread. */
@@ -531,6 +533,18 @@ class PageView(context: Context) : View(context) {
             val penNear = event.eventTime - penSeenAt < PEN_NEAR_MS
             ignoringFingers = penNear || !fingersAllowed()
             if (ignoringFingers) android.util.Log.i("Notes", "fingers ignored: ${if (penNear) "the pen is near" else "the pen is writing"}")
+        }
+        // A second finger is never the palm, whose leaks are one still touch of 20-35 ms
+        // (probe results §4). Ignored only because the pen was just near, a pinch begun 0.3 s
+        // after writing was dropped whole (owner, 2026-11-10): it starts here instead, as if its
+        // first finger had just landed. Still never while the pen is writing.
+        if (ignoringFingers && event.actionMasked == MotionEvent.ACTION_POINTER_DOWN && fingersAllowed()) {
+            android.util.Log.i("Notes", "second finger: a pinch, not the palm")
+            ignoringFingers = false
+            pastEdge = 0f
+            movedThisGesture = false
+            gestureStarted = false
+            fingersDown = true
         }
         // Taken (true), so the rest of the gesture comes here too and is dropped the same way.
         if (ignoringFingers) return true
