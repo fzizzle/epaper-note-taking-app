@@ -1,5 +1,59 @@
 # To do
 
+The four sections below come from the [project review of 2026-11-10](docs/superpowers/review-2026-11-10.md). Each has a plan, written but not started, and each plan opens with decisions for the owner to approve. Suggested order: bugs, then speed, design gaps and readability in any order.
+
+## Review: bugs to fix first
+
+[Plan](docs/superpowers/plans/2026-11-10-review-bug-fixes.md), ending in an owner checklist (hard stop).
+
+- [ ] Owner approves the plan and its 6 decisions.
+- [ ] Stroke ends and corners are filled; old strokes are drawn again (Task 1).
+- [ ] The pen follows a zoomed page moved with one finger (Task 2).
+- [ ] A stroke is kept even when the journal can't be written (Task 3).
+- [ ] Nothing fails silently on the document's worker (Task 4).
+- [ ] A kill mid-save or a changed date no longer sets writing aside (Task 5).
+- [ ] The "damaged file" question pauses the pen; a copy is what's continued (Task 6).
+- [ ] A short zoomed page doesn't turn; the pen can't write beside the page (Task 7).
+- [ ] The pen's on, off and palm rules (Task 8; each checked on the tablet first).
+- [ ] Tall first pages get a capped thumbnail (Task 9).
+- [ ] Owner checklist (Task 10, hard stop).
+
+## Review: speed
+
+[Plan](docs/superpowers/plans/2026-11-10-review-speed.md). Needs Task 5 of the bug fixes first. Every change is measured on the tablet and kept only if it gains.
+
+- [ ] Owner approves the plan and its 3 decisions.
+- [ ] Measure: the "before" table (Task 1).
+- [ ] A save only rereads the file when something touched it (Task 2).
+- [ ] Adding a stroke costs the same on a full page (Task 3).
+- [ ] A finished stroke doesn't redraw the page (Task 4).
+- [ ] Page pictures are freed at once; fewer are made (Task 5).
+- [ ] Dragging a selection redraws less (Task 6).
+- [ ] A snip is written to the journal once (Task 7).
+- [ ] Small ones, then the results (Task 8).
+
+## Review: missing against the design
+
+[Plan](docs/superpowers/plans/2026-11-10-review-design-gaps.md). Start after the SD-card work is committed. Conflict copies stay with plan 5.
+
+- [ ] Owner approves the plan and its 5 decisions.
+- [ ] Stale temporary files are cleaned up (Task 1).
+- [ ] The library misses no change on disk (Task 2).
+- [ ] A release build, minSdk 30, adb shortcuts only in debug (Task 3).
+- [ ] The fast-ink rules, testable on the laptop (Task 4; only if decision 5 is approved).
+
+## Review: easier-to-read pages
+
+[Plan](docs/superpowers/plans/2026-11-10-review-readability.md), ending in an owner session (hard stop). Nothing in it changes the PDF.
+
+- [ ] Owner approves the plan and its 5 decisions.
+- [ ] Try the tablet's own display settings first, no code (Task 1).
+- [ ] Sharp text when zoomed in (Task 2).
+- [ ] A contrast setting (Task 3; skipped if Task 1 is enough).
+- [ ] Cleaner page turns and a gentler refresh after zooming (Task 4).
+- [ ] Trim margins (Task 5).
+- [ ] Owner session (Task 6, hard stop).
+
 ## Next up
 
 - [x] **Run the pen and touch probe:** [plan](docs/superpowers/plans/2026-11-07-pen-and-touch-probe.md)
