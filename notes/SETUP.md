@@ -95,7 +95,3 @@ Things that have gone wrong before:
 - **The app's log:** `adb logcat -s Notes`. The speed check's: `adb logcat -s SpeedCheck`.
 - **The tablet sleeps quickly** and then ignores commands: `adb shell input keyevent WAKEUP` first.
 - **Onyx's "side button erases" setting must be off** on the tablet for pen button 1 to reach the app as lasso.
-
-## 6. Carrying on with the speed work
-
-The branch is `review-speed`. What is done and what is left is in [docs/superpowers/review-speed-results.md](../docs/superpowers/review-speed-results.md), section "Still to do".

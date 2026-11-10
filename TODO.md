@@ -23,19 +23,19 @@ The four sections below come from the [project review of 2026-11-10](docs/superp
 
 [Plan](docs/superpowers/plans/2026-11-10-review-speed.md). Needs Task 5 of the bug fixes first. Every change is measured on the tablet and kept only if it gains.
 
-**In progress on the branch `review-speed` (pushed, not merged).** Code written, laptop tests (287) and tablet tests (77) pass; the pen checks are not done. Start from [the results so far](docs/superpowers/review-speed-results.md), section "Still to do".
+**Done and merged (2026-11-10).** Laptop tests (287), tablet tests (77) and the owner's pen checks pass. [Results](docs/superpowers/review-speed-results.md).
 
 - [x] Owner said "execute the speed plan" (2026-11-10), taken as approval of decisions 1 and 2.
 - [x] Measure: the "before" table (Task 1).
 - [x] A save only rereads the file when something touched it (Task 2): tried and dropped, it failed its tablet check.
 - [x] Adding a stroke costs the same on a full page (Task 3): 43.5 ms down to 5.5 ms at 1,500 strokes.
-- [ ] A finished stroke doesn't redraw the page (Task 4): built, needs the pen check.
-- [ ] Page pictures are freed at once; fewer are made (Task 5): built, needs the pen check.
-- [ ] Dragging a selection redraws less (Task 6): built, needs the pen check.
+- [x] A finished stroke doesn't redraw the page (Task 4): pen-checked 2026-11-10.
+- [x] Page pictures are freed at once; fewer are made (Task 5): pen-checked 2026-11-10.
+- [x] Dragging a selection redraws less (Task 6): pen-checked 2026-11-10.
 - [x] A snip is written to the journal once (Task 7): 5.6 MB down to 0.27 MB for a snip moved ten times.
-- [ ] Small ones (Task 8): built, needs the tablet check.
+- [x] Small ones (Task 8): checked on the tablet 2026-11-10.
 - [x] One complete run of the tablet tests on a free tablet (77 pass, 2026-11-10).
-- [ ] Owner pen checks (results, "Still to do" step 2), then merge.
+- [x] Owner pen checks: all fine (2026-11-10). Merged.
 
 ## Review: missing against the design
 
