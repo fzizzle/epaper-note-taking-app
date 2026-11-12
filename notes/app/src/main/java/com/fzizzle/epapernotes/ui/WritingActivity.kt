@@ -11,12 +11,14 @@ import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import android.view.Gravity
+import android.view.Menu
 import android.view.MotionEvent
 import android.view.View
 import android.text.InputType
 import android.view.WindowManager
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.FrameLayout
 import android.widget.PopupMenu
 import android.widget.TextView
 import android.widget.Toast
@@ -1116,9 +1118,11 @@ class WritingActivity : Activity() {
             setSelectAllOnFocus(true)
             setText((v.page + 1).toString())
         }
+        // Padded as the library's name fields are, so the number isn't against the edge.
+        val pad = LibraryLook.dp(this, 20)
         val dialog = AlertDialog.Builder(this)
             .setTitle("Go to page")
-            .setView(field)
+            .setView(FrameLayout(this).apply { setPadding(pad, pad / 2, pad, 0); addView(field) })
             .setPositiveButton("Go") { _, _ ->
                 val wanted = field.text.toString().toIntOrNull() ?: return@setPositiveButton
                 Log.i(TAG, "go to page $wanted")
@@ -1161,19 +1165,21 @@ class WritingActivity : Activity() {
     private fun openPageMenu() {
         if (pen.isWriting) return // pausing fast-ink now would cut the stroke
         val menu = PopupMenu(this, menuButton)
-        menu.menu.add("Rotate this page").setOnMenuItemClickListener { rotate(all = false); true }
-        menu.menu.add("Rotate all pages").setOnMenuItemClickListener { rotate(all = true); true }
+        // Two groups with a line between: rotating changes the PDF, the rest only the screen (UI review, decision 4).
+        menu.menu.add(ROTATE_GROUP, Menu.NONE, Menu.NONE, "Rotate this page").setOnMenuItemClickListener { rotate(all = false); true }
+        menu.menu.add(ROTATE_GROUP, Menu.NONE, Menu.NONE, "Rotate all pages").setOnMenuItemClickListener { rotate(all = true); true }
         // A submenu, not a second menu: it stays one menu to Android, so the dismiss below
         // comes once, when the last of it closes, and fast-ink stays paused in between.
-        val looks = menu.menu.addSubMenu("Contrast: ${contrast.label()}")
+        val looks = menu.menu.addSubMenu(LOOK_GROUP, Menu.NONE, Menu.NONE, "Contrast: ${contrast.label()}")
         Contrast.values().forEach { c ->
             looks.add(c.label()).setChecked(c == contrast).setOnMenuItemClickListener { chooseContrast(c); true }
         }
         looks.setGroupCheckable(0, true, true) // the one in use is ticked
-        menu.menu.add("Dark text as black").setCheckable(true).setChecked(darkTextAsBlack)
+        menu.menu.add(LOOK_GROUP, Menu.NONE, Menu.NONE, "Dark text as black").setCheckable(true).setChecked(darkTextAsBlack)
             .setOnMenuItemClickListener { chooseDarkTextAsBlack(!darkTextAsBlack); true }
-        menu.menu.add("Trim margins").setCheckable(true).setChecked(trimMargins)
+        menu.menu.add(LOOK_GROUP, Menu.NONE, Menu.NONE, "Trim margins").setCheckable(true).setChecked(trimMargins)
             .setOnMenuItemClickListener { chooseTrimMargins(!trimMargins); true }
+        menu.menu.setGroupDividerEnabled(true)
         dialogOpen = true
         pausePenAndRedraw()
         menu.setOnDismissListener {
@@ -1481,6 +1487,9 @@ class WritingActivity : Activity() {
         const val EXTRA_PATH = "path"
 
         /** After Copy or a snip, which otherwise only show as the Paste button appearing (owner, 2026-11-10). */
+        /** The ⋯ menu's groups: what changes the PDF, then what changes only the screen. */
+        private const val ROTATE_GROUP = 1
+        private const val LOOK_GROUP = 2
         private const val PASTE_HINT = "Copied. To paste, hold a finger on the page, or tap Paste."
         private val PAGE_KEYS = setOf(
             android.view.KeyEvent.KEYCODE_VOLUME_DOWN, android.view.KeyEvent.KEYCODE_VOLUME_UP,

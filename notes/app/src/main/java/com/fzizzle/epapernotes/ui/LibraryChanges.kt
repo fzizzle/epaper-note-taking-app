@@ -52,7 +52,11 @@ class LibraryChanges(
     /** The long-press menu on [tile]. [here] is the folder on show, where Move's chooser starts. */
     fun showMenu(root: File, here: File, tile: View, entry: Entry) {
         if (busy) return
+        // The tile stays grey while its menu is open, so it's clear which one the menu is for.
+        val marked = tile as? TileView
+        marked?.marked = true
         PopupMenu(activity, tile).apply {
+            setOnDismissListener { marked?.marked = false }
             menu.add("Rename").setOnMenuItemClickListener { askForName(root, entry); true }
             menu.add("Move").setOnMenuItemClickListener { askWhereTo(root, here, entry); true }
             menu.add("Delete").setOnMenuItemClickListener { askToDelete(root, entry); true }

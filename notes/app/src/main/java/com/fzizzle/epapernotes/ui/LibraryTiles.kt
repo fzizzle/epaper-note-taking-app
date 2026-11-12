@@ -181,9 +181,17 @@ class TileView(context: Context) : View(context) {
         invalidate() // pressed on, pressed off
     }
 
+    /** Grey as if pressed, while this tile's long-press menu is open (UI review, decision 4). */
+    var marked = false
+        set(value) {
+            if (value == field) return
+            field = value
+            invalidate()
+        }
+
     override fun onDraw(canvas: Canvas) {
         val entry = entry ?: return
-        if (isPressed) canvas.drawColor(LibraryLook.RULE)
+        if (isPressed || marked) canvas.drawColor(LibraryLook.RULE)
         val boxBottom = if (entry is FolderEntry) pad + markHeight(width - 2 * pad) else width - pad
         box.set(pad.toFloat(), pad.toFloat(), (width - pad).toFloat(), boxBottom.toFloat())
         when (entry) {
