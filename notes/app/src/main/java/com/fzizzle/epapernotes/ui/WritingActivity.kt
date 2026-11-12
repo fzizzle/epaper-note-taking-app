@@ -97,6 +97,8 @@ class WritingActivity : Activity() {
 
     /** The file being written into. It changes once, if the owner saves a damaged file's writing to a copy. */
     private lateinit var path: String
+    /** The open file's name, in the strip beside ←. */
+    private lateinit var fileName: TextView
     private var pageCount = 0
     private lateinit var pen: PenInput
     private lateinit var toolButtons: Map<Tool, StripButton>
@@ -308,7 +310,17 @@ class WritingActivity : Activity() {
         // the screen's edges.
         left.setPadding(gap + (side * 0.12f).toInt(), 0, 0, 0)
         right.setPadding(0, 0, gap, 0)
-        val strip = CentredStrip(this, gap = gap, start = left, middle = island, end = right, middleHeight = side).apply {
+        // The open file's name, cut from the front when long so its end ("workbook") shows. Set
+        // once here (and when writing moves to a copy): a strip redraw flashes while fast-ink is on.
+        fileName = TextView(this).apply {
+            text = File(path).nameWithoutExtension
+            textSize = 16f
+            setTextColor(LibraryLook.GRAPHITE)
+            isSingleLine = true
+            ellipsize = android.text.TextUtils.TruncateAt.START
+            setPadding(gap, 0, 0, 0)
+        }
+        val strip = CentredStrip(this, gap = gap, start = left, middle = island, end = right, middleHeight = side, title = fileName).apply {
             setBackgroundColor(Color.WHITE)
         }
         stripView = strip
@@ -1429,6 +1441,7 @@ class WritingActivity : Activity() {
                 // The session writes into the copy from here on, so the copy is what "Continue"
                 // and the remembered page must follow, not the damaged original.
                 path = event.copy.path
+                fileName.text = event.copy.nameWithoutExtension
                 pages.viewport?.let { lastPages.set(path, it.page) }
                 LibraryPrefs(this).lastOpened = event.copy
                 toast("Saved to ${event.copy.name}.")
