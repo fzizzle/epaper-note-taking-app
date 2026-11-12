@@ -11,6 +11,7 @@ import com.fzizzle.epapernotes.storage.FileIdentity
 import com.fzizzle.epapernotes.storage.SafeSave
 import com.fzizzle.epapernotes.tools.Eraser
 import com.fzizzle.epapernotes.tools.Lasso
+import com.fzizzle.epapernotes.tools.TapSelect
 import java.io.File
 import java.io.IOException
 import java.time.LocalDateTime
@@ -356,7 +357,10 @@ class DocumentSession(
     /** The items a lasso [loop] (PDF space) picks up on [page], given to [answer] on the worker. */
     fun select(page: Int, loop: List<Pt>, answer: (List<Item>) -> Unit) {
         var found = emptyList<Item>()
-        onWorker("select on page $page", then = { answer(found) }) { p -> found = Lasso.selects(p.items(page), loop) }
+        onWorker("select on page $page", then = { answer(found) }) { p ->
+            // A tap with the lasso picks the one item under it; a loop, everything inside.
+            found = if (TapSelect.isTap(loop)) TapSelect.pick(p.items(page), loop) else Lasso.selects(p.items(page), loop)
+        }
     }
 
     /** All of the app's items on [page], given to [answer] on the worker. */
