@@ -422,6 +422,7 @@ class WritingActivity : Activity() {
                 publishPenChoice()
             }
         }
+        pages.onHoverEraseTrail = { points -> onHoverEraseTrail(points) }
         pages.onStylusDown = { button ->
             shownPageUntouched = false
             hoverButton = button
@@ -775,16 +776,27 @@ class WritingActivity : Activity() {
     }
 
     /**
+     * UI thread. Button 2 pressed with the pen already close, then dragged: the pen never
+     * reported a touch, so neither Onyx nor the screen saw a stroke ([HoverErase]). Nothing
+     * was drawn, so a miss needs no wipe.
+     */
+    private fun onHoverEraseTrail(points: List<FloatArray>) {
+        val (page, screenToPdf) = penMapping ?: return
+        Log.i(TAG, "stroke page=$page tool=${Tool.ERASER} button=${PenButton.ERASER_END} points=${points.size} (button pressed while hovering)")
+        erase(page, points.map { screenToPdf.map(Pt(it[0], it[1])) }, wipeIfMissed = false)
+    }
+
+    /**
      * Removes what the [trail] (PDF space) touched once the pen has lifted (plan decision 5).
      * The page is then redrawn without it, which also wipes the grey trail. If nothing was
      * hit, no change comes, so the trail is wiped straight away.
      */
-    private fun erase(page: Int, trail: List<Pt>) {
+    private fun erase(page: Int, trail: List<Pt>, wipeIfMissed: Boolean = true) {
         val started = SystemClock.uptimeMillis()
         session.erase(page, trail) { hits ->
             Log.i(TAG, "erase page=$page hits=$hits ms=${SystemClock.uptimeMillis() - started}")
             // Posted before the PageChanged that follows a hit, so it's marked in time.
-            runOnUiThread { if (hits > 0) expectRedraw(page) else showWithoutFastInk() }
+            runOnUiThread { if (hits > 0) expectRedraw(page) else if (wipeIfMissed) showWithoutFastInk() }
         }
     }
 

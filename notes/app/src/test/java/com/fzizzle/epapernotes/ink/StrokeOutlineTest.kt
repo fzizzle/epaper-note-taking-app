@@ -12,32 +12,28 @@ class StrokeOutlineTest {
     private fun pen(vararg p: StrokePoint) = Stroke(StrokeKind.PEN, p.toList())
 
     @Test fun penWidthFollowsPressure() {
-        assertEquals(0.8f, StrokeStyle.of(StrokeKind.PEN).widthAt(0f), 1e-4f)
-        assertEquals(3.2f, StrokeStyle.of(StrokeKind.PEN).widthAt(1f), 1e-4f)
+        assertEquals(0.96f, StrokeStyle.of(StrokeKind.PEN).widthAt(0f), 1e-4f)
+        assertEquals(3.84f, StrokeStyle.of(StrokeKind.PEN).widthAt(1f), 1e-4f)
+        // Pressure squared: half pressure adds a quarter of the range.
+        assertEquals(0.96f + 2.88f / 4, StrokeStyle.of(StrokeKind.PEN).widthAt(0.5f), 1e-4f)
     }
 
     /**
-     * Onyx's fountain pen, measured on the tablet (FountainWidthCheck, 2026-11-10), draws a
-     * point 2 + (W + 1) × pressure² pixels wide for a set width W, whatever the speed. The saved
-     * ink must match it, or the stroke changes width when the app's copy replaces the live line
-     * (owner: it got skinny after picking another tool).
+     * The live line is the width the owner wants, so it stays as it was: Onyx gets
+     * W = 2.4 x px/pt - 1, as since PR #21. The saved ink is 1.2 x what that SDK curve
+     * predicted: photos of the same strokes before and after a tool tap (2026-11-12, findings
+     * log) showed the app's copy at 82-87% of the live line's width at the owner's usual
+     * pressure (0.5-0.8). Onyx's system draws its live line wider than its SDK's
+     * computeStrokePoints, which the earlier match was made against.
      */
-    @Test fun savedPenInkMatchesOnyxsLiveLine() {
+    @Test fun savedPenInkIsAFifthWiderThanTheSdkCurveAndTheLiveLineIsUnchanged() {
         val pen = StrokeStyle.of(StrokeKind.PEN)
-        fun onyx(w: Float, p: Float) = 2f + (w + 1f) * p * p
-        for (pxPerPt in listOf(1.9f, 2.5f, 3.1f, 5f, 10f)) {
-            val w = pen.liveFountainWidth(pxPerPt)
-            for (p in listOf(0f, 0.1f, 0.3f, 0.5f, 0.7f, 0.9f, 1f)) {
-                val saved = pen.widthAt(p) * pxPerPt
-                // How much wider pressure makes the line: the same at every zoom.
-                assertEquals("growth at $pxPerPt px/pt, p=$p", onyx(w, p) - onyx(w, 0f), saved - pen.widthAt(0f) * pxPerPt, 0.01f)
-                // Onyx's 2 px floor doesn't scale; at about normal size it's within half a pixel.
-                if (pxPerPt <= 3.1f) assertEquals("width at $pxPerPt px/pt, p=$p", onyx(w, p), saved, 0.5f)
-            }
+        assertEquals(5f, pen.liveFountainWidth(2.5f), 1e-4f)
+        assertEquals(2.4f * 2.925f - 1f, pen.liveFountainWidth(2.925f), 1e-4f)
+        fun sdkCurvePt(p: Float) = 0.8f + 2.4f * p * p
+        for (p in listOf(0f, 0.3f, 0.5f, 0.62f, 0.8f, 1f)) {
+            assertEquals("p=$p", 1.2f * sdkCurvePt(p), pen.widthAt(p), 1e-4f)
         }
-        // At 2.5 px/pt the live line is as wide as it was before this change, and matches exactly.
-        assertEquals(8f, onyx(pen.liveFountainWidth(2.5f), 1f), 0.01f)
-        assertEquals(onyx(pen.liveFountainWidth(2.5f), 0.4f), pen.widthAt(0.4f) * 2.5f, 0.01f)
     }
 
     @Test fun highlighterIsTranslucentYellow() {
@@ -48,7 +44,7 @@ class StrokeOutlineTest {
 
     @Test fun boundsPadByHalfWidth() {
         val b = StrokeOutline.bounds(pen(StrokePoint(100f, 100f, 1f), StrokePoint(200f, 100f, 1f)))
-        assertEquals(Box(98.4f, 98.4f, 201.6f, 101.6f), b) // full pressure: 3.2 pt wide
+        assertEquals(Box(98.08f, 98.08f, 201.92f, 101.92f), b) // full pressure: 3.84 pt wide
     }
 
     @Test fun widthScaleWidensBounds() {
