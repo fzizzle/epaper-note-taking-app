@@ -97,7 +97,7 @@ Navigation:
 
 **Highlighter.** A wide, see-through stroke that never hides the text under it, in yellow. One colour only.
 
-**Stroke eraser.** Touching any part of a stroke removes the whole stroke. This applies to pen strokes, highlighter strokes, and pasted snips.
+**Stroke eraser.** Touching any part of a stroke removes the whole stroke. This applies to pen strokes, highlighter strokes, and pasted snips. The page is drawn again, with one refresh, once the eraser rests: 0.4 s after the last erase and with button 2 let go or the pen lifted away, and 3 s after a run's first erase at the latest (owner's decision, 2026-11-12: one refresh for a run of erases, not one each).
 
 **Lasso select.** Draw a loop. Every ink stroke and pasted snip inside the loop gets selected. Printed PDF content is never selected. The selection can be:
 
@@ -132,7 +132,7 @@ Typical use is once per document: a deck of landscape slides gets rotated so it 
 
 ### 7.2 Autosave
 
-- No save button. Ink is written into the PDF automatically a short moment after the pen stops, when leaving the document, and when the app is backgrounded.
+- No save button. Ink is written into the PDF automatically about ten seconds after the pen stops (owner's decision, 2026-11-12; three seconds at first, which rewrote the whole file at every pause to think), when leaving the document, and when the app is backgrounded. Until then it's safe in the journal (section 7.3).
 - Saving never blocks or stutters the pen. It runs in the background.
 
 ### 7.3 Crash safety

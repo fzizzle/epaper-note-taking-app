@@ -28,7 +28,9 @@ object FolderListing {
         for (child in children) {
             if (isHidden(child.name)) continue
             if (child.isDirectory) {
-                folders += FolderEntry(child, child.name, countPdfs(child), countFolders(child))
+                // Read once for both counts: each read of a folder on the memory card costs a few milliseconds.
+                val inside = child.listFiles().orEmpty().filter { !isHidden(it.name) }
+                folders += FolderEntry(child, child.name, inside.count { isPdf(it.name) && it.isFile }, inside.count { it.isDirectory })
             } else if (isPdf(child.name) && child.isFile) {
                 pdfs += PdfEntry(child, child.name.dropLast(PDF_SUFFIX.length), child.length(), child.lastModified())
             }
@@ -36,12 +38,6 @@ object FolderListing {
         return folders.sortedWith(compareBy(NaturalOrder) { it.name }) +
             pdfs.sortedWith(compareBy(NaturalOrder) { it.name })
     }
-
-    private fun countPdfs(folder: File): Int =
-        folder.listFiles()?.count { !isHidden(it.name) && isPdf(it.name) && it.isFile } ?: 0
-
-    private fun countFolders(folder: File): Int =
-        folder.listFiles()?.count { !isHidden(it.name) && it.isDirectory } ?: 0
 
     private fun isHidden(name: String) = name.startsWith(".") || SafeSave.isTempFile(name)
 

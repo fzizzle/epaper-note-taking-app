@@ -452,6 +452,24 @@ class DocumentSessionTest {
         assertEquals(0, fake.itemCount)
     }
 
+    /**
+     * The autosave waits ten seconds since the efficiency plan: a kill inside that wait must
+     * cost nothing, because every stroke is in the journal from the moment it's recorded.
+     */
+    @Test fun aKillBeforeTheAutosaveLosesNothing() {
+        val first = session()
+        repeat(3) { first.addStroke(0, dot) }
+        // Killed: the delayed autosave never runs. A new session finds the three in the journal.
+        scheduler.delayed.clear()
+        fake = FakePdfPages()
+        events.clear()
+        session()
+        assertTrue(events.contains(SessionEvent.Replayed(3)))
+        assertEquals(3, fake.items(0).size)
+    }
+
+    @Test fun autosaveWaitsTenSeconds() = assertEquals(10_000L, DocumentSession.AUTOSAVE_DELAY_MS)
+
     @Test fun eraseSurvivesKillBeforeSave() {
         val s = session()
         s.addStroke(0, line)

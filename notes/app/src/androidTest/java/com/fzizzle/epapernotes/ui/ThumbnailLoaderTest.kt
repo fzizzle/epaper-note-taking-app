@@ -85,6 +85,28 @@ class ThumbnailLoaderTest {
         assertNotNull(cache.cached(other))
     }
 
+    /**
+     * A thumbnail read back from the cache is 16-bit, like one just rendered: half the memory.
+     * Android ignores the 16-bit wish for a PNG that has a see-through channel, so the cached
+     * PNG must be stored without one.
+     */
+    @Test fun aCachedThumbnailIsReadAt16Bit() {
+        val page = entry(TestPdfs.blank(dir, pages = 1))
+        loader.show(listOf(page), onScreen = listOf(page))
+        assertEquals(Bitmap.Config.RGB_565, next().second?.config) // rendered
+        assertNotNull(cache.cached(page))
+        // A second loader, as after the app starts again: memory is empty, the cache has it.
+        val again = LinkedBlockingQueue<Pair<PdfEntry, Bitmap?>>()
+        val second = ThumbnailLoader(cache) { pdf, bmp -> again += pdf to bmp }
+        try {
+            second.show(listOf(page), onScreen = listOf(page))
+            val fromCache = again.poll(10, TimeUnit.SECONDS)?.second ?: throw AssertionError("no thumbnail from the cache")
+            assertEquals(Bitmap.Config.RGB_565, fromCache.config)
+        } finally {
+            second.stop()
+        }
+    }
+
     @Test fun ordinaryPageKeepsTheUsualWidth() {
         val page = entry(TestPdfs.blank(dir, pages = 1))
         loader.show(listOf(page), onScreen = listOf(page))

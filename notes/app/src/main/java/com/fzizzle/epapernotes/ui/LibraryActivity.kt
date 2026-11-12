@@ -155,6 +155,11 @@ class LibraryActivity : Activity() {
         started = false
         watch.stop()
         thumbnails?.pause()
+        // Put on their tiles now, not dropped: a tile only gets its picture here or when it's
+        // bound again, and coming back to an unchanged folder binds nothing, so a picture
+        // dropped here would leave its tile grey.
+        main.removeCallbacks(showPendingThumbnails)
+        showPendingThumbnails.run()
     }
 
     override fun onDestroy() {
@@ -226,7 +231,7 @@ class LibraryActivity : Activity() {
             }
             setOnScrollListener(object : AbsListView.OnScrollListener {
                 override fun onScrollStateChanged(view: AbsListView, scrollState: Int) {}
-                override fun onScroll(view: AbsListView, first: Int, count: Int, total: Int) = tilesOnScreenChanged()
+                override fun onScroll(view: AbsListView, first: Int, count: Int, total: Int) = tilesOnScreenChanged(fromScroll = true)
             })
         }
         emptyNote = TextView(this).apply {
@@ -366,11 +371,22 @@ class LibraryActivity : Activity() {
      * The tiles on screen get their thumbnails first, and the folders among them are watched,
      * so a PDF arriving inside one updates its count (spec §6.1).
      */
-    private fun tilesOnScreenChanged() {
+    private fun tilesOnScreenChanged(fromScroll: Boolean = false) {
+        // The grid's scroll callback comes many times for one swipe, and again with nothing
+        // moved. Unless the tiles on screen or the folder's contents changed since the last
+        // call, there's nothing new to tell anyone. Every other caller is always acted on.
+        // The grid calls its scroll listener once while it's being set up, before `grid` holds it.
+        if (!::grid.isInitialized) return
+        val now = listOf(grid.firstVisiblePosition, grid.childCount, System.identityHashCode(adapter.entries), System.identityHashCode(thumbnails), started)
+        if (fromScroll && now == tilesLastReported) return
+        tilesLastReported = now
         if (started) watch.watchChildren(onScreen().filterIsInstance<FolderEntry>().map { it.file })
         val loader = thumbnails ?: return
         loader.show(adapter.entries.filterIsInstance<PdfEntry>(), onScreen().filterIsInstance<PdfEntry>())
     }
+
+    /** What [tilesOnScreenChanged] last acted on. */
+    private var tilesLastReported: List<Any> = emptyList()
 
     /** The entries whose tiles are on screen now. */
     private fun onScreen(): List<Entry> {
@@ -380,13 +396,32 @@ class LibraryActivity : Activity() {
         return entries.subList(first, end)
     }
 
-    private fun newThumbnails() = ThumbnailLoader(thumbnailCache) { pdf, bitmap -> thumbnailReady(pdf, bitmap) }
+    private fun newThumbnails() = ThumbnailLoader(
+        thumbnailCache,
+        // Asked afresh each time: a card can come and go while the app runs.
+        storageIn = { Volumes.holding(StorageVolumes.mounted(this), it) != null },
+    ) { pdf, bitmap -> thumbnailReady(pdf, bitmap) }
 
-    private fun thumbnailReady(pdf: PdfEntry, bitmap: Bitmap?) {
+    /**
+     * Thumbnails that have arrived and aren't on their tiles yet. They come one at a time, a
+     * few milliseconds apart, and each tile drawn by itself is a panel update of its own: a
+     * folder filled in tile by tile. Those arriving within [TILE_BATCH_MS] go on together.
+     */
+    private val pendingThumbnails = HashMap<PdfEntry, Bitmap?>()
+    private val showPendingThumbnails = Runnable {
         for (i in 0 until grid.childCount) {
             val tile = grid.getChildAt(i) as? TileView ?: continue
-            if (tile.entry == pdf) tile.showBitmap(bitmap)
+            val entry = tile.entry as? PdfEntry ?: continue
+            if (pendingThumbnails.containsKey(entry)) tile.showBitmap(pendingThumbnails[entry])
         }
+        Log.i(TAG, "thumbnails shown n=${pendingThumbnails.size}")
+        pendingThumbnails.clear()
+    }
+
+    private fun thumbnailReady(pdf: PdfEntry, bitmap: Bitmap?) {
+        val waiting = pendingThumbnails.isNotEmpty()
+        pendingThumbnails[pdf] = bitmap
+        if (!waiting) main.postDelayed(showPendingThumbnails, TILE_BATCH_MS)
     }
 
     private fun switchThumbnails(on: Boolean) {
@@ -467,5 +502,7 @@ class LibraryActivity : Activity() {
         const val EXTRA_ROOT = "root"
         /** The longest the first listing waits for a document's last save; it's usually well under a second. */
         const val LEFT_SAVE_WAIT_MS = 3000L
+        /** How long thumbnails are gathered before their tiles are drawn together (see pendingThumbnails). */
+        const val TILE_BATCH_MS = 120L
     }
 }

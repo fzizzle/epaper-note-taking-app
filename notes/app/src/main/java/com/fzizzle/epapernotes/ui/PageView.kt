@@ -111,6 +111,15 @@ class PageView(context: Context) : View(context) {
      */
     var quietTime: () -> Boolean = { false }
 
+    /**
+     * Whether a neighbour [page]'s picture may be made ahead now ([readyNeighbours]). With
+     * Trim margins the screen says no until the page's printed area is measured: asked for
+     * before, the picture came at the whole page's width and again at the trimmed one, two
+     * drawings and two pictures kept for every page turned to. The screen calls [readyAhead]
+     * once the measure is in.
+     */
+    var mayReadyAhead: (page: Int) -> Boolean = { true }
+
     var viewport: Viewport? = null
         private set
     private var sizes: List<SizePt> = emptyList()
@@ -423,6 +432,22 @@ class PageView(context: Context) : View(context) {
         if (token == quietPatchToken) quietPatchToken = NO_QUIET_PATCH else sharpPatchComing = false
     }
 
+    // True once the document has been left ([release]). UI thread.
+    private var released = false
+
+    /**
+     * The document is being left: every page picture and the sharp patch are freed now. Left
+     * to the garbage collector they stayed for minutes (about 135 MB after ten page turns),
+     * since it only sees their small Java side. A picture still being made arrives later and
+     * is freed as it comes; nothing is drawn from here on but the background. UI thread.
+     */
+    fun release() {
+        released = true
+        removeCallbacks(whenPenRests)
+        dropPatch()
+        bitmaps.clear()
+    }
+
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
         removeCallbacks(whenPenRests)
@@ -495,6 +520,7 @@ class PageView(context: Context) : View(context) {
 
     /** A rendering arrived from the worker. UI thread. */
     fun pageRendered(page: Int, widthPx: Int, bitmap: Bitmap) {
+        if (released) return bitmap.recycle()
         if (dropped.remove(page to widthPx)) {
             // Asked for before the page was left or rotated: never shown, so its memory goes back at once.
             bitmap.recycle()
@@ -570,7 +596,7 @@ class PageView(context: Context) : View(context) {
     fun regionRendered(page: Int, part: Box, token: Int, version: Int, bitmap: Bitmap) {
         val v = viewport
         // Asked for a view that has gone since (a zoom, a move, a turn, a change): never shown.
-        if (token != patchToken || v == null || page != v.page || part != v.visiblePagePart()) {
+        if (released || token != patchToken || v == null || page != v.page || part != v.visiblePagePart()) {
             bitmap.recycle()
             return
         }
@@ -652,8 +678,15 @@ class PageView(context: Context) : View(context) {
     /** At normal size, the pages either side of the one on show are made ahead, so turning to one is instant. */
     private fun readyNeighbours(v: Viewport) {
         if (v.zoom > 1.05f) return
-        if (v.page + 1 < v.pageCount) ensureRendered(v.page + 1, renderWidth(v, v.page + 1))
-        if (v.page > 0) ensureRendered(v.page - 1, renderWidth(v, v.page - 1))
+        for (page in listOf(v.page + 1, v.page - 1)) {
+            if (page in 0 until v.pageCount && mayReadyAhead(page)) ensureRendered(page, renderWidth(v, page))
+        }
+    }
+
+    /** Asks for the neighbours' pictures now, as a draw would: something they waited for has come ([mayReadyAhead]). UI thread. */
+    fun readyAhead() {
+        val v = viewport ?: return
+        if (!pinching) readyNeighbours(v)
     }
 
 
@@ -669,6 +702,7 @@ class PageView(context: Context) : View(context) {
 
     override fun onDraw(canvas: Canvas) {
         val started = System.nanoTime()
+        if (released) return canvas.drawColor(BESIDE_PAGE) // its pictures are gone
         val v = viewport ?: return canvas.drawColor(Color.WHITE)
         // Beside the page is shaded, so it's clear where the page, and writing, ends (owner,
         // 2026-11-10: the white band at the sides looked like page the pen wouldn't write on).

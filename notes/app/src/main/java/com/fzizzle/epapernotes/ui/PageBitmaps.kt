@@ -49,6 +49,15 @@ class PageBitmaps<B : Any>(
         }
     }
 
+    /** Drops every rendering, handing each back: the document is being left. */
+    @Synchronized
+    fun clear() {
+        val all = entries.values.toList()
+        entries.clear()
+        bytes = 0L
+        all.forEach(onEvicted)
+    }
+
     /** Drops every rendering of [page], because its ink changed. */
     @Synchronized
     fun invalidate(page: Int) {

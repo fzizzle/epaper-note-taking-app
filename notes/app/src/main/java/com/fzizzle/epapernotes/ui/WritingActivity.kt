@@ -90,6 +90,9 @@ class WritingActivity : Activity() {
     private val printedAreas = HashMap<Int, PrintedArea>()
     private val measuring = HashSet<Int>()
 
+    /** Pages whose measure has come back, with a box or without: their pictures may be made ahead (PageView.mayReadyAhead). */
+    private val measuredOnce = HashSet<Int>()
+
     /**
      * True from a page being arrived at until the pen or a finger gesture first touches it.
      * Only until then may its printed area, arriving, refit it: a page never moves under the
@@ -174,11 +177,29 @@ class WritingActivity : Activity() {
      * wait, and the next lift starts it again.
      */
     @Volatile private var showPending = false
-    private val retryShow = Runnable {
-        if (!showPending || pen.isWriting) return@Runnable
-        Log.i(TAG, "show retried after idle")
-        showWithoutFastInk()
+    private val retryShow = object : Runnable {
+        override fun run() {
+            if (!showPending || pen.isWriting) return
+            // Still in a run of erases (EraseSettle): look again when its wait is up.
+            val wait = eraseSettle.waitMs(SystemClock.uptimeMillis(), eraserHeld())
+            if (wait > 0) {
+                handler.postDelayed(this, wait)
+                return
+            }
+            Log.i(TAG, "show retried after idle")
+            showWithoutFastInk()
+        }
     }
+
+    /** A run of erases is shown once, when the eraser rests. UI thread. */
+    private val eraseSettle = EraseSettle()
+
+    /** When the pen was last seen hovering or landing ([hoverButton] is from then). UI thread. */
+    private var penSeenAt = 0L
+
+    /** Button 2 is held with the pen near the screen right now: the owner is still erasing. */
+    private fun eraserHeld() =
+        hoverButton == PenButton.ERASER_END && SystemClock.uptimeMillis() - penSeenAt < PEN_GONE_MS
 
     /**
      * The selection, as the PDF has it now: always the items of the change that was journaled
@@ -435,6 +456,7 @@ class WritingActivity : Activity() {
             },
         )
         pages.onStylusHover = { button ->
+            penSeenAt = SystemClock.uptimeMillis()
             if (button != hoverButton) {
                 hoverButton = button
                 publishPenChoice()
@@ -442,6 +464,7 @@ class WritingActivity : Activity() {
         }
         pages.onHoverEraseTrail = { points -> onHoverEraseTrail(points) }
         pages.onStylusDown = { button ->
+            penSeenAt = SystemClock.uptimeMillis()
             shownPageUntouched = false
             hoverButton = button
             publishPenChoice()
@@ -495,6 +518,7 @@ class WritingActivity : Activity() {
             }
         }
         pages.quietTime = { pen.drawsInk && !pen.isWriting }
+        pages.mayReadyAhead = { !trimMargins || (it in measuredOnce && it !in measuring) }
         // Its picture then reaches the panel the usual way (onPageShown, below).
         pages.onRefitReady = { refitShownPage() }
         pages.onPageShown = { page, version ->
@@ -509,7 +533,7 @@ class WritingActivity : Activity() {
                         heldCleanRefresh.run()
                     }
                 } else {
-                    showWithoutFastInk()
+                    showAfterErasing()
                 }
             }
         }
@@ -554,9 +578,13 @@ class WritingActivity : Activity() {
                 pdfToDisplay.indices.filter { it < transforms.size && transforms[it] != pdfToDisplay[it] }.forEach {
                     pages.pageRotated(it)
                     printedAreas.remove(it)
+                    measuredOnce.remove(it)
                     measuring.remove(it)
                 }
-                if (first != null && firstArea != null) printedAreas[first] = PrintedArea(firstArea, firstInk)
+                if (first != null && firstArea != null) {
+                    printedAreas[first] = PrintedArea(firstArea, firstInk)
+                    measuredOnce += first
+                }
                 pageCount = sizes.size
                 pageSizes = sizes
                 pdfToDisplay = transforms
@@ -696,12 +724,15 @@ class WritingActivity : Activity() {
         // The page turned since: layOutPages dropped this one and has asked again.
         if (page !in pdfToDisplay.indices || pdfToDisplay[page] != turnedAs) return
         measuring -= page
-        if (box == null) return
+        measuredOnce += page
+        if (box == null) return pages.readyAhead() // not measurable: its picture is made ahead at the whole page's width
         // The box in use until now: the whole page if it hadn't been measured. A page that comes
         // out whole (blank, full-bleed) is then no change, and costs no refit or panel update.
         val had = printedAreas[page]?.box ?: Box(0f, 0f, pageSizes[page].w, pageSizes[page].h)
         printedAreas[page] = PrintedArea(box, inkVersion)
-        if (!trimMargins || box == had) return
+        // A neighbour's picture waited for this measure (PageView.mayReadyAhead). With the box
+        // unchanged it's asked for here; a changed box is handed over below, which asks too.
+        if (!trimMargins || box == had) return pages.readyAhead()
         val v = pages.viewport ?: return
         val boxes = fitBoxes() ?: return
         if (page == v.page && mayRefitShownPage()) {
@@ -814,7 +845,14 @@ class WritingActivity : Activity() {
         session.erase(page, trail) { hits ->
             Log.i(TAG, "erase page=$page hits=$hits ms=${SystemClock.uptimeMillis() - started}")
             // Posted before the PageChanged that follows a hit, so it's marked in time.
-            runOnUiThread { if (hits > 0) expectRedraw(page) else if (wipeIfMissed) showWithoutFastInk() }
+            runOnUiThread {
+                if (hits > 0) {
+                    eraseSettle.erased(SystemClock.uptimeMillis())
+                    expectRedraw(page)
+                } else if (wipeIfMissed) {
+                    showWithoutFastInk()
+                }
+            }
         }
     }
 
@@ -1268,6 +1306,7 @@ class WritingActivity : Activity() {
             return
         }
         showPending = false
+        eraseSettle.shown()
         handler.removeCallbacks(retryShow)
         Log.i(TAG, "show: pause fast-ink")
         // As pausePenAndRedraw, with the panel update chosen for a new look of the page.
@@ -1281,6 +1320,20 @@ class WritingActivity : Activity() {
         screenHasPen = true
         handler.removeCallbacks(resumeFastInk)
         handler.postDelayed(resumeFastInk, SHOW_PAUSE_MS)
+    }
+
+    /**
+     * Shows a page picture that has just arrived, unless a run of erases is still going
+     * ([EraseSettle]): then once the eraser rests. Each show pauses fast-ink and flashes, and
+     * five erases in six seconds were five flashes. The wait goes through [retryShow], so a
+     * stroke begun meanwhile puts it off until the pen has lifted and rested, as for any show.
+     */
+    private fun showAfterErasing() {
+        val wait = eraseSettle.waitMs(SystemClock.uptimeMillis(), eraserHeld())
+        if (wait <= 0) return showWithoutFastInk()
+        showPending = true
+        handler.removeCallbacks(retryShow)
+        handler.postDelayed(retryShow, wait)
     }
 
     /** Any thread. Starts (or restarts) the wait before a skipped show runs. */
@@ -1415,6 +1468,7 @@ class WritingActivity : Activity() {
         super.onDestroy()
         val start = SystemClock.uptimeMillis()
         handler.removeCallbacksAndMessages(null)
+        if (::pages.isInitialized) pages.release()
         // onPause has done this already; once more in case anything turned the pen on since.
         if (::pen.isInitialized) pen.off()
         if (::session.isInitialized) session.close()
@@ -1515,6 +1569,9 @@ class WritingActivity : Activity() {
 
         /** How long the pen must rest before a show skipped while writing is tried again. */
         const val SHOW_RETRY_IDLE_MS = 500L
+
+        /** No hover or touch from the pen for this long: it has left the screen's range (hover events come many times a second). */
+        const val PEN_GONE_MS = 300L
 
         /** How wide a page is drawn to find its printed area (Trim margins): small, so it's quick. */
         private const val MEASURE_WIDTH_PX = 200

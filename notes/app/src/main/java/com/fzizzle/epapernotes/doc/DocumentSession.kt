@@ -88,6 +88,8 @@ class DocumentSession(
     private var pages: PdfPages? = null
     private var applied = 0 // how many of `unsaved` are in `pages`: always the first ones, in order
     private var applyFailed = false // the PDF no longer matches the journal, so it's never saved
+    private var inkCheckNs = 0L // time spent looking for (and redrawing) old faulty ink since opening, for the log
+    private var inkCheckRedrawn = 0
     private var inkRedrawn = false // strokes were drawn again (redrawFaultyInk) since the last save: save even with nothing journaled
     private var known: FileIdentity? = null // the file as it was when opened or last saved
     private var repairDecided = false
@@ -118,6 +120,9 @@ class DocumentSession(
         // this file's: another file's may be in the middle of being saved.
         SafeSave.tempFileFor(file).delete()
 
+        // Timed in three parts, like a save: reading the whole file for its identity, the
+        // journal, and MuPDF opening the PDF.
+        val started = System.nanoTime()
         val identity = try {
             FileIdentity.of(file)
         } catch (e: Exception) {
@@ -125,6 +130,7 @@ class DocumentSession(
             return
         }
 
+        val identityNs = System.nanoTime() - started
         val replay: List<Change>
         synchronized(lock) {
             val old = journal.read()
@@ -161,12 +167,18 @@ class DocumentSession(
         }
         journalReady.countDown()
 
+        val journalNs = System.nanoTime() - started - identityNs
         val opened = try {
             open(file)
         } catch (e: Exception) {
             events(SessionEvent.OpenFailed(e.message ?: "The file couldn't be opened."))
             return
         }
+        val totalNs = System.nanoTime() - started
+        System.err.println(
+            "DocumentSession: open ms=${totalNs / 1_000_000} identity=${identityNs / 1_000_000} journal=${journalNs / 1_000_000} " +
+                "pdf=${(totalNs - identityNs - journalNs) / 1_000_000}",
+        )
         pages = opened
         known = identity
         // The replayed changes, and any the pen has added since the journal opened.
@@ -203,13 +215,16 @@ class DocumentSession(
     private fun redrawFaultyInkFrom(page: Int, redrawnHere: Int = 0) {
         val p = pages ?: return // closed
         if (page >= p.pageCount) {
+            System.err.println("DocumentSession: ink check ms=${inkCheckNs / 1_000_000} pages=${p.pageCount} redrawn=$inkCheckRedrawn")
             if (inkRedrawn) scheduleAutosave()
             return
         }
         var redrawn = redrawnHere
         var more = false
+        val started = System.nanoTime()
         try {
             val chunk = p.redrawFaultyInk(page, REDRAW_CHUNK)
+            inkCheckRedrawn += chunk.redrawn
             if (chunk.redrawn > 0) inkRedrawn = true
             redrawn += chunk.redrawn
             more = chunk.more
@@ -217,6 +232,7 @@ class DocumentSession(
             // Never a reason to stop: the strokes just stay as they were.
             System.err.println("DocumentSession: redrawing ink on page $page failed: $e")
         }
+        inkCheckNs += System.nanoTime() - started
         if (more) return scheduler.post { redrawFaultyInkFrom(page, redrawn) }
         if (redrawn > 0) events(SessionEvent.InkRedrawn(page))
         scheduler.post { redrawFaultyInkFrom(page + 1) }
@@ -657,7 +673,14 @@ class DocumentSession(
     }
 
     companion object {
-        const val AUTOSAVE_DELAY_MS = 3000L
+        /**
+         * How long after the last change the PDF is saved. Ten seconds, not three (owner,
+         * 2026-11-12): every save writes the whole file again, 14 MB for a lecture deck, and
+         * at three seconds each pause to think was a save. Nothing waits on it for safety: a
+         * change is in the journal from the moment it's recorded, and leaving the document or
+         * the app saves at once ([saveNow]).
+         */
+        const val AUTOSAVE_DELAY_MS = 10_000L
         const val HISTORY_LIMIT = 200
         const val RETRY_DELAY_MS = 30_000L
 

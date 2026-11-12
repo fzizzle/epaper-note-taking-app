@@ -29,7 +29,12 @@ import java.io.ByteArrayOutputStream
  * is rendered or read from the cache (decision 10). [onReady] runs on the main thread, with
  * null for a tile on screen whose PDF can't be drawn: its tile drops any old picture.
  */
-class ThumbnailLoader(private val cache: ThumbnailCache, private val onReady: (PdfEntry, Bitmap?) -> Unit) {
+class ThumbnailLoader(
+    private val cache: ThumbnailCache,
+    /** Whether the storage a PDF lies on is in (ThumbnailCache.pruneMissing): asked on this loader's thread. */
+    private val storageIn: (java.io.File) -> Boolean = { true },
+    private val onReady: (PdfEntry, Bitmap?) -> Unit,
+) {
     private val memory = object : LruCache<String, Bitmap>(MEMORY_BYTES) {
         override fun sizeOf(key: String, value: Bitmap) = value.byteCount
     }
@@ -101,10 +106,11 @@ class ThumbnailLoader(private val cache: ThumbnailCache, private val onReady: (P
     private class Store(val pdf: PdfEntry) : Job
 
     private fun run() {
-        Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND)
+        var priority = Process.THREAD_PRIORITY_BACKGROUND
+        Process.setThreadPriority(priority)
         // Thumbnails of PDFs that are gone; it can trip over a file that vanishes as it reads.
         try {
-            cache.pruneMissing()
+            cache.pruneMissing(storageIn = storageIn)
         } catch (e: Exception) {
             Log.w(TAG, "thumbnail prune failed", e)
         }
@@ -117,6 +123,14 @@ class ThumbnailLoader(private val cache: ThumbnailCache, private val onReady: (P
                     if (next == null) lock.wait()
                 }
                 next
+            }
+            // A tile on screen is waiting for a Show: that runs at normal priority. At background
+            // priority the tablet keeps the thread to its slow cores, and a folder's tiles filled
+            // in one by one. The rest of the folder (Store) and the tidying stay in the background.
+            val wanted = if (job is Show) Process.THREAD_PRIORITY_DEFAULT else Process.THREAD_PRIORITY_BACKGROUND
+            if (wanted != priority) {
+                priority = wanted
+                Process.setThreadPriority(priority)
             }
             when (job) {
                 is Drop -> {
@@ -197,6 +211,9 @@ class ThumbnailLoader(private val cache: ThumbnailCache, private val onReady: (P
         }
         try {
             try {
+                // Stored without a see-through channel (the page is solid anyway): Android reads
+                // a PNG that has one at 32-bit whatever is asked, twice the memory of 16-bit.
+                full.setHasAlpha(false)
                 val png = ByteArrayOutputStream().also { full.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
                 cache.store(pdf, png)
             } catch (e: Exception) {

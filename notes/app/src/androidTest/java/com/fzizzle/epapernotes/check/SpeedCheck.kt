@@ -140,6 +140,44 @@ class SpeedCheck {
         }
     }
 
+    /**
+     * How long a page full of pen ink takes to draw, at the fitted width and at the widest a
+     * page picture gets (1.5 views). The ink is spread from the top-left corner to the
+     * bottom-right, so the solid-ink step (PdfFile.drawSolid) has the whole page to cover.
+     * Logs only (tag SpeedCheck).
+     */
+    @Test fun renderingAnInkedPage() {
+        val blank = TestPdfs.blank(context.cacheDir, pages = 1)
+        try {
+            log("==== Rendering an inked page: ${Build.MODEL}, Android ${Build.VERSION.RELEASE}, MuPDF 1.28.5")
+            PdfFile.open(blank).use { pdf ->
+                val size = pdf.displaySize(0)
+                repeat(INKED_STROKES) { n -> pdf.apply(AddItems(0, listOf(InkItem(ItemIds.next(), spreadStroke(n, size.width, size.height))))) }
+                // The same page must give the same number on any build: a way to see that a
+                // change to how ink is drawn changed no pixel.
+                val picture = pdf.render(0, FITTED_WIDTH_PX)
+                val pixels = IntArray(picture.width * picture.height).also { picture.getPixels(it, 0, picture.width, 0, 0, picture.width, picture.height) }
+                picture.recycle()
+                log("checksum at width $FITTED_WIDTH_PX: ${pixels.contentHashCode()}")
+                for (width in listOf(FITTED_WIDTH_PX, WIDEST_WIDTH_PX)) {
+                    val times = (1..5).map { timed { pdf.render(0, width).recycle() }.second }
+                    log("render $INKED_STROKES strokes at width $width: median ${median(times)} ms, all $times")
+                }
+            }
+        } finally {
+            blank.delete()
+        }
+    }
+
+    /** Stroke [n] of [INKED_STROKES], a short wiggle: they run from the page's top-left corner to its bottom-right. */
+    private fun spreadStroke(n: Int, pageWidth: Float, pageHeight: Float): Stroke {
+        val x = 20f + (pageWidth - 80f) * (n % 20) / 19f
+        val y = 20f + (pageHeight - 40f) * (n / 20) / (INKED_STROKES / 20 - 1)
+        return Stroke(StrokeKind.PEN, (0 until SHORT_POINTS).map { i ->
+            StrokePoint(x + i * 0.5f, y + 4f * sin(i / 5f), 0.3f + 0.5f * ((i % 20) / 20f))
+        })
+    }
+
     /** A short wiggle of [SHORT_POINTS] points, about a written letter wide. Fifty rows of thirty fill the page. */
     private fun shortStroke(n: Int): Stroke {
         val x = 30f + (n % 30) * 18.5f
@@ -178,6 +216,9 @@ class SpeedCheck {
     private companion object {
         const val SCREEN_WIDTH_PX = 1860 // the Note Air 6 C's portrait width
         const val STROKES = 50
+        const val INKED_STROKES = 300
+        const val FITTED_WIDTH_PX = 1742 // a page fitted to the screen, as the app's log shows it
+        const val WIDEST_WIDTH_PX = 2790 // 1.5 views: PageView.MAX_PICTURE_WIDTH
         const val POINTS = 200
         const val FULL_PAGE_STROKES = 1500
         const val SHORT_POINTS = 30

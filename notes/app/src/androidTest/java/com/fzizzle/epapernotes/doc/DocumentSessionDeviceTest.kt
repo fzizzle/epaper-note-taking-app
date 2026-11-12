@@ -94,7 +94,8 @@ class DocumentSessionDeviceTest {
         val pdf = TestPdfs.blank(dir)
         val run = Run(pdf, journals).apply { session.start() }
         run.session.addStroke(0, line)
-        run.waitFor { run.events.contains(SessionEvent.Saved) }
+        // The autosave itself, with nothing asking for a save: its wait, and time to write.
+        run.waitFor(timeoutMs = DocumentSession.AUTOSAVE_DELAY_MS + 6000) { run.events.contains(SessionEvent.Saved) }
         run.session.close()
         Thread.sleep(200)
         assertEquals(1, strokesIn(pdf))

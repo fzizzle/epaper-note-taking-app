@@ -70,8 +70,12 @@ class ThumbnailCache(private val dir: File, private val clock: () -> Long = Syst
     /**
      * Deletes the thumbnails of PDFs that no longer exist, plus leftover temp files older than
      * an hour and thumbnails with no recorded path. Runs at most once a day.
+     *
+     * [storageIn] says whether the storage a PDF lies on is there at all. A PDF on a memory
+     * card that's out can't be found, but it isn't gone: its thumbnail is kept, or one start
+     * of the app without the card would cost every thumbnail of the card's PDFs.
      */
-    fun pruneMissing(exists: (File) -> Boolean = File::isFile) {
+    fun pruneMissing(exists: (File) -> Boolean = File::isFile, storageIn: (File) -> Boolean = { true }) {
         val stamp = File(dir, STAMP)
         val now = clock()
         val last = stamp.takeIf { it.isFile }?.readText()?.trim()?.toLongOrNull()
@@ -81,7 +85,8 @@ class ThumbnailCache(private val dir: File, private val clock: () -> Long = Syst
         for (side in files) {
             if (!side.name.endsWith(".path")) continue
             val hash = side.name.removeSuffix(".path")
-            if (exists(File(side.readText()))) live += hash else side.delete()
+            val pdf = File(side.readText())
+            if (exists(pdf) || !storageIn(pdf)) live += hash else side.delete()
         }
         for (f in files) {
             val name = f.name

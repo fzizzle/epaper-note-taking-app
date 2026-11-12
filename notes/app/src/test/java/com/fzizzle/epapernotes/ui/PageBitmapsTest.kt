@@ -90,4 +90,17 @@ class PageBitmapsTest {
         d.put(0, 100, same)
         assertEquals(emptyList<String>(), back)
     }
+
+    @Test fun clearHandsEveryPictureBack() {
+        val back = mutableListOf<String>()
+        val cache = PageBitmaps<String>(100, { 10 }) { back += it }
+        cache.put(0, 100, "a")
+        cache.put(1, 100, "b")
+        cache.clear()
+        assertEquals(setOf("a", "b"), back.toSet())
+        assertNull(cache.get(0, 100))
+        // The total started again from 0: ten more pictures fit without any being pushed out.
+        repeat(10) { cache.put(2 + it, 100, "c$it") }
+        assertEquals(2, back.size)
+    }
 }
