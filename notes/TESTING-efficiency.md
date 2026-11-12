@@ -5,7 +5,7 @@ For the [efficiency plan](../docs/superpowers/plans/2026-11-12-efficiency.md). T
 ## E1. A run of erases (decision 1)
 
 1. Write five short words. Hold button 2 and erase them one after another, without long pauses.
-   - **Expected:** the erased words stay on screen while you go, then all go in one refresh when you let the button go or lift the pen away. At the latest three seconds after the first.
+   - **Expected:** the erased words stay on screen while you go, then all go in one refresh when you let the button go or lift the pen away. With the button held on and on, a refresh comes anyway about three seconds after the first erase, once the erase in hand is finished.
 2. Erase one word alone and lift the pen away.
    - **Expected:** it goes about half a second later.
 3. Erase a word and carry straight on writing.
@@ -42,6 +42,13 @@ For the [efficiency plan](../docs/superpowers/plans/2026-11-12-efficiency.md). T
 2. Scroll down and back up.
    - **Expected:** pictures for the new rows appear as they come into view.
 
-## E6. Anything slower?
+## E6. The memory card out
+
+1. Close the app, take the SD card out, and open the app.
+   - **Expected:** no crash: the note that the library folder is on the card, which isn't in.
+2. Put the card back and tap the note.
+   - **Expected:** the library, with its pictures there at once, not drawn again one by one.
+
+## E7. Anything slower?
 
 Use the app as you normally would for a session. Tell me about anything that feels slower or looks different from before.

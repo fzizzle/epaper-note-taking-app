@@ -114,4 +114,13 @@ class SafeSaveTest {
         assertEquals("old", f.readText())
         assertFalse(SafeSave.tempFileFor(f).exists())
     }
+
+    /**
+     * The library tidies the folder on show at every listing, and with the memory card out
+     * that folder isn't there. Nothing to remove, and above all no crash: the library must
+     * still come up to say the card is out.
+     */
+    @Test fun cleaningAFolderThatIsNotThereRemovesNothing() {
+        assertEquals(0, SafeSave.cleanStale(File(tmp.root, "card-that-is-out")))
+    }
 }

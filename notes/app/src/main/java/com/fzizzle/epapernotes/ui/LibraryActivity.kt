@@ -155,9 +155,11 @@ class LibraryActivity : Activity() {
         started = false
         watch.stop()
         thumbnails?.pause()
-        // Tiles ask the loader for their picture when they're next drawn, so nothing is lost.
+        // Put on their tiles now, not dropped: a tile only gets its picture here or when it's
+        // bound again, and coming back to an unchanged folder binds nothing, so a picture
+        // dropped here would leave its tile grey.
         main.removeCallbacks(showPendingThumbnails)
-        pendingThumbnails.clear()
+        showPendingThumbnails.run()
     }
 
     override fun onDestroy() {

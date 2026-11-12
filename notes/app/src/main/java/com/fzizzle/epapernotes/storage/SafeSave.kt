@@ -80,7 +80,8 @@ object SafeSave {
      * (DocumentSession.anyOpenIn). Returns how many it removed.
      */
     fun cleanStale(folder: File, olderThanMs: Long = STALE_AFTER_MS, now: Long = System.currentTimeMillis()): Int {
-        val stale = folder.listFiles { f -> isTempFile(f.name) && f.isFile && f.lastModified() < now - olderThanMs } // the name first: it asks the disk nothing ?: return 0
+        // The name is tested first: it asks the disk nothing, and nearly every file fails it.
+        val stale = folder.listFiles { f -> isTempFile(f.name) && f.isFile && f.lastModified() < now - olderThanMs } ?: return 0
         return stale.count { it.delete() }
     }
 }

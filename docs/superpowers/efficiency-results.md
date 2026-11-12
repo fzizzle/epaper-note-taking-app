@@ -47,7 +47,7 @@ Notes:
 
 ## Tests
 
-2026-11-12, on the branch's last code: 366 laptop tests pass (355 before, 11 new); 92 tablet tests pass (the debug build, `-e notPackage …check`).
+2026-11-12: 367 laptop tests pass (355 before, 12 new); 92 tablet tests pass (the debug build, `-e notPackage …check`), run before the two review fixes below, which are covered by a laptop test and a start of the app on the tablet.
 
 One tablet test had to change: `autosaveWritesTheFile` waited six seconds for an autosave that now comes after ten.
 
@@ -56,6 +56,12 @@ One tablet test had to change: `autosaveWritesTheFile` waited six seconds for an
 - The first try at skipping idle scroll callbacks crashed the library at start: the grid calls its scroll listener once while it's being built. Seen on the tablet before it was committed, and guarded.
 - Drawn a band at a time, MuPDF smooths the first and last rows of each band slightly differently from the same rows inside a bigger picture, so a stroke's edge was a pixel off where two bands met. Each band is now drawn with two spare rows above and below, and the result is the same as before to the pixel.
 - The plan's 0.4 s rest wouldn't have merged the owner's erases, which come 1.0–1.6 s apart with button 2 held. The wait now also holds while button 2 is held near the screen, for three seconds at most.
+
+## Found by the final review, and fixed
+
+- **A crash.** Task 9's edit to the stale-file check put a comment in front of its "folder can't be read" guard, switching the guard off. The library would have crashed at every start with the SD card out. Fixed, with a laptop test (`cleaningAFolderThatIsNotThereRemovesNothing`, which failed first) and a start on the tablet with the library folder deleted: the note shows, no crash.
+- **A tile could stay grey.** Thumbnails arriving in the last 120 ms before the library was left were dropped, and coming back to an unchanged folder never asked for them again. They are now put on their tiles as the library is left. No test: it's a timing of the screen that can't be driven.
+- Left as they are, minor: a held-back show after an erase can land inside the refresh that follows a zoom (an extra flash at worst); thumbnails of a card that never comes back stay in the cache.
 
 ## Not measured by a computer
 
