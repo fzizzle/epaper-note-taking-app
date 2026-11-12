@@ -300,7 +300,8 @@ class WritingActivity : Activity() {
         island.addDivider(height = side * 2 / 5, gap = gap)
         undoButton = button(island, Glyph.UNDO, "Undo") { undoOrRedo(undo = true) }.apply { isEnabled = false }
         redoButton = button(island, Glyph.REDO, "Redo") { undoOrRedo(undo = false) }.apply { isEnabled = false }
-        pasteButton = button(island, Glyph.PASTE, "Paste") { togglePaste() }.apply { visibility = View.GONE }
+        // Always on the island, greyed out until something is copied, so the tools never move (UI review, decision 3).
+        pasteButton = button(island, Glyph.PASTE, "Paste") { togglePaste() }.apply { isEnabled = false }
         menuButton = button(right, Glyph.MENU, "Page menu", gaps = 2) { openPageMenu() }
         previousButton = button(right, Glyph.PREVIOUS, "Previous page") { turn(forward = false) }
         right.addView(indicator, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.MATCH_PARENT).apply { marginEnd = gap })
@@ -1303,17 +1304,16 @@ class WritingActivity : Activity() {
     }
 
     /**
-     * The chosen tool picked out, and Paste there once there's something to paste, picked out
-     * while armed. Holding a pen button doesn't change it: showing that would flash the screen
+     * The chosen tool picked out, and Paste black once there's something to paste (grey before),
+     * picked out while armed. Holding a pen button doesn't change it: showing that would flash the screen
      * at every press (owner's choice, 2026-11-10). Returns whether anything changed.
      */
     private fun updateStrip(): Boolean {
         val shown = toolState.chosen
-        val pasteVisibility = if (toolState.showPaste) View.VISIBLE else View.GONE
         val changed = toolButtons.any { (tool, button) -> button.isSelected != (tool == shown) } ||
-            pasteButton.visibility != pasteVisibility || pasteButton.isSelected != toolState.pasteArmed
+            pasteButton.isEnabled != toolState.showPaste || pasteButton.isSelected != toolState.pasteArmed
         toolButtons.forEach { (tool, button) -> button.isSelected = tool == shown }
-        pasteButton.visibility = pasteVisibility
+        pasteButton.isEnabled = toolState.showPaste
         pasteButton.isSelected = toolState.pasteArmed
         return changed
     }
