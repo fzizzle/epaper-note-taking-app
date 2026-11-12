@@ -33,6 +33,19 @@ Passed: the library, the review fixes, palm rejection, the other tools, copy and
 
 - **The erased part of the screen flashes after each erase** (owner, 2026-11-12). Seen in the log for every erase that hits, by either route (Onyx's erase callback or the hover route): the page is drawn again without the item, then `showWithoutFastInk` pauses fast-ink for about 165 ms (`show: pause fast-ink` … `resume fast-ink`; SurfaceFlinger `toPause` … `running`, with `Post enabled!` and `HWEpdcManager ### EUS` as it starts), and the panel update in that pause is the flash. The same as the "each erase refreshes the page" note in [notes/TESTING-strip.md](notes/TESTING-strip.md). Noticed more now that button 2 erases every time. A quiet refresh without the pause was tried before: it only exists in a flashing mode.
 
+## UI review (2026-11-12)
+
+The UI and UX review on the tablet, and its fixes: [plan](docs/superpowers/plans/2026-11-12-ui-review.md), branch `ui-review`. Owner approved all seven decisions (2026-11-12).
+
+- [x] PDF tiles leave out the part of the name they all share: "workbook", "answer key" (Task 1).
+- [x] Folder tiles are a small folder mark, with the count clear of the name (Task 2).
+- [x] The writing strip shows the open file's name (Task 3).
+- [x] Paste stays on the island, grey until something is copied (Task 4).
+- [x] Menus outlined in black, teal gone, ⋯ split in two, the long-pressed tile marked, Go to page padded (Task 5).
+- [x] A shorter copy message after the first three, a Paste bubble like the strip, the pen mark inside its circle (Task 6).
+- [ ] Owner checklist: [notes/TESTING-ui-review.md](notes/TESTING-ui-review.md) (Task 7, hard stop).
+- [ ] Erase trail and erase flash: their own plan (see Known bugs above).
+
 ## Review: bugs to fix first
 
 [Plan](docs/superpowers/plans/2026-11-10-review-bug-fixes.md), ending in an owner checklist (hard stop).
