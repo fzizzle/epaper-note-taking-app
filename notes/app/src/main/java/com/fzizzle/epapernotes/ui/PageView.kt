@@ -284,26 +284,61 @@ class PageView(context: Context) : View(context) {
         return false
     }
 
-    /** Lays the pages out with boxes [refitLater] kept, if any, on the page just turned to. */
+    /**
+     * Lays the pages out with boxes [refitLater] kept, if any, on the page just turned to.
+     * A page turned to zoomed in ([keepZoom]) stays as zoomed, about the same middle.
+     */
     private fun takeWaitingFit() {
         if (!fitWaiting) return
         fitWaiting = false
-        val page = viewport?.page ?: return
-        viewport = Viewport(sizes, width, height, fit).also { it.goTo(page) }
+        val old = viewport ?: return
+        val fresh = Viewport(sizes, width, height, fit).also { it.goTo(old.page) }
+        if (old.zoom > 1.05f) {
+            // What was in the middle of the view goes back to the middle, at the same zoom.
+            val middle = old.screenToPage(width / 2f, height / 2f)
+            val at = fresh.pageToScreen().map(Pt(middle.x, middle.y))
+            fresh.zoomAround(old.zoom, at.x, at.y)
+            fresh.panBy(at.x - width / 2f, at.y - height / 2f)
+        }
+        viewport = fresh
     }
 
-    /** Previous or next page. Returns false at either end of the document. */
-    fun turn(forward: Boolean): Boolean {
+    /**
+     * Whether a page turn keeps the zoom and the place on the page (owner, 2026-11-12), for
+     * slides laid out alike; off, a turn always shows the whole page. The screen sets it from
+     * the reading settings.
+     */
+    var keepZoom = true
+
+    /** Back to the whole page, on the same page: the Fit button. False if it's whole already. UI thread. */
+    fun fitPage(): Boolean {
+        val v = viewport ?: return false
+        if (v.zoom <= 1.05f) return false
+        v.fit()
+        forgetRefit()
+        dropPatch()
+        invalidate()
+        onViewportChanged()
+        return true
+    }
+
+    /**
+     * Previous or next page. Returns false at either end of the document. Zoomed in, with
+     * [keepZoom], the new page is shown as zoomed, at the same place or where [land] says, and
+     * the part on screen is asked for sharp at once ([sharpPatchComing]).
+     */
+    fun turn(forward: Boolean, land: Land = Land.SAME_PLACE): Boolean {
         val v = viewport ?: return false
         val leaving = v.page
-        val moved = if (forward) v.next() else v.previous()
-        if (!moved) return false
+        val zoomed = keepZoom && v.zoom > 1.05f
+        if (!v.turn(forward, keepZoom = zoomed, land = land)) return false
         forgetRefit()
         takeWaitingFit()
         dropPatch()
         forget(leaving)
         invalidate()
         onViewportChanged()
+        if (zoomed && !fingersDown) askForPatch()
         return true
     }
 
@@ -677,7 +712,9 @@ class PageView(context: Context) : View(context) {
 
     /** At normal size, the pages either side of the one on show are made ahead, so turning to one is instant. */
     private fun readyNeighbours(v: Viewport) {
-        if (v.zoom > 1.05f) return
+        // Zoomed in, a turn usually comes after zooming out, so nothing is made ahead; unless
+        // the zoom stays through a turn. The pictures are at their fitted width either way.
+        if (v.zoom > 1.05f && !keepZoom) return
         for (page in listOf(v.page + 1, v.page - 1)) {
             if (page in 0 until v.pageCount && mayReadyAhead(page)) ensureRendered(page, renderWidth(v, page))
         }
@@ -929,7 +966,8 @@ class PageView(context: Context) : View(context) {
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 // Pushed well past the top or bottom of a zoomed page: turn the page.
-                if (abs(pastEdge) > height * TURN_PUSH_FRACTION && turn(forward = pastEdge > 0)) movedThisGesture = true
+                // Pushed on past the bottom lands at the next page's top, past the top at the previous page's bottom.
+                if (abs(pastEdge) > height * TURN_PUSH_FRACTION && turn(forward = pastEdge > 0, land = if (pastEdge > 0) Land.TOP else Land.BOTTOM)) movedThisGesture = true
                 pastEdge = 0f
                 fingersDown = false
                 // The page is still now: the part on screen, sharp, if zoomed in. Asked before

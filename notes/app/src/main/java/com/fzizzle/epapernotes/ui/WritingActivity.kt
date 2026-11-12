@@ -40,7 +40,9 @@ import com.fzizzle.epapernotes.ink.transformed
 import com.fzizzle.epapernotes.pdf.PdfFile
 import com.fzizzle.epapernotes.tools.Clipboard
 import com.fzizzle.epapernotes.tools.PenButton
+import com.fzizzle.epapernotes.tools.TapSelect
 import com.fzizzle.epapernotes.tools.Tool
+import com.fzizzle.epapernotes.tools.duplicateOf
 import com.fzizzle.epapernotes.tools.ToolState
 import com.fzizzle.epapernotes.tools.liveLine
 import com.fzizzle.epapernotes.tools.placedOn
@@ -63,6 +65,10 @@ class WritingActivity : Activity() {
     private lateinit var session: DocumentSession
     private lateinit var pages: PageView
     private lateinit var indicator: TextView
+    private val progressRule by lazy { ProgressRule(this) }
+
+    /** The pages with writing on them, for [progressRule]'s ticks: read once after opening, then kept up as pages change. UI thread. */
+    private val writtenPages = HashSet<Int>()
     private lateinit var lastPages: LastPageStore
 
     private val readingPrefs by lazy { ReadingPrefs(this) }
@@ -113,6 +119,7 @@ class WritingActivity : Activity() {
     private lateinit var redoButton: StripButton
     private lateinit var pasteButton: StripButton
     private lateinit var menuButton: StripButton
+    private lateinit var fitButton: StripButton
     private lateinit var island: IslandRow
     private lateinit var stripView: View
     private lateinit var previousButton: StripButton
@@ -289,6 +296,7 @@ class WritingActivity : Activity() {
         trimMargins = readingPrefs.trimMargins
 
         pages = PageView(this)
+        pages.keepZoom = readingPrefs.keepZoom
         indicator = TextView(this).apply {
             textSize = 20f
             setTextColor(Color.BLACK)
@@ -328,10 +336,15 @@ class WritingActivity : Activity() {
         redoButton = button(island, Glyph.REDO, "Redo") { undoOrRedo(undo = false) }.apply { isEnabled = false }
         // Always on the island, greyed out until something is copied, so the tools never move (UI review, decision 3).
         pasteButton = button(island, Glyph.PASTE, "Paste") { togglePaste() }.apply { isEnabled = false }
+        // Always there, grey at normal size, so nothing on the strip moves (as Paste). It only
+        // changes with a zoom, which refreshes the screen anyway.
+        fitButton = button(right, Glyph.FIT, "Fit the whole page") { fitPage() }.apply { isEnabled = false }
         menuButton = button(right, Glyph.MENU, "Page menu", gaps = 2) { openPageMenu() }
-        previousButton = button(right, Glyph.PREVIOUS, "Previous page") { turn(forward = false) }
+        previousButton = button(right, Glyph.PREVIOUS, "Previous page. Hold for the first page.") { turn(forward = false) }
+        previousButton.setOnLongClickListener { goToEnd(first = true); true } // true: the lift doesn't also turn a page
         right.addView(indicator, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.MATCH_PARENT).apply { marginEnd = gap })
-        nextButton = button(right, Glyph.NEXT, "Next page", gaps = 0) { turn(forward = true) }
+        nextButton = button(right, Glyph.NEXT, "Next page. Hold for the last page.", gaps = 0) { turn(forward = true) }
+        nextButton.setOnLongClickListener { goToEnd(first = false); true }
         // The arrow's tip sits closer to its tile's edge than the chevron's does (0.28 of the
         // tile against 0.40), so ← gets that much more room and the two marks sit evenly in from
         // the screen's edges.
@@ -356,7 +369,8 @@ class WritingActivity : Activity() {
             setBackgroundColor(Color.WHITE)
             addView(strip, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, stripHeight))
             // One hairline between the strip and the page.
-            addView(View(this@WritingActivity).apply { setBackgroundColor(RULE) }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 2))
+            // The line between the strip and the page, which also shows where the owner is (ProgressRule).
+            addView(progressRule, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, ProgressRule.HEIGHT_PX))
             addView(pages, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
             // The status bar is hidden (hideStatusBar), but a swipe can bring it back for a
             // moment, and other bars may stay: keep the strip clear of whatever is left.
@@ -427,7 +441,11 @@ class WritingActivity : Activity() {
             publishPenMapping()
             if (!fingers && documentShown) pen.setLimit(penLimit())
         }
+        // Read now, before anything stores a page for this file: was it ever opened before?
+        val openedBefore = lastPages.has(path)
         layOutPages(startPage = lastPages.get(path)) {
+            findWrittenPages()
+            offerRotation(openedBefore)
             pages.post {
                 documentShown = true
                 // If the app opened this document by itself at its start (LaunchOpen): it got here.
@@ -750,7 +768,11 @@ class WritingActivity : Activity() {
     }
 
     /** Only a page nothing has touched since it was arrived at, with the pen up, may be refitted: it must never move under the pen. */
-    private fun mayRefitShownPage() = trimMargins && shownPageUntouched && !pen.isWriting && !screenPenDown
+    // Nor a zoomed page: a refit lays it out whole again, and a page turned to zoomed in
+    // (PageView.keepZoom) would snap back to the whole page as its measure came in. It takes
+    // its box at the next turn instead (PageView.refitLater).
+    private fun mayRefitShownPage() =
+        trimMargins && shownPageUntouched && !pen.isWriting && !screenPenDown && (pages.viewport?.zoom ?: 1f) <= 1.05f
 
     /**
      * UI thread. Fits the page on show to its new box, if it still may be: returns false, and
@@ -796,7 +818,7 @@ class WritingActivity : Activity() {
         when (tool) {
             Tool.PEN, Tool.HIGHLIGHTER -> write(page, screenToPdf, tool, points)
             Tool.ERASER -> erase(page, points.map { screenToPdf.map(Pt(it[0], it[1])) })
-            Tool.LASSO -> lasso(page, points.map { screenToPdf.map(Pt(it[0], it[1])) })
+            Tool.LASSO -> lasso(page, screenToPdf, points)
             Tool.SNIP -> Unit // fast-ink is off while snipping (ToolState.fastInkOn): the selection layer has it
         }
     }
@@ -815,7 +837,12 @@ class WritingActivity : Activity() {
         val kind = if (tool == Tool.HIGHLIGHTER) StrokeKind.HIGHLIGHTER else StrokeKind.PEN
         val (_, stroke) = PenPoints.toStroke(kind, points) { x, y -> page to screenToPdf.map(Pt(x, y)) } ?: return
         session.addStroke(page, stroke)
-        runOnUiThread { pages.addStroke(page, stroke, redraw = !pen.drawsInk) }
+        runOnUiThread {
+            pages.addStroke(page, stroke, redraw = !pen.drawsInk)
+            // A page's first writing gives it its tick. Under fast-ink the panel takes the
+            // new line at the next page turn or refresh; nothing is forced for it.
+            if (writtenPages.add(page)) showProgressIfSafe()
+        }
     }
 
     /** Button 2's trail, from Onyx's erase callbacks, on Onyx's thread. */
@@ -859,8 +886,12 @@ class WritingActivity : Activity() {
     }
 
     /** Any thread. The items a lasso [loop] (PDF space) picks up become the selection. */
-    private fun lasso(page: Int, loop: List<Pt>) {
-        session.select(page, loop) { items ->
+    private fun lasso(page: Int, screenToPdf: Affine, points: List<FloatArray>) {
+        val onScreen = points.map { Pt(it[0], it[1]) }
+        // Tap or loop is told on the screen, where the hand made it, and a tap reaches as far
+        // on the screen at any zoom (TapSelect): both would be wrong measured on the page.
+        val tapReachPt = if (TapSelect.isTap(onScreen, TapSelect.TAP_SPAN_PX)) TapSelect.TAP_REACH_PX * screenToPdf.uniformScale() else null
+        session.select(page, onScreen.map { screenToPdf.map(it) }, tapReachPt) { items ->
             Log.i(TAG, "lasso page=$page selected=${items.size}")
             runOnUiThread {
                 // Nothing caught, or the page turned meanwhile: just wipe the grey loop.
@@ -983,6 +1014,16 @@ class WritingActivity : Activity() {
             showCopied()
         }
 
+        override fun duplicate() {
+            val page = selectedPage
+            val size = pageSizes[page]
+            val copies = duplicateOf(selected, pdfToDisplay[page], size.w, size.h)
+            val done = recordFromScreen(AddItems(page, copies)) as? AddItems ?: return
+            Log.i(TAG, "duplicated page=$page items=${done.items.size}")
+            // As after a paste: the copy is what's selected, ready to be dragged to its place.
+            setSelection(page, done.items, notShownYet = true)
+        }
+
         override fun delete() {
             recordFromScreen(RemoveItems(selectedPage, selected))
             Log.i(TAG, "deleted page=$selectedPage items=${selected.size}")
@@ -1021,7 +1062,7 @@ class WritingActivity : Activity() {
                 // a selection: ink like any other, recorded the way an Onyx stroke is.
                 Tool.PEN, Tool.HIGHLIGHTER -> write(page, screenToPdf, tool, points)
                 Tool.ERASER -> erase(page, pdf)
-                Tool.LASSO -> lasso(page, pdf)
+                Tool.LASSO -> lasso(page, screenToPdf, points)
                 Tool.SNIP -> Unit // the snip tool never traces: the layer has its rectangle
             }
         }
@@ -1157,39 +1198,23 @@ class WritingActivity : Activity() {
     /** "Go to page": type a number, which is quicker than tapping › through a long deck. */
     private fun askForPage() {
         val v = pages.viewport ?: return
-        val field = EditText(this).apply {
-            inputType = InputType.TYPE_CLASS_NUMBER
-            hint = "1 to $pageCount"
-            textSize = 22f
-            setSelectAllOnFocus(true)
-            setText((v.page + 1).toString())
-        }
-        // Padded as the library's name fields are, so the number isn't against the edge.
-        val pad = LibraryLook.dp(this, 20)
-        val dialog = AlertDialog.Builder(this)
-            .setTitle("Go to page")
-            .setView(FrameLayout(this).apply { setPadding(pad, pad / 2, pad, 0); addView(field) })
-            .setPositiveButton("Go") { _, _ ->
-                val wanted = field.text.toString().toIntOrNull() ?: return@setPositiveButton
-                Log.i(TAG, "go to page $wanted")
-                pages.goTo(wanted.coerceIn(1, pageCount) - 1)
-                showWithoutFastInk()
-            }
-            .setNegativeButton("Cancel", null)
-            .create()
-        // Fast-ink would freeze the dialog on screen, so it's off while the dialog is open.
+        // Fast-ink would freeze the pad on screen, so it's off while the pad is open.
         dialogOpen = true
         pausePenAndRedraw()
-        dialog.setOnDismissListener {
-            dialogOpen = false
-            // After the usual pause, not at once: the screen must first draw the page without
-            // the dialog, or fast-ink would freeze bits of it (or the old page) on the panel.
-            handler.removeCallbacks(resumeFastInk)
-            handler.postDelayed(resumeFastInk, SHOW_PAUSE_MS)
+        showPagePad(
+            this, current = v.page, pageCount = pageCount,
+            onDismiss = {
+                dialogOpen = false
+                // After the usual pause, not at once: the screen must first draw the page without
+                // the pad, or fast-ink would freeze bits of it (or the old page) on the panel.
+                handler.removeCallbacks(resumeFastInk)
+                handler.postDelayed(resumeFastInk, SHOW_PAUSE_MS)
+            },
+        ) { page ->
+            Log.i(TAG, "go to page ${page + 1}")
+            pages.goTo(page)
+            showWithoutFastInk()
         }
-        dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
-        dialog.show()
-        field.requestFocus()
     }
 
     /**
@@ -1225,6 +1250,13 @@ class WritingActivity : Activity() {
             .setOnMenuItemClickListener { chooseDarkTextAsBlack(!darkTextAsBlack); true }
         menu.menu.add(LOOK_GROUP, Menu.NONE, Menu.NONE, "Trim margins").setCheckable(true).setChecked(trimMargins)
             .setOnMenuItemClickListener { chooseTrimMargins(!trimMargins); true }
+        menu.menu.add(LOOK_GROUP, Menu.NONE, Menu.NONE, "Keep zoom when turning").setCheckable(true).setChecked(pages.keepZoom)
+            .setOnMenuItemClickListener {
+                readingPrefs.keepZoom = !pages.keepZoom
+                pages.keepZoom = readingPrefs.keepZoom
+                Log.i(TAG, "keep zoom ${pages.keepZoom}")
+                true
+            }
         menu.menu.setGroupDividerEnabled(true)
         dialogOpen = true
         pausePenAndRedraw()
@@ -1268,6 +1300,33 @@ class WritingActivity : Activity() {
         pages.viewport?.let { pageArrived(it.page) }
     }
 
+    /**
+     * A deck of sideways slides, opened for the first time with the tablet upright: offers to
+     * rotate all its pages (RotateOffer), once. Whatever the answer, the file now counts as
+     * opened, so it isn't asked again. Not while another question is open (a damaged file's):
+     * then it isn't asked at all, and Rotate all pages is under ⋯ as ever.
+     */
+    private fun offerRotation(openedBefore: Boolean) {
+        val screen = resources.displayMetrics
+        if (dialogOpen || isFinishing || !RotateOffer.shouldOffer(pageSizes, screen.widthPixels, screen.heightPixels, openedBefore)) return
+        lastPages.set(path, pages.viewport?.page ?: 0, pageCount)
+        Log.i(TAG, "offering to rotate all pages")
+        val dialog = AlertDialog.Builder(this)
+            .setMessage("These pages are sideways. Rotate all pages?")
+            .setPositiveButton("Rotate all") { _, _ -> rotate(all = true) }
+            .setNegativeButton("Leave them", null)
+            .create()
+        // As for the other questions: fast-ink would freeze it on screen.
+        dialogOpen = true
+        pausePenAndRedraw()
+        dialog.setOnDismissListener {
+            dialogOpen = false
+            handler.removeCallbacks(resumeFastInk)
+            handler.postDelayed(resumeFastInk, SHOW_PAUSE_MS)
+        }
+        dialog.show()
+    }
+
     /** Turns the page on show, or every page, 90° clockwise from where it is (spec §6.4), as one undo step. */
     private fun rotate(all: Boolean) {
         val here = pages.viewport?.page ?: return
@@ -1279,7 +1338,37 @@ class WritingActivity : Activity() {
     }
 
     /** UI thread: changes have reached the PDF on [changed] pages. */
+    /**
+     * Which pages have writing, for the progress line's ticks: one pass over the document on
+     * the worker, which decodes nothing (PdfPages.hasOwnItems). After opening.
+     */
+    private fun findWrittenPages() {
+        session.runOnDocument { pdf ->
+            val started = SystemClock.uptimeMillis()
+            val found = (0 until pdf.pageCount).filter { pdf.hasOwnItems(it) }
+            Log.i(TAG, "written pages n=${found.size} of ${pdf.pageCount} ms=${SystemClock.uptimeMillis() - started}")
+            runOnUiThread {
+                writtenPages += found
+                showProgressIfSafe()
+            }
+        }
+    }
+
+    /** [changed] pages may have gained or lost their writing (an erase can empty one): asked again, for their ticks. */
+    private fun recheckWritten(changed: Set<Int>) {
+        session.runOnDocument { pdf ->
+            val now = changed.filter { it in 0 until pdf.pageCount }.associateWith { pdf.hasOwnItems(it) }
+            runOnUiThread {
+                now.forEach { (page, has) -> if (has) writtenPages += page else writtenPages -= page }
+                showProgressIfSafe()
+            }
+        }
+    }
+
     private fun pagesChanged(changed: Set<Int>) {
+        // Not after a plain pen stroke (write() gave its page a tick already): this comes after
+        // every stroke, and asking the worker each time would be work for nothing.
+        changed.filter { it in redrawWhenChanged }.toSet().takeIf { it.isNotEmpty() }?.let(::recheckWritten)
         // Redrawn the usual way: once rendered, onPageShown shows it without fast-ink.
         changed.forEach { if (redrawWhenChanged.remove(it)) pages.pageChanged(it) }
         val target = goToWhenChanged
@@ -1292,7 +1381,45 @@ class WritingActivity : Activity() {
 
     private fun turn(forward: Boolean) {
         Log.i(TAG, "turn forward=$forward")
-        if (pages.turn(forward)) showWithoutFastInk()
+        if (pages.turn(forward)) showTurnedPage()
+    }
+
+    /**
+     * Shows the page just turned to. Still zoomed in (PageView.keepZoom), its sharp patch is
+     * on its way: the refresh waits for it, as after a pinch ([heldCleanRefresh]), so the turn
+     * ends in one panel update with the text sharp, not two.
+     */
+    private fun showTurnedPage() {
+        if (!pages.sharpPatchComing || pen.isWriting) return showWithoutFastInk()
+        Log.i(TAG, "show: pause fast-ink, refresh held for the sharp patch")
+        showPending = false
+        eraseSettle.shown()
+        handler.removeCallbacks(retryShow)
+        pausePenAndRedraw()
+        // As in showWithoutFastInk: the screen takes the pen for the pause, so a stroke begun in it is kept.
+        pages.penHandler = screenPen
+        screenHasPen = true
+        handler.removeCallbacks(resumeFastInk)
+        handler.removeCallbacks(heldCleanRefresh)
+        cleanRefreshHeld = true
+        handler.postDelayed(heldCleanRefresh, PATCH_WAIT_MS)
+    }
+
+    /** Holding ‹ or ›: the first or the last page, with one refresh. Not while the pen is down: the stroke would land on the new page. */
+    private fun goToEnd(first: Boolean) {
+        if (!documentShown || pen.isWriting || screenPenDown) return
+        val target = if (first) 0 else pageCount - 1
+        if (pages.viewport?.page == target) return
+        Log.i(TAG, "held arrow: go to page ${target + 1}")
+        pages.goTo(target)
+        showWithoutFastInk()
+    }
+
+    /** The Fit button: the whole page again, with one refresh. */
+    private fun fitPage() {
+        if (pen.isWriting || screenPenDown) return
+        Log.i(TAG, "fit")
+        if (pages.fitPage()) showWithoutFastInk()
     }
 
     /**
@@ -1313,6 +1440,7 @@ class WritingActivity : Activity() {
         Log.i(TAG, "show: pause fast-ink")
         // As pausePenAndRedraw, with the panel update chosen for a new look of the page.
         pen.pause()
+        showProgressIfSafe() // a tick held back while fast-ink was on
         pen.showPage(pages)
         // While fast-ink is paused Onyx doesn't follow the pen. With the pen or highlighter
         // chosen nothing else did either, so a stroke begun in this short pause (erase a word,
@@ -1354,6 +1482,7 @@ class WritingActivity : Activity() {
     private fun pausePenAndRedraw() {
         pen.pause()
         pages.invalidate()
+        showProgressIfSafe() // a tick held back while fast-ink was on
     }
 
     /** Choosing a tool lets go of the selection and cancels an armed paste. */
@@ -1500,12 +1629,29 @@ class WritingActivity : Activity() {
         Log.i(TAG, "leave: destroy ms=${SystemClock.uptimeMillis() - start}")
     }
 
+    /**
+     * A page gained or lost its tick on the progress line. The line is only redrawn now if
+     * the panel is showing the app's drawing anyway (fast-ink off): with fast-ink on, any
+     * redraw is a refresh of the whole screen, and a tick isn't worth one while the owner
+     * writes or erases. Otherwise it's drawn with the next page turn, zoom or show.
+     */
+    private fun showProgressIfSafe() {
+        if (pen.drawsInk) return
+        val v = pages.viewport ?: return
+        progressRule.show(v.page, pageCount, writtenPages)
+    }
+
     private fun updateIndicator() {
         val v = pages.viewport ?: return
-        indicator.text = "${v.page + 1} / $pageCount"
+        progressRule.show(v.page, pageCount, writtenPages)
+        // Only when it changed: setting a text, even the same one, draws it again, and a
+        // redraw of anything while fast-ink is on is a refresh of the whole screen.
+        val shown = "${v.page + 1} / $pageCount"
+        if (indicator.text.toString() != shown) indicator.text = shown
         indicator.contentDescription = "Page ${v.page + 1} of $pageCount. Tap to go to a page."
         previousButton.isEnabled = v.page > 0
         nextButton.isEnabled = v.page < pageCount - 1
+        fitButton.isEnabled = v.zoom > 1.05f
     }
 
     private fun show(event: SessionEvent) {

@@ -301,4 +301,81 @@ class ViewportTest {
         repeat(10) { v.panBy(0.3f, 0f) }
         assertEquals(before - 3f, v.pageToScreen().map(Pt(0f, 0f)).x, 0f)
     }
+
+    // ---- The Fit button, and zoom kept through a page turn (writing-screen design plan).
+
+    private fun pages(vararg sizes: SizePt) = Viewport(sizes.toList(), viewWidthPx = 1860, viewHeightPx = 2300)
+
+    @Test fun fitGoesBackToTheWholePageOnTheSamePage() {
+        val v = pages(portrait, portrait, portrait, portrait)
+        v.goTo(3)
+        v.zoomAround(3f, 100f, 100f)
+        v.fit()
+        assertEquals(1f, v.zoom, 0f)
+        assertEquals(3, v.page)
+        val fresh = pages(portrait, portrait, portrait, portrait).also { it.goTo(3) }
+        assertArrayEquals(fresh.pageBoundsPx(), v.pageBoundsPx(), 0.01f)
+    }
+
+    private fun zoomedSomewhere(v: Viewport) {
+        v.zoomAround(2f, 400f, 600f)
+        v.panBy(100f, 300f)
+    }
+
+    @Test fun aZoomedTurnKeepsZoomAndPlace() {
+        val v = pages(portrait, portrait, portrait)
+        zoomedSomewhere(v)
+        val part = v.visiblePagePart()
+        assertTrue(v.turn(forward = true, keepZoom = true))
+        assertEquals(1, v.page)
+        assertEquals(2f, v.zoom, 0f)
+        assertEquals(part, v.visiblePagePart())
+        assertTrue(v.turn(forward = false, keepZoom = true))
+        assertEquals(0, v.page)
+        assertEquals(part, v.visiblePagePart())
+    }
+
+    /** The next page is half as tall: the view can't stay where it was, and must not show beyond the page. */
+    @Test fun aTurnOntoASmallerPageStaysOnThePage() {
+        val half = SizePt(612f, 396f)
+        val v = pages(portrait, half)
+        v.zoomAround(2f, 900f, 2200f) // near the bottom of the tall page
+        assertTrue(v.turn(forward = true, keepZoom = true))
+        val part = v.visiblePagePart()
+        assertTrue("$part", part.x0 >= -0.01f && part.y0 >= -0.01f && part.x1 <= half.w + 0.01f && part.y1 <= half.h + 0.01f)
+        assertEquals(2f, v.zoom, 0f)
+    }
+
+    @Test fun landingAtTheTop() {
+        val v = pages(portrait, portrait)
+        v.zoomAround(2f, 900f, 2200f)
+        assertTrue(v.turn(forward = true, keepZoom = true, land = Land.TOP))
+        assertEquals(0f, v.visiblePagePart().y0, 0.5f)
+    }
+
+    @Test fun landingAtTheBottom() {
+        val v = pages(portrait, portrait)
+        v.goTo(1)
+        v.zoomAround(2f, 900f, 100f)
+        assertTrue(v.turn(forward = false, keepZoom = true, land = Land.BOTTOM))
+        assertEquals(portrait.h, v.visiblePagePart().y1, 0.5f)
+    }
+
+    @Test fun withoutKeepZoomATurnFitsThePage() {
+        val v = pages(portrait, portrait)
+        zoomedSomewhere(v)
+        assertTrue(v.turn(forward = true, keepZoom = false))
+        assertEquals(1f, v.zoom, 0f)
+        assertEquals(1, v.page)
+    }
+
+    @Test fun atTheLastPageNothingChanges() {
+        val v = pages(portrait, portrait)
+        v.goTo(1)
+        zoomedSomewhere(v)
+        val part = v.visiblePagePart()
+        assertFalse(v.turn(forward = true, keepZoom = true))
+        assertEquals(1, v.page)
+        assertEquals(part, v.visiblePagePart())
+    }
 }

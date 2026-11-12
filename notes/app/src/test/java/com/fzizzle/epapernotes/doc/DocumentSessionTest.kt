@@ -470,6 +470,21 @@ class DocumentSessionTest {
 
     @Test fun autosaveWaitsTenSeconds() = assertEquals(10_000L, DocumentSession.AUTOSAVE_DELAY_MS)
 
+    /** A tap with the lasso (a loop a couple of points across) selects the stroke under it, not what's "inside" it. */
+    @Test fun aTapWithTheLassoSelectsTheStrokeUnderIt() {
+        val s = session()
+        s.addStroke(0, line)
+        s.addStroke(0, dot)
+        var picked: List<Item>? = null
+        s.select(0, listOf(Pt(30f, 100f), Pt(31f, 100.5f), Pt(30.5f, 99f)), tapReachPt = 3f) { picked = it }
+        assertEquals(listOf(line), picked!!.map { (it as InkItem).stroke })
+        s.select(0, listOf(Pt(300f, 300f), Pt(301f, 300f)), tapReachPt = 3f) { picked = it }
+        assertEquals(emptyList<Item>(), picked)
+        // The same small scribble as a loop (no reach given) holds nothing inside it.
+        s.select(0, listOf(Pt(30f, 100f), Pt(31f, 100.5f), Pt(30.5f, 99f))) { picked = it }
+        assertEquals(emptyList<Item>(), picked)
+    }
+
     @Test fun eraseSurvivesKillBeforeSave() {
         val s = session()
         s.addStroke(0, line)

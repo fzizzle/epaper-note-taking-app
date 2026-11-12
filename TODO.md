@@ -46,6 +46,20 @@ The UI and UX review on the tablet, and its fixes: [plan](docs/superpowers/plans
 - [x] Owner checklist: [notes/TESTING-ui-review.md](notes/TESTING-ui-review.md): all checks pass (owner, 2026-11-12). [Results](docs/superpowers/ui-review-results.md).
 - [ ] Erase trail and erase flash: their own plan (see Known bugs above).
 
+## Writing screen design (2026-11-12)
+
+[Plan](docs/superpowers/plans/2026-11-12-writing-screen-design.md). Built on the branch `writing-screen-design`.
+
+- [x] Owner approved decisions 1–8 (2026-11-12).
+- [x] The line under the strip shows where you are and which pages have writing (Task 1).
+- [x] A Fit button (Task 2) and zoom kept through a page turn (Task 3). Tried on the tablet with an injected pinch (`check/ZoomCheck`).
+- [x] A number pad for Go to page (Task 4).
+- [x] Holding an arrow goes to the first or last page (Task 5).
+- [x] Duplicate on the selection's bar (Task 6). Not tried on the tablet: a selection needs the pen.
+- [x] A tap with the lasso selects the stroke under it (Task 7). Not tried on the tablet: it needs the pen.
+- [x] A sideways deck is offered a rotation the first time it's opened (Task 8).
+- [ ] **Owner checklist:** [notes/TESTING-writing-design.md](notes/TESTING-writing-design.md) (Task 9, hard stop).
+
 ## Library design (2026-11-12)
 
 [Plan](docs/superpowers/plans/2026-11-12-library-design.md). Built on the branch `library-design`.
