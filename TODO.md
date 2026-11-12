@@ -46,6 +46,20 @@ The UI and UX review on the tablet, and its fixes: [plan](docs/superpowers/plans
 - [x] Owner checklist: [notes/TESTING-ui-review.md](notes/TESTING-ui-review.md): all checks pass (owner, 2026-11-12). [Results](docs/superpowers/ui-review-results.md).
 - [ ] Erase trail and erase flash: their own plan (see Known bugs above).
 
+## Library design (2026-11-12)
+
+[Plan](docs/superpowers/plans/2026-11-12-library-design.md). Built on the branch `library-design`.
+
+- [x] Owner approved decisions 1–9 (2026-11-12).
+- [x] A PDF's page count and whether it has writing, kept with its thumbnail (Task 1).
+- [x] Tiles show how far you are and whether you've written (Task 2). The writing mark hasn't been seen on the tablet: it needs the pen.
+- [x] A colour for each course (Task 3). The plan's rule gave FLM and PBM the same colour; a course now takes the next free one.
+- [x] A folder of up to three PDFs is shown opened out (Task 4).
+- [x] Continue shows the page you left (Task 5).
+- [x] A list view, your place kept, and a hint in an empty folder (Task 6).
+- [x] A setting to start in the last document (Task 7).
+- [ ] **Owner checklist:** [notes/TESTING-library-design.md](notes/TESTING-library-design.md) (Task 8, hard stop).
+
 ## Efficiency (2026-11-12)
 
 [Plan](docs/superpowers/plans/2026-11-12-efficiency.md), from the performance review of 2026-11-12. [Results](docs/superpowers/efficiency-results.md).

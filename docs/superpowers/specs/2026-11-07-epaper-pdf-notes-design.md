@@ -69,6 +69,18 @@ It should be lightweight and fast, and it should do a small set of core things v
 - Tapping a PDF opens it **at the page where it was last left**. That position is remembered in the app's private storage, never in the owner's folders.
 - "Bulk import" is just copying many PDFs into a folder. There is no import feature.
 
+What the library shows beyond that (owner's decisions, 2026-11-12; [library design plan](../plans/2026-11-12-library-design.md)). Nothing here is written into the owner's folders: it comes from the app's own storage, from the PDF itself, or from the path.
+
+- **Small folders are opened out.** A folder holding one to three PDFs and no folders is shown as its PDFs, where the folder would be, each headed with the folder's name and then its own short name ("workbook", "answer key"). A topic that is just a workbook and its key then needs no tap to get into. The folder is still there on disk and is reached from a long-press on one of its PDFs ("Folder: ‹name›": Open, Rename, Move, Delete). A fourth PDF, or a folder inside, makes it a folder tile again. A switch in Settings, on unless turned off. This is the one place the screen doesn't show the tree exactly as it is on disk.
+- **How far you are.** Under the picture of a PDF you've opened, a thin bar filled to the page you left.
+- **Whether you've written on it.** A black corner on the picture when the PDF holds your ink. It's read from the PDF when its thumbnail is made, so it's right for a file that arrives from a laptop, and it needs thumbnails switched on.
+- **A colour per course.** Each folder directly inside the library folder gets one of eight colours, as a stripe beside its tile; inside a course, the line under the top strip takes its colour. A course takes the colour its code's letters give, or the next free one, so no two share while there are colours left.
+- **Continue** shows a picture of the page you left, with your ink, beside the file's name and "page 12 of 30". At the library folder only.
+- **A list view.** A button at the top switches between tiles and a compact list: name, "12 / 30", the bar, the writing mark, no pictures. One column upright, two sideways. The choice is kept.
+- **Coming back from a document**, its tile is brought into view if it isn't, and marked grey until the next touch.
+- **An empty folder** says how to fill it: copy PDFs into the folder it names, from a computer or a sync app.
+- **Start in the last document.** A switch in Settings, off unless turned on: starting the app opens the file you were last in, at its page, and Back leads to the library. If that open didn't finish the last time, the app starts in the library once and says so, so a file that crashes the app can't lock the owner out.
+
 ### 6.2 Writing screen
 
 Layout: the PDF pages fill the screen. A **thin top strip** (a little under 5% of the height, 4.4% since 2026-11-10, always visible, one row) holds, left to right:
@@ -194,4 +206,5 @@ The owner can overturn any of these:
 - ~~Pages scroll vertically and continuously.~~ Replaced by the owner on 2026-11-09: one page at a time (section 6.2).
 - Copy and delete live in a small action bar next to the selection, and Paste sits on the island, greyed out until there's something to paste (owner, 2026-11-12). You place a paste with a pen tap.
 - After a crash, strokes that never reached the PDF are replayed into a "my edits" copy if the file changed on disk in the meantime.
+- In the library (2026-11-12): three PDFs as the most a folder may hold and still be opened out; the eight course colours and how a course gets one; the look of the progress bar, the writing mark and the list rows; the Continue picture's size (96 dp tall); a file's writing is looked for in its first 300 pages.
 - ~~Portrait orientation is locked.~~ Replaced on 2026-11-09: the screen follows the tablet, because Android 16 overrides the lock (section 6.2).
