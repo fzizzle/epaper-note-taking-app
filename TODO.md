@@ -46,6 +46,24 @@ The UI and UX review on the tablet, and its fixes: [plan](docs/superpowers/plans
 - [x] Owner checklist: [notes/TESTING-ui-review.md](notes/TESTING-ui-review.md): all checks pass (owner, 2026-11-12). [Results](docs/superpowers/ui-review-results.md).
 - [ ] Erase trail and erase flash: their own plan (see Known bugs above).
 
+## Efficiency (2026-11-12)
+
+[Plan](docs/superpowers/plans/2026-11-12-efficiency.md), from the performance review of 2026-11-12. [Results](docs/superpowers/efficiency-results.md).
+
+- [x] Owner approved decisions 1–3 (2026-11-12).
+- [x] Measure: the "before" table (Task 1).
+- [x] With Trim margins a neighbour page is drawn once (Task 2): 23 page pictures for ten turns down to 13.
+- [x] Page pictures are freed when the document is left (Task 3): 145 MB of native memory down to 65 MB back in the library.
+- [x] A run of erases is shown once, when the eraser rests (Task 4): built, not yet tried with the pen.
+- [x] Autosave ten seconds after the pen stops (Task 5).
+- [x] The solid-ink step works in bands (Task 6): the same picture to the pixel, through a tenth of the memory.
+- [x] Thumbnails on screen are read at normal priority and shown in groups (Task 7): one pass over a folder's tiles, not five or six.
+- [x] Thumbnails survive a start with the SD card out (Task 8).
+- [x] Small ones (Task 9): 16-bit cached thumbnails, one read per subfolder, idle scroll callbacks skipped.
+- [ ] **Owner checklist:** [notes/TESTING-efficiency.md](notes/TESTING-efficiency.md) (Task 10, hard stop).
+
+Next, each with its plan and its own decisions: [library design](docs/superpowers/plans/2026-11-12-library-design.md), [writing screen design](docs/superpowers/plans/2026-11-12-writing-screen-design.md), [dotted pages and fresh attempts](docs/superpowers/plans/2026-11-12-pages.md).
+
 ## Review: bugs to fix first
 
 [Plan](docs/superpowers/plans/2026-11-10-review-bug-fixes.md), ending in an owner checklist (hard stop).

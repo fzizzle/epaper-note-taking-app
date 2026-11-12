@@ -47,4 +47,21 @@ Notes:
 
 ## Tests
 
-Laptop tests and tablet tests are run once more at the end (see the last section).
+2026-11-12, on the branch's last code: 366 laptop tests pass (355 before, 11 new); 92 tablet tests pass (the debug build, `-e notPackage …check`).
+
+One tablet test had to change: `autosaveWritesTheFile` waited six seconds for an autosave that now comes after ten.
+
+## Found on the way
+
+- The first try at skipping idle scroll callbacks crashed the library at start: the grid calls its scroll listener once while it's being built. Seen on the tablet before it was committed, and guarded.
+- Drawn a band at a time, MuPDF smooths the first and last rows of each band slightly differently from the same rows inside a bigger picture, so a stroke's edge was a pixel off where two bands met. Each band is now drawn with two spare rows above and below, and the result is the same as before to the pixel.
+- The plan's 0.4 s rest wouldn't have merged the owner's erases, which come 1.0–1.6 s apart with button 2 held. The wait now also holds while button 2 is held near the screen, for three seconds at most.
+
+## Not measured by a computer
+
+Task 4 (erases) and Task 5 (autosave) on the tablet, and how a folder filling in looks: the pen can't be scripted. They are in the [owner checklist](../../notes/TESTING-efficiency.md).
+
+## The two "only if slow" items
+
+- The old-ink check at opening: 18 ms for 125 pages. No plan needed.
+- Reading the whole file before page 1: 57 ms of a 133 ms opening for the 14 MB test copy, with the file already read once. Not timed after a restart of the tablet. No plan for now.
