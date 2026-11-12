@@ -58,6 +58,8 @@ class DocumentSession(
     private val clock: () -> LocalDateTime = LocalDateTime::now,
     /** How long to wait for an earlier session on this file to close. Tests shorten it. */
     private val previousSessionWaitMs: Long = PREVIOUS_SESSION_WAIT_MS,
+    /** How a file's identity is read: the whole file, every time. Tests count the reads. */
+    private val identityOf: (File) -> FileIdentity = FileIdentity::of,
 ) {
     /** The file being written into. It becomes the copy after a "save to a copy". */
     @Volatile var file: File = pdf
@@ -138,7 +140,7 @@ class DocumentSession(
         // journal, and MuPDF opening the PDF.
         val started = System.nanoTime()
         val identity = try {
-            FileIdentity.of(file)
+            identityOf(file)
         } catch (e: Exception) {
             events(SessionEvent.OpenFailed("${file.name} couldn't be read."))
             return
@@ -486,20 +488,35 @@ class DocumentSession(
         showPage: (PdfPages) -> Int,
     ) {
         scheduler.post {
+            // Throwable, not Exception, here and below: running out of memory must still send
+            // an answer, or the screen holds the pen until the owner leaves the file.
             try {
                 val p = pages ?: return@post events(SessionEvent.PageNotChanged("The file isn't open, so the page wasn't $what."))
                 if (page !in 0 until p.pageCount) return@post events(SessionEvent.PageNotChanged("There's no such page."))
+                // Timed like a save, so the owner's wait can be read from the log: bringing the
+                // PDF up to date and checking the file, changing the page, and saving.
+                val started = System.nanoTime()
                 applyPending()
                 val why = refuse(p) ?: whyPagesCantChange(p, what) // refuse first: it doesn't read the whole file
                 if (why != null) return@post events(SessionEvent.PageNotChanged(why))
+                val checkNs = System.nanoTime() - started
+                var changeNs = 0L
                 val saved = try {
                     change(p)
-                    save(newPageNumber = newNumber)
-                } catch (e: Exception) {
+                    changeNs = System.nanoTime() - started - checkNs
+                    // The file was found unchanged just above, in this same task, so the save
+                    // needn't read the whole file again to check.
+                    save(newPageNumber = newNumber, fileJustChecked = true)
+                } catch (e: Throwable) {
                     // MuPDF failed midway: the PDF may hold part of it, and it isn't saved.
                     System.err.println("DocumentSession: a page couldn't be $what: $e")
                     false
                 }
+                val totalNs = System.nanoTime() - started
+                System.err.println(
+                    "DocumentSession: page change ms=${totalNs / 1_000_000} check=${checkNs / 1_000_000} change=${changeNs / 1_000_000} " +
+                        "save=${(totalNs - checkNs - changeNs) / 1_000_000} $what=$saved",
+                )
                 if (saved) {
                     events(SessionEvent.HistoryChanged(canUndo = false, canRedo = false))
                     events(SessionEvent.PagesRenumbered(showPage(p)))
@@ -507,7 +524,7 @@ class DocumentSession(
                     openAgainFromTheFile()
                     events(SessionEvent.PageNotChanged("The file couldn't be saved, so the page wasn't $what."))
                 }
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 System.err.println("DocumentSession: changing pages failed: $e")
                 events(SessionEvent.PageNotChanged("Something went wrong, so the page wasn't $what."))
             }
@@ -533,7 +550,7 @@ class DocumentSession(
         pages = null
         val reopened = try {
             open(file)
-        } catch (e: Exception) {
+        } catch (e: Throwable) { // out of memory too: the owner must hear of it
             System.err.println("DocumentSession: opening again failed: $e")
             events(SessionEvent.OpenFailed("${file.name} couldn't be opened again. Your writing is kept safe and comes back when you open it."))
             return
@@ -555,7 +572,8 @@ class DocumentSession(
     /**
      * Runs [task] on the worker with the PDF brought up to date, then [then] whatever happened
      * (so a caller waiting for an answer always gets one). A failure, say a page that doesn't
-     * exist, is logged and goes no further: it must never take the worker down.
+     * exist, is logged and goes no further: it must never take the worker down. An Error (out
+     * of memory) still gets its answer sent first, then goes on to the scheduler's report.
      */
     private fun onWorker(what: String, then: () -> Unit = {}, task: (PdfPages) -> Unit) {
         scheduler.post {
@@ -567,11 +585,12 @@ class DocumentSession(
             } catch (e: Exception) {
                 // System.err reaches logcat on the tablet, and keeps this file free of Android code.
                 System.err.println("DocumentSession: $what failed: $e")
-            }
-            try {
-                then()
-            } catch (e: Exception) {
-                System.err.println("DocumentSession: answering $what failed: $e")
+            } finally {
+                try {
+                    then()
+                } catch (e: Exception) {
+                    System.err.println("DocumentSession: answering $what failed: $e")
+                }
             }
         }
     }
@@ -699,8 +718,11 @@ class DocumentSession(
      * note would let the next opening replay the changes after it onto the new file, and they
      * have the old numbers. Without it, a kill between the swap and [restartJournal] keeps the
      * journal aside instead, as for any changed file, and nothing is lost or misplaced.
+     *
+     * [fileJustChecked]: the caller has just found the file unchanged ([fileUnchanged]) in this
+     * same worker task, so the save doesn't read the whole file again to check.
      */
-    private fun save(newPageNumber: ((Int) -> Int?)? = null): Boolean {
+    private fun save(newPageNumber: ((Int) -> Int?)? = null, fileJustChecked: Boolean = false): Boolean {
         val p = pages ?: return false
         val inThisSave = applied
         if (inThisSave == 0 && !inkRedrawn && newPageNumber == null) return false
@@ -712,7 +734,7 @@ class DocumentSession(
             // file is still ours, writing the new PDF, and the rest (reading the new file,
             // the journal, moving it into place).
             val started = System.nanoTime()
-            if (!fileUnchanged()) return false
+            if (!fileJustChecked && !fileUnchanged()) return false
 
             // The new version is read once, while it's still the temporary file: moving it
             // into place changes nothing about it, so the file needn't be read again after.
@@ -720,7 +742,7 @@ class DocumentSession(
             var writeNs = 0L
             var next: FileIdentity? = null
             SafeSave.replace(file, beforeSwap = { temp ->
-                val result = FileIdentity.of(temp)
+                val result = identityOf(temp)
                 next = result
                 if (newPageNumber == null) markSaving(result, inThisSave)
             }) {
@@ -757,7 +779,7 @@ class DocumentSession(
      * into it stops. The changes stay in the journal (plan 5 adds the copy).
      */
     private fun fileUnchanged(): Boolean {
-        val now = try { FileIdentity.of(file) } catch (e: Exception) { null }
+        val now = try { identityOf(file) } catch (e: Exception) { null }
         if (now?.sameContentAs(known) == true) return true
         stoppedBecauseChanged = true
         events(SessionEvent.ChangedOnDisk)
@@ -819,6 +841,12 @@ class DocumentSession(
                 pageChanges += newPageNumber
                 pageNumbering++
             }
+            // Before the journal is touched: the file is the new one now, so what's in memory
+            // must match it even if the rewrite throws something unexpected. Otherwise changes
+            // left on old page numbers would be applied to the renumbered pages.
+            unsaved.clear()
+            unsaved.addAll(remaining)
+            applied -= saved
             try {
                 // A copy: if the rewrite below fails, later strokes must still go into a whole
                 // journal, with its header, not into a new file the next opening can't read.
@@ -830,16 +858,13 @@ class DocumentSession(
                 tellOwner = !journalBroken
                 journalBroken = true
             }
-            unsaved.clear()
-            unsaved.addAll(remaining)
-            applied -= saved
         }
         if (tellOwner) events(SessionEvent.JournalFailed)
     }
 
     /** Worker thread only. Continue in [copy], which has just been saved with everything applied. */
     private fun switchTo(copy: File) {
-        val base = FileIdentity.of(copy)
+        val base = identityOf(copy)
         synchronized(lock) {
             val remaining = unsaved.drop(applied)
             val oldJournal = journal

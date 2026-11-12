@@ -14,6 +14,7 @@ import java.time.LocalDateTime
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeFalse
 import org.junit.Before
@@ -30,6 +31,10 @@ class DocumentSessionTest {
     private var fake = FakePdfPages()
     /** How the session opens the PDF. A test can make it fail. */
     private var opening: (File) -> PdfPages = { fake }
+    /** Runs at each event after it's noted, so a test can make one fail. */
+    private var onEvent: (SessionEvent) -> Unit = {}
+    /** Every file whose identity the session read (each read goes through the whole file). */
+    private val identityReads = mutableListOf<File>()
     private val dot = Stroke(StrokeKind.PEN, listOf(StrokePoint(1f, 2f, 0.5f)))
     /** A line across y=100, from x=10 to x=50, far from [dot]. */
     private val line = Stroke(StrokeKind.PEN, (0..8).map { StrokePoint(10f + it * 5, 100f, 0.5f) })
@@ -46,8 +51,9 @@ class DocumentSessionTest {
         journalDir = journals,
         open = { opening(it) },
         scheduler = scheduler,
-        events = { events += it },
+        events = { events += it; onEvent(it) },
         clock = { LocalDateTime.of(2026, 11, 9, 14, 5) },
+        identityOf = { identityReads += it; FileIdentity.of(it) },
         // These tests "kill" a session by just starting another; don't wait out the dead one's turn.
         previousSessionWaitMs = 0,
     ).also { it.start() }
@@ -1319,5 +1325,140 @@ class DocumentSessionTest {
         s.erase(2, acrossLine, now) { hits = it }
         assertEquals(1, hits)
         assertTrue(strokesOn(2).isEmpty())
+    }
+
+    // Final review of the pages plan.
+
+    /** Running out of memory while adding (an Error, not an Exception) still answers, so the screen lets go of the pen. */
+    @Test fun anErrorWhileAddingAPageStillAnswers() {
+        val s = session()
+        s.addStroke(1, dot)
+        fake.failPageChangeWith = OutOfMemoryError("adding")
+        reopenFreshFromTheFile()
+        s.addPageAfter(0)
+        assertEquals(1, pageNotChanged().size)
+        assertEquals(5, fake.pageCount) // the PDF opened again from the file
+        assertEquals(listOf(dot), strokesOn(1))
+        assertEquals(1, journalStrokes())
+    }
+
+    @Test fun anErrorWhileOpeningAgainStillAnswers() {
+        val s = session()
+        s.addStroke(1, dot)
+        fake.failNextSave = true
+        opening = { throw OutOfMemoryError("opening") }
+        s.addPageAfter(0)
+        assertTrue(events.any { it is SessionEvent.OpenFailed })
+        assertEquals(1, pageNotChanged().size)
+        assertEquals(1, journalStrokes())
+    }
+
+    /** The screen's Remove waits on this answer: it comes even after an Error, and the Error is still reported. */
+    @Test fun anErrorReadingItemsStillAnswersAndIsReported() {
+        val s = session()
+        fake.duringItems = { throw OutOfMemoryError("items") }
+        var answered = false
+        assertThrows(OutOfMemoryError::class.java) { s.items(0) { answered = true } }
+        assertTrue(answered)
+    }
+
+    /**
+     * The journal can't be rewritten after a removal for a reason that isn't an IOException.
+     * The file has the new numbers by then, and so must what's left unsaved: a stroke from
+     * during the removal lands on its own page, not on the old number.
+     */
+    @Test fun aFailedRewriteAfterARemovalStillLeavesTheNewNumbers() {
+        fake.addedPages += 1
+        val s = session()
+        fake.duringSave = { fake.duringSave = null; s.addStroke(1, dot); s.addStroke(3, line) }
+        onEvent = { if (it is SessionEvent.EarlierWritingKept) throw IllegalStateException("can't keep it") }
+        s.removeAddedPage(1)
+        onEvent = {}
+        assertEquals(4, fake.pageCount)
+        assertEquals(listOf(line), strokesOn(2)) // the old page 3
+        assertEquals(1, fake.itemCount) // the stroke on the removed page went nowhere
+        assertTrue(events.contains(SessionEvent.PagesRenumbered(1)))
+        s.saveNow()
+        assertEquals(listOf(line), strokesOn(2))
+    }
+
+    /** The page change checks the file just before changing it, and its save trusts that check: the file is read once, not twice. */
+    @Test fun aPageChangeReadsTheFileOnce() {
+        val s = session()
+        s.addStroke(1, dot)
+        identityReads.clear()
+        s.addPageAfter(0)
+        assertEquals(1, identityReads.count { it == pdf })
+        assertEquals(SessionEvent.PagesRenumbered(1), events.last())
+        // An ordinary save still checks for itself.
+        s.addStroke(0, dot)
+        identityReads.clear()
+        s.saveNow()
+        assertEquals(1, identityReads.count { it == pdf })
+    }
+
+    /** A change recorded during the page change's save, applied to the PDF after it, under the new numbers. */
+    private fun recordDuringTheChange(s: DocumentSession, change: Change) {
+        fake.duringSave = { fake.duringSave = null; s.record(change) }
+    }
+
+    private val onPage2 = InkItem("a1", line)
+
+    @Test fun anEraseArrivingDuringAnAddMovesWithItsPage() {
+        val s = session()
+        s.record(AddItems(2, listOf(onPage2)))
+        recordDuringTheChange(s, RemoveItems(2, listOf(onPage2)))
+        s.addPageAfter(0)
+        assertEquals(listOf<Change>(RemoveItems(3, listOf(onPage2))), journalChanges())
+        assertTrue(strokesOn(3).isEmpty())
+    }
+
+    @Test fun anEraseArrivingDuringARemovalMovesWithItsPage() {
+        fake.addedPages += 1
+        val s = session()
+        s.record(AddItems(3, listOf(onPage2)))
+        recordDuringTheChange(s, RemoveItems(3, listOf(onPage2)))
+        s.removeAddedPage(1)
+        assertEquals(listOf<Change>(RemoveItems(2, listOf(onPage2))), journalChanges())
+        assertTrue(strokesOn(2).isEmpty())
+    }
+
+    @Test fun aMoveArrivingDuringAnAddMovesWithItsPage() {
+        val s = session()
+        s.record(AddItems(2, listOf(onPage2)))
+        val moved = InkItem("a1", dot)
+        recordDuringTheChange(s, ReplaceItems(2, listOf(onPage2), listOf(moved)))
+        s.addPageAfter(0)
+        assertEquals(listOf<Change>(ReplaceItems(3, listOf(onPage2), listOf(moved))), journalChanges())
+        assertEquals(listOf(dot), strokesOn(3))
+    }
+
+    @Test fun aMoveArrivingDuringARemovalMovesWithItsPage() {
+        fake.addedPages += 1
+        val s = session()
+        s.record(AddItems(3, listOf(onPage2)))
+        val moved = InkItem("a1", dot)
+        recordDuringTheChange(s, ReplaceItems(3, listOf(onPage2), listOf(moved)))
+        s.removeAddedPage(1)
+        assertEquals(listOf<Change>(ReplaceItems(2, listOf(onPage2), listOf(moved))), journalChanges())
+        assertEquals(listOf(dot), strokesOn(2))
+    }
+
+    /** Both of a rotation's maps move: the one it applies, and the one its undo would. */
+    @Test fun aRotationArrivingDuringAnAddMovesWithItsPages() {
+        val s = session()
+        recordDuringTheChange(s, RotatePages(mapOf(0 to 0, 2 to 0), mapOf(0 to 90, 2 to 90)))
+        s.addPageAfter(0)
+        assertEquals(listOf<Change>(RotatePages(mapOf(0 to 0, 3 to 0), mapOf(0 to 90, 3 to 90))), journalChanges())
+        assertEquals(mapOf(0 to 90, 3 to 90), fake.rotations)
+    }
+
+    @Test fun aRotationArrivingDuringARemovalMovesWithItsPages() {
+        fake.addedPages += 1
+        val s = session()
+        recordDuringTheChange(s, RotatePages(mapOf(0 to 0, 3 to 180), mapOf(0 to 90, 3 to 270)))
+        s.removeAddedPage(1)
+        assertEquals(listOf<Change>(RotatePages(mapOf(0 to 0, 2 to 180), mapOf(0 to 90, 2 to 270))), journalChanges())
+        assertEquals(mapOf(0 to 90, 2 to 270), fake.rotations)
     }
 }

@@ -15,6 +15,8 @@ class FakePdfPages(override var wasRepaired: Boolean = false, private val saveDe
     /** Every save throws this until it's cleared: an OutOfMemoryError, say, which isn't an Exception. */
     var failSaveWith: Throwable? = null
     var saves = 0
+    /** The next page added or removed throws this, before changing anything. */
+    var failPageChangeWith: Throwable? = null
     /** Runs in the middle of a save, to imitate the pen writing while the worker saves. */
     var duringSave: (() -> Unit)? = null
     /** Runs while items are read, to imitate the pen writing while the worker works out an erase. */
@@ -79,6 +81,7 @@ class FakePdfPages(override var wasRepaired: Boolean = false, private val saveDe
 
     /** As PdfFile does: later pages move up by one, with their items, rotation and faulty strokes. */
     override fun addDottedPage(after: Int) {
+        failPageChangeWith?.let { failPageChangeWith = null; throw it }
         checkPage(after)
         renumber { if (it > after) it + 1 else it }
         addedPages += after + 1
@@ -92,6 +95,7 @@ class FakePdfPages(override var wasRepaired: Boolean = false, private val saveDe
 
     /** As PdfFile does: only an added page, never the only page, and later pages move down by one. */
     override fun removeAddedPage(page: Int) {
+        failPageChangeWith?.let { failPageChangeWith = null; throw it }
         require(pageCount > 1) { "page $page is the only page" }
         require(page in addedPages) { "page $page wasn't added by the app" }
         pageItems.remove(page)
