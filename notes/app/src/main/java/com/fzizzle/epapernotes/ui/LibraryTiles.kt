@@ -89,9 +89,10 @@ class LibraryAdapter(private val bitmapFor: (PdfEntry) -> Bitmap?) : BaseAdapter
 
 /**
  * One tile, drawn with plain shapes: a square box holding the PDF's first page (or a grey page
- * while it's on its way, or a drawn page with thumbnails off) or a folder shape, then the name
- * on up to two lines, and for a folder how many PDFs are directly inside (decision 2). Every
- * tile is the same height, so the rows line up.
+ * while it's on its way, or a drawn page with thumbnails off), or for a folder a small folder
+ * mark in a band [FOLDER_MARK] of that height; then the name on up to two lines, and for a folder
+ * how many PDFs are directly inside (decision 2). Folder tiles are shorter, so a course's topics
+ * fit on one screen (UI review, decision 5); a row holding both takes the PDF tiles' height.
  */
 class TileView(context: Context) : View(context) {
     var entry: Entry? = null
@@ -125,6 +126,8 @@ class TileView(context: Context) : View(context) {
         if (entry == this.entry && label == this.label && bitmap === this.bitmap && thumbnails == this.thumbnails && pictures == this.pictures) return
         val sameLabel = label == this.label
         if (!sameLabel) nameLayout = null
+        // A reused tile turning from a folder into a PDF, or back, changes height.
+        if ((entry is FolderEntry) != (this.entry is FolderEntry)) requestLayout()
         // A file just written (say, the document just left) keeps its old picture until the
         // new one is drawn, rather than flashing grey for a moment on e-ink. Not after a
         // refresh: that's asked for when a picture looks wrong.
@@ -157,8 +160,15 @@ class TileView(context: Context) : View(context) {
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val width = MeasureSpec.getSize(widthMeasureSpec)
         val boxSide = width - 2 * pad
-        setMeasuredDimension(width, pad + boxSide + pad / 2 + 2 * nameLine + countLine + pad)
+        val height = if (entry is FolderEntry) pad + markHeight(boxSide) + pad / 2 + 2 * nameLine + countGap + countLine + pad
+        else pad + boxSide + pad / 2 + 2 * nameLine + pad
+        setMeasuredDimension(width, height)
     }
+
+    private fun markHeight(boxSide: Int) = (boxSide * FOLDER_MARK).toInt()
+
+    /** Between a folder's name (its two lines' room) and its count, so a two-line name never touches it. */
+    private val countGap = pad / 2
 
     /** The name is laid out for the tile's width: turning the tablet changes it. */
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
@@ -174,7 +184,8 @@ class TileView(context: Context) : View(context) {
     override fun onDraw(canvas: Canvas) {
         val entry = entry ?: return
         if (isPressed) canvas.drawColor(LibraryLook.RULE)
-        box.set(pad.toFloat(), pad.toFloat(), (width - pad).toFloat(), (width - pad).toFloat())
+        val boxBottom = if (entry is FolderEntry) pad + markHeight(width - 2 * pad) else width - pad
+        box.set(pad.toFloat(), pad.toFloat(), (width - pad).toFloat(), boxBottom.toFloat())
         when (entry) {
             is FolderEntry -> drawFolder(canvas)
             is PdfEntry -> drawPage(canvas)
@@ -198,23 +209,24 @@ class TileView(context: Context) : View(context) {
                 entry.folderCount > 1 -> "${entry.folderCount} folders"
                 else -> "No PDFs"
             }
-            canvas.drawText(count, width / 2f, textTop + 2 * nameLine - countPaint.fontMetrics.ascent, countPaint)
+            canvas.drawText(count, width / 2f, textTop + 2 * nameLine + countGap - countPaint.fontMetrics.ascent, countPaint)
         }
     }
 
-    /** A folder: its body and the tab on top, outlined in black. */
+    /** A folder: its body and the tab on top, outlined in black, [box] tall and centred across it. */
     private fun drawFolder(canvas: Canvas) {
-        val w = box.width()
-        val left = box.left + w * 0.06f
-        val right = box.right - w * 0.06f
-        val top = box.top + w * 0.22f
-        val bottom = box.bottom - w * 0.1f
-        val tab = w * 0.08f
+        val h = box.height()
+        val w = h * 1.3f
+        val left = box.centerX() - w / 2
+        val right = box.centerX() + w / 2
+        val top = box.top
+        val bottom = box.bottom
+        val tab = h * 0.12f
         path.reset()
         path.moveTo(left, top + tab)
         path.lineTo(left, top)
-        path.lineTo(left + w * 0.32f, top)
-        path.lineTo(left + w * 0.4f, top + tab)
+        path.lineTo(left + w * 0.36f, top)
+        path.lineTo(left + w * 0.44f, top + tab)
         path.lineTo(right, top + tab)
         path.lineTo(right, bottom)
         path.lineTo(left, bottom)
@@ -272,6 +284,8 @@ class TileView(context: Context) : View(context) {
 
     private companion object {
         const val A4_RATIO = 1.414f
+        /** A folder tile's mark band, as a share of the tile's inner width. */
+        const val FOLDER_MARK = 0.4f
     }
 }
 
