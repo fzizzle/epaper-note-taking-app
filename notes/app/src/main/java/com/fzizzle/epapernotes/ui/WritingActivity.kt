@@ -154,18 +154,21 @@ class WritingActivity : Activity() {
      * view changes, and copied by the pen thread when the pen touches down. Each stroke is
      * placed with the view as it was when it started, even if the owner zooms or turns the
      * page before Onyx hands the stroke over.
+     *
+     * It carries the session's page numbering the layout was read under ([laidOutNumbering]):
+     * a stroke Onyx hands over after a page was added or removed carries its page's old number,
+     * and the session moves it, or refuses an erase or a lasso, by this. Published together, so
+     * a pen landing just as the pages are renumbered can't pair a new numbering with an old page.
      */
-    @Volatile private var penMapping: Pair<Int, Affine>? = null
-    @Volatile private var strokeMapping: Pair<Int, Affine>? = null
+    @Volatile private var penMapping: PenMapping? = null
+    @Volatile private var strokeMapping: PenMapping? = null
 
     /**
-     * The session's page numbering (DocumentSession.pageNumbering) when the stroke under way
-     * began, latched with [strokeMapping]: a stroke Onyx hands over after a page was added or
-     * removed carries its page's old number, and the session moves it, or refuses an erase or
-     * a lasso, by this. [screenStrokeNumbering] and [hoverEraseNumbering] are the same for the
-     * screen's own strokes and for button 2 pressed while hovering.
+     * The session's page numbering (DocumentSession.pageNumbering) when the pages now laid out
+     * were read, on the worker. It changes only with a new layout, in the same step as
+     * [displayToPdf], so [publishPenMapping] always pairs the two. UI thread.
      */
-    @Volatile private var strokeNumbering = 0
+    private var laidOutNumbering = 0
 
     /**
      * The same for the tool: what a stroke would be if the pen landed now, worked out by the
@@ -254,6 +257,9 @@ class WritingActivity : Activity() {
      */
     @Volatile private var numbering = 0
 
+    /** When the page on show arrived ([pageArrived]): + ignores a tap just after the last page arrives. UI thread. */
+    private var shownPageArrivedAt = 0L
+
     /** Whether the page on show is one the app added (session.isAddedPage): only then does ⋯ offer to remove it. UI thread. */
     private var shownPageAdded = false
 
@@ -267,8 +273,7 @@ class WritingActivity : Activity() {
     private var screenStroke = false
 
     /** [penMapping] when the screen's stroke began: a traced stroke is placed with the view as it was then. UI thread. */
-    private var screenStrokeMapping: Pair<Int, Affine>? = null
-    private var screenStrokeNumbering = 0
+    private var screenStrokeMapping: PenMapping? = null
 
     /** Latched when button 2 is pressed with the pen hovering, where a hover erase begins (UI thread). */
     private var hoverEraseNumbering = 0
@@ -496,8 +501,7 @@ class WritingActivity : Activity() {
         pen = PenInput(
             pages,
             onPenDown = {
-                strokeMapping = penMapping
-                strokeNumbering = session.pageNumbering
+                strokeMapping = penMapping // with its numbering
                 strokeChoice = penChoice
                 // The rule: whatever Onyx draws, the app records. Onyx draws while fast-ink is
                 // on, whoever is meant to have the pen, so only a stroke that lands with fast-ink
@@ -515,7 +519,7 @@ class WritingActivity : Activity() {
         pages.onStylusHover = { button ->
             penSeenAt = SystemClock.uptimeMillis()
             if (button != hoverButton) {
-                if (button == PenButton.ERASER_END) hoverEraseNumbering = session.pageNumbering
+                if (button == PenButton.ERASER_END) penMapping?.let { hoverEraseNumbering = it.numbering }
                 hoverButton = button
                 publishPenChoice()
             }
@@ -620,6 +624,8 @@ class WritingActivity : Activity() {
             val file = pdf as PdfFile
             // Throwable: running out of memory too. The worker would swallow it, and the screen,
             // waiting for this answer (a page change holds the pen until it comes), would never hear.
+            // On the worker, where pages are added and removed: exactly the numbering these pages have.
+            val readUnder = session.pageNumbering
             val (count, read) = try {
                 val count = file.pageCount
                 val toRead = if (onlyTurned) turned.orEmpty().filter { it in 0 until count } else (0 until count).toList()
@@ -663,6 +669,7 @@ class WritingActivity : Activity() {
                 pageSizes = sizes
                 pdfToDisplay = transforms
                 displayToPdf = transforms.map { it.inverse() }
+                laidOutNumbering = readUnder // before setPages, which publishes the pen's mapping
                 pages.setPages(sizes, transforms, startPage ?: pages.viewport?.page ?: lastPages.get(path), fitBoxes())
                 // The page on show is laid out anew. (At open the view may have no size yet; then
                 // setPages waits for it, and pageMaybeTurned does this.)
@@ -750,6 +757,7 @@ class WritingActivity : Activity() {
 
     /** UI thread. [page] is on show anew: turned to, or laid out again. Nothing has touched it yet. */
     private fun pageArrived(page: Int) {
+        shownPageArrivedAt = SystemClock.uptimeMillis()
         shownPageUntouched = true
         measureAround(page)
         askWhetherAdded(page)
@@ -868,7 +876,7 @@ class WritingActivity : Activity() {
     private fun publishPenMapping() {
         val v = pages.viewport ?: return
         if (displayToPdf.isEmpty()) return
-        penMapping = v.page to v.pageToScreen().inverse().then(displayToPdf[v.page])
+        penMapping = PenMapping(v.page, v.pageToScreen().inverse().then(displayToPdf[v.page]), laidOutNumbering)
     }
 
     /** UI thread: whenever the chosen tool or the held button changes. Also sets the live line to match. */
@@ -885,8 +893,7 @@ class WritingActivity : Activity() {
      * stroke (owner's first writing session).
      */
     private fun onPenStroke(points: List<FloatArray>) {
-        val (page, screenToPdf) = strokeMapping ?: penMapping ?: return
-        val numberedUnder = strokeNumbering
+        val (page, screenToPdf, numberedUnder) = strokeMapping ?: penMapping ?: return
         val (button, tool) = strokeChoice ?: penChoice
         if (!onyxOwnsStroke) {
             // Fast-ink was paused and the screen had the pen (a selection, snip or paste) when
@@ -925,16 +932,27 @@ class WritingActivity : Activity() {
      * longer with every stroke on the page. So everything that turns fast-ink off must redraw
      * the page view: [pausePenAndRedraw], [toolStateChanged], [onPause].
      *
-     * [numberedUnder]: the session's page numbering when the stroke began (see [strokeNumbering]).
+     * [numberedUnder]: the session's page numbering when the stroke began (see [penMapping]).
      */
     private fun write(page: Int, screenToPdf: Affine, tool: Tool, points: List<FloatArray>, numberedUnder: Int) {
         val kind = if (tool == Tool.HIGHLIGHTER) StrokeKind.HIGHLIGHTER else StrokeKind.PEN
         val (_, stroke) = PenPoints.toStroke(kind, points) { x, y -> page to screenToPdf.map(Pt(x, y)) } ?: return
-        session.addStroke(page, stroke, numberedUnder)
+        val placed = session.addStroke(page, stroke, numberedUnder)
         runOnUiThread {
             // A page was added or removed since the stroke began: [page] is an old number. The
-            // session put the stroke on its page's new number, and that page's fresh picture shows it.
-            if (numberedUnder != session.pageNumbering) return@runOnUiThread
+            // session put the stroke on its page's new number. If the screen is laid out under
+            // the new numbers already, its picture may have been asked for before the stroke
+            // came, so the page is drawn again if it's on show; otherwise the layout still to
+            // come asks for fresh pictures anyway. Asked for now, after the stroke was recorded,
+            // the picture has it (the worker goes in order).
+            if (numberedUnder != session.pageNumbering) {
+                val movedTo = (placed as? AddItems)?.page
+                if (movedTo != null && laidOutNumbering == session.pageNumbering && movedTo == pages.viewport?.page) {
+                    Log.i(TAG, "late stroke: page ${movedTo + 1} drawn again")
+                    pages.pageChanged(movedTo)
+                }
+                return@runOnUiThread
+            }
             pages.addStroke(page, stroke, redraw = !pen.drawsInk)
             // A page's first writing gives it its tick. Under fast-ink the panel takes the
             // new line at the next page turn or refresh; nothing is forced for it.
@@ -944,8 +962,7 @@ class WritingActivity : Activity() {
 
     /** Button 2's trail, from Onyx's erase callbacks, on Onyx's thread. */
     private fun onEraseTrail(points: List<FloatArray>) {
-        val (page, screenToPdf) = strokeMapping ?: penMapping ?: return
-        val numberedUnder = strokeNumbering
+        val (page, screenToPdf, numberedUnder) = strokeMapping ?: penMapping ?: return
         if (!onyxOwnsStroke) return // fast-ink was paused and the screen had the pen; it traced this itself
         if (pageChangeUnderWay) {
             Log.i(TAG, "erase dropped: a page change is under way") // see onPenStroke
@@ -1163,16 +1180,16 @@ class WritingActivity : Activity() {
         }
 
         override fun traced(button: PenButton, points: List<FloatArray>) {
-            val (page, screenToPdf) = screenStrokeMapping ?: penMapping ?: return
+            val (page, screenToPdf, numberedUnder) = screenStrokeMapping ?: penMapping ?: return
             val tool = toolState.strokeTool(button)
             Log.i(TAG, "stroke page=$page tool=$tool button=$button points=${points.size} (traced, fast-ink off)")
             val pdf by lazy { points.map { screenToPdf.map(Pt(it[0], it[1])) } }
             when (tool) {
                 // Written in the moment before fast-ink came back, say just after letting go of
                 // a selection: ink like any other, recorded the way an Onyx stroke is.
-                Tool.PEN, Tool.HIGHLIGHTER -> write(page, screenToPdf, tool, points, screenStrokeNumbering)
-                Tool.ERASER -> erase(page, pdf, screenStrokeNumbering)
-                Tool.LASSO -> lasso(page, screenToPdf, points, screenStrokeNumbering)
+                Tool.PEN, Tool.HIGHLIGHTER -> write(page, screenToPdf, tool, points, numberedUnder)
+                Tool.ERASER -> erase(page, pdf, numberedUnder)
+                Tool.LASSO -> lasso(page, screenToPdf, points, numberedUnder)
                 Tool.SNIP -> Unit // the snip tool never traces: the layer has its rectangle
             }
         }
@@ -1283,8 +1300,7 @@ class WritingActivity : Activity() {
         if (!screenStroke) return@screen false
         if (m == MotionEvent.ACTION_DOWN) {
             screenPenDown = true
-            screenStrokeMapping = penMapping
-            screenStrokeNumbering = session.pageNumbering
+            screenStrokeMapping = penMapping // with its numbering
             handler.removeCallbacks(retryShow)
         }
         if (m == MotionEvent.ACTION_UP || m == MotionEvent.ACTION_CANCEL) screenPenDown = false
@@ -1466,13 +1482,21 @@ class WritingActivity : Activity() {
     /** ›, or on the last page + (updateIndicator): a page of dotted paper after it. */
     private fun nextOrAdd() {
         val v = pages.viewport ?: return
-        if (v.page == pageCount - 1) addPageAfterShown() else turn(forward = true)
+        if (v.page != pageCount - 1) return turn(forward = true)
+        if (SystemClock.uptimeMillis() - shownPageArrivedAt < ADD_TAP_GUARD_MS) {
+            Log.i(TAG, "+ ignored: the last page has only just arrived")
+            return
+        }
+        addPageAfterShown()
     }
 
     /** ⋯ "Add a dotted page after this one", and + on the last page. */
     private fun addPageAfterShown() {
         val page = pages.viewport?.page ?: return
-        changePages("add a page after page ${page + 1}") { session.addPageAfter(page) }
+        changePages("add a page after page ${page + 1}") {
+            toast("Adding a page…", Toast.LENGTH_SHORT) // the save can take a moment on a big file, with the pen held
+            session.addPageAfter(page)
+        }
     }
 
     /**
@@ -1489,7 +1513,7 @@ class WritingActivity : Activity() {
             runOnUiThread {
                 // The screen closed while the answer came: nothing is done.
                 if (isFinishing || page != pages.viewport?.page) return@runOnUiThread releasePageChangeHold()
-                if (items.isEmpty() && pages.inkVersion(page) == 0) session.removeAddedPage(page) else askBeforeRemoving(page)
+                if (items.isEmpty() && pages.inkVersion(page) == 0) startRemoving(page) else askBeforeRemoving(page)
             }
         }
     }
@@ -1505,7 +1529,7 @@ class WritingActivity : Activity() {
             .setMessage("Remove this page and the writing on it?")
             .setPositiveButton("Remove") { _, _ ->
                 removing = true
-                session.removeAddedPage(page)
+                startRemoving(page)
             }
             .setNegativeButton("Cancel", null)
             .create()
@@ -1519,6 +1543,12 @@ class WritingActivity : Activity() {
             }
         }
         dialog.show()
+    }
+
+    /** With the pen held already: the removal starts, and the owner sees that it has (the save can take a moment). */
+    private fun startRemoving(page: Int) {
+        toast("Removing the page…", Toast.LENGTH_SHORT)
+        session.removeAddedPage(page)
     }
 
     /** Asks the session for a page change ([request]) with the pen held for it ([holdForPageChange]). */
@@ -2002,6 +2032,14 @@ class WritingActivity : Activity() {
     companion object {
         const val EXTRA_PATH = "path"
 
+        /**
+         * + ignores a tap this soon after the last page arrives. A quick double tap on › at the
+         * page before it turns to the last page, and its second tap lands on + before the panel
+         * has even shown it: without this, a page nobody asked for is added and saved, and the
+         * undo list emptied. ⋯'s "Add a dotted page" item isn't held up.
+         */
+        private const val ADD_TAP_GUARD_MS = 600L
+
         /** What › and, on the last page, + say they do. */
         private const val NEXT_DESCRIPTION = "Next page. Hold for the last page."
         private const val ADD_DESCRIPTION = "Add a dotted page after this one"
@@ -2044,3 +2082,6 @@ class WritingActivity : Activity() {
         private const val TAG = "Notes"
     }
 }
+
+/** [penMapping]: the page on show, screen pixels to its PDF space, and the page numbering both were laid out under. */
+private data class PenMapping(val page: Int, val screenToPdf: Affine, val numbering: Int)

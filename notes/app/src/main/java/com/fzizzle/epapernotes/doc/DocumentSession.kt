@@ -258,11 +258,11 @@ class DocumentSession(
      * A finished stroke, from the pen's thread. Safe in the journal when this returns (see
      * [commit] for a full tablet). [numbering] is the [pageNumbering] the stroke's [page] was
      * read under, when the pen landed: a stroke handed over after a page change is moved to its
-     * page's new number (see [record]).
+     * page's new number (see [record]). Returns the change as recorded, with that number, or
+     * null if its page was removed.
      */
-    fun addStroke(page: Int, stroke: Stroke, numbering: Int = pageNumbering) {
+    fun addStroke(page: Int, stroke: Stroke, numbering: Int = pageNumbering): Change? =
         record(AddItems(page, listOf(InkItem(ItemIds.next(), stroke))), numbering)
-    }
 
     /**
      * A new change, from any thread. Safe in the journal when this returns; it reaches the PDF
