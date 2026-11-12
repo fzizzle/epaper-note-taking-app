@@ -159,6 +159,15 @@ class WritingActivity : Activity() {
     @Volatile private var strokeMapping: Pair<Int, Affine>? = null
 
     /**
+     * The session's page numbering (DocumentSession.pageNumbering) when the stroke under way
+     * began, latched with [strokeMapping]: a stroke Onyx hands over after a page was added or
+     * removed carries its page's old number, and the session moves it, or refuses an erase or
+     * a lasso, by this. [screenStrokeNumbering] and [hoverEraseNumbering] are the same for the
+     * screen's own strokes and for button 2 pressed while hovering.
+     */
+    @Volatile private var strokeNumbering = 0
+
+    /**
      * The same for the tool: what a stroke would be if the pen landed now, worked out by the
      * UI thread from [toolState], and the one the current stroke got. A button counts only if
      * it's held at touch-down (spec §6.3). Onyx's pen-down and Android's touch-down race by a
@@ -259,6 +268,10 @@ class WritingActivity : Activity() {
 
     /** [penMapping] when the screen's stroke began: a traced stroke is placed with the view as it was then. UI thread. */
     private var screenStrokeMapping: Pair<Int, Affine>? = null
+    private var screenStrokeNumbering = 0
+
+    /** Latched when button 2 is pressed with the pen hovering, where a hover erase begins (UI thread). */
+    private var hoverEraseNumbering = 0
 
     /**
      * True while [PageView.penHandler] is set, which is only while fast-ink is paused for a
@@ -484,6 +497,7 @@ class WritingActivity : Activity() {
             pages,
             onPenDown = {
                 strokeMapping = penMapping
+                strokeNumbering = session.pageNumbering
                 strokeChoice = penChoice
                 // The rule: whatever Onyx draws, the app records. Onyx draws while fast-ink is
                 // on, whoever is meant to have the pen, so only a stroke that lands with fast-ink
@@ -501,6 +515,7 @@ class WritingActivity : Activity() {
         pages.onStylusHover = { button ->
             penSeenAt = SystemClock.uptimeMillis()
             if (button != hoverButton) {
+                if (button == PenButton.ERASER_END) hoverEraseNumbering = session.pageNumbering
                 hoverButton = button
                 publishPenChoice()
             }
@@ -603,9 +618,17 @@ class WritingActivity : Activity() {
         val askedUnder = numbering
         session.runOnDocument { pdf ->
             val file = pdf as PdfFile
-            val count = file.pageCount
-            val toRead = if (onlyTurned) turned.orEmpty().filter { it in 0 until count } else (0 until count).toList()
-            val read = toRead.associateWith { file.layout(it) }
+            // Throwable: running out of memory too. The worker would swallow it, and the screen,
+            // waiting for this answer (a page change holds the pen until it comes), would never hear.
+            val (count, read) = try {
+                val count = file.pageCount
+                val toRead = if (onlyTurned) turned.orEmpty().filter { it in 0 until count } else (0 until count).toList()
+                count to toRead.associateWith { file.layout(it) }
+            } catch (e: Throwable) {
+                Log.w(TAG, "laying out the pages failed", e)
+                runOnUiThread { layoutFailed() }
+                return@runOnDocument
+            }
             val first = firstPage?.coerceIn(0, count - 1)
             val firstArea = first?.let { p -> read[p]?.first?.let { s -> printedAreaOf(file, p, SizePt(s.width, s.height)) } }
             runOnUiThread {
@@ -647,6 +670,17 @@ class WritingActivity : Activity() {
                 then()
             }
         }
+    }
+
+    /**
+     * UI thread. The pages couldn't be read to lay them out: the screen can't place a stroke or
+     * show a page without that, and after a page change it would still have the old numbers.
+     * Said, and the screen closes; the writing so far is saved and kept as ever (onPause).
+     */
+    private fun layoutFailed() {
+        if (isFinishing || isDestroyed) return
+        toast("The pages couldn't be read, so this file was closed. Your writing is kept safe.")
+        finish()
     }
 
     override fun onResume() {
@@ -852,6 +886,7 @@ class WritingActivity : Activity() {
      */
     private fun onPenStroke(points: List<FloatArray>) {
         val (page, screenToPdf) = strokeMapping ?: penMapping ?: return
+        val numberedUnder = strokeNumbering
         val (button, tool) = strokeChoice ?: penChoice
         if (!onyxOwnsStroke) {
             // Fast-ink was paused and the screen had the pen (a selection, snip or paste) when
@@ -860,21 +895,22 @@ class WritingActivity : Activity() {
             return
         }
         Log.i(TAG, "stroke page=$page tool=$tool button=$button points=${points.size}")
+        // A stroke that began before a page was added or removed and that Onyx hands over late,
+        // during the change or after it, still carries its page's old number, with the session's
+        // numbering from when it began. Ink is recorded whenever it comes: the session moves it
+        // to its page's new number, or, if its page was removed, doesn't record it. An erase or
+        // a lasso from before the change is refused by the session; during one it isn't even sent.
         if (pageChangeUnderWay) {
-            // Fast-ink was paused for the page change, so this stroke began before it, and Onyx
-            // handed it over late. Ink Onyx drew is kept: the session gives a stroke recorded
-            // while it changes the pages its new number. Anything else would be a request under
-            // the old numbers, sent after the page change: dropped, as if never made.
             if (tool != Tool.PEN && tool != Tool.HIGHLIGHTER) {
                 Log.i(TAG, "stroke dropped: a page change is under way")
                 return
             }
-            Log.i(TAG, "stroke came during a page change: recorded, the session renumbers it")
+            Log.i(TAG, "stroke came during a page change: recorded, the session puts it on its page")
         }
         when (tool) {
-            Tool.PEN, Tool.HIGHLIGHTER -> write(page, screenToPdf, tool, points)
-            Tool.ERASER -> erase(page, points.map { screenToPdf.map(Pt(it[0], it[1])) })
-            Tool.LASSO -> lasso(page, screenToPdf, points)
+            Tool.PEN, Tool.HIGHLIGHTER -> write(page, screenToPdf, tool, points, numberedUnder)
+            Tool.ERASER -> erase(page, points.map { screenToPdf.map(Pt(it[0], it[1])) }, numberedUnder)
+            Tool.LASSO -> lasso(page, screenToPdf, points, numberedUnder)
             Tool.SNIP -> Unit // fast-ink is off while snipping (ToolState.fastInkOn): the selection layer has it
         }
     }
@@ -888,16 +924,17 @@ class WritingActivity : Activity() {
      * resumed). With fast-ink on, that draw would show nothing new on the panel and would take
      * longer with every stroke on the page. So everything that turns fast-ink off must redraw
      * the page view: [pausePenAndRedraw], [toolStateChanged], [onPause].
+     *
+     * [numberedUnder]: the session's page numbering when the stroke began (see [strokeNumbering]).
      */
-    private fun write(page: Int, screenToPdf: Affine, tool: Tool, points: List<FloatArray>) {
+    private fun write(page: Int, screenToPdf: Affine, tool: Tool, points: List<FloatArray>, numberedUnder: Int) {
         val kind = if (tool == Tool.HIGHLIGHTER) StrokeKind.HIGHLIGHTER else StrokeKind.PEN
         val (_, stroke) = PenPoints.toStroke(kind, points) { x, y -> page to screenToPdf.map(Pt(x, y)) } ?: return
-        val recordedUnder = numbering
-        session.addStroke(page, stroke)
+        session.addStroke(page, stroke, numberedUnder)
         runOnUiThread {
-            // The pages were renumbered since: [page] is an old number. The stroke is in the PDF
-            // under its new one, and the page's fresh picture shows it.
-            if (recordedUnder != numbering) return@runOnUiThread
+            // A page was added or removed since the stroke began: [page] is an old number. The
+            // session put the stroke on its page's new number, and that page's fresh picture shows it.
+            if (numberedUnder != session.pageNumbering) return@runOnUiThread
             pages.addStroke(page, stroke, redraw = !pen.drawsInk)
             // A page's first writing gives it its tick. Under fast-ink the panel takes the
             // new line at the next page turn or refresh; nothing is forced for it.
@@ -908,13 +945,14 @@ class WritingActivity : Activity() {
     /** Button 2's trail, from Onyx's erase callbacks, on Onyx's thread. */
     private fun onEraseTrail(points: List<FloatArray>) {
         val (page, screenToPdf) = strokeMapping ?: penMapping ?: return
+        val numberedUnder = strokeNumbering
         if (!onyxOwnsStroke) return // fast-ink was paused and the screen had the pen; it traced this itself
         if (pageChangeUnderWay) {
             Log.i(TAG, "erase dropped: a page change is under way") // see onPenStroke
             return
         }
         Log.i(TAG, "stroke page=$page tool=${Tool.ERASER} button=${PenButton.ERASER_END} points=${points.size} (erase callback)")
-        erase(page, points.map { screenToPdf.map(Pt(it[0], it[1])) })
+        erase(page, points.map { screenToPdf.map(Pt(it[0], it[1])) }, numberedUnder)
     }
 
     /**
@@ -930,17 +968,18 @@ class WritingActivity : Activity() {
         }
         val (page, screenToPdf) = penMapping ?: return
         Log.i(TAG, "stroke page=$page tool=${Tool.ERASER} button=${PenButton.ERASER_END} points=${points.size} (button pressed while hovering)")
-        erase(page, points.map { screenToPdf.map(Pt(it[0], it[1])) }, wipeIfMissed = false)
+        erase(page, points.map { screenToPdf.map(Pt(it[0], it[1])) }, hoverEraseNumbering, wipeIfMissed = false)
     }
 
     /**
      * Removes what the [trail] (PDF space) touched once the pen has lifted (plan decision 5).
      * The page is then redrawn without it, which also wipes the grey trail. If nothing was
-     * hit, no change comes, so the trail is wiped straight away.
+     * hit, no change comes, so the trail is wiped straight away. One drawn before a page was
+     * added or removed ([numberedUnder] is older) removes nothing (DocumentSession.erase).
      */
-    private fun erase(page: Int, trail: List<Pt>, wipeIfMissed: Boolean = true) {
+    private fun erase(page: Int, trail: List<Pt>, numberedUnder: Int, wipeIfMissed: Boolean = true) {
         val started = SystemClock.uptimeMillis()
-        session.erase(page, trail) { hits ->
+        session.erase(page, trail, numberedUnder) { hits ->
             Log.i(TAG, "erase page=$page hits=$hits ms=${SystemClock.uptimeMillis() - started}")
             // Posted before the PageChanged that follows a hit, so it's marked in time.
             runOnUiThread {
@@ -955,12 +994,12 @@ class WritingActivity : Activity() {
     }
 
     /** Any thread. The items a lasso [loop] (PDF space) picks up become the selection. */
-    private fun lasso(page: Int, screenToPdf: Affine, points: List<FloatArray>) {
+    private fun lasso(page: Int, screenToPdf: Affine, points: List<FloatArray>, numberedUnder: Int) {
         val onScreen = points.map { Pt(it[0], it[1]) }
         // Tap or loop is told on the screen, where the hand made it, and a tap reaches as far
         // on the screen at any zoom (TapSelect): both would be wrong measured on the page.
         val tapReachPt = if (TapSelect.isTap(onScreen, TapSelect.TAP_SPAN_PX)) TapSelect.TAP_REACH_PX * screenToPdf.uniformScale() else null
-        session.select(page, onScreen.map { screenToPdf.map(it) }, tapReachPt) { items ->
+        session.select(page, onScreen.map { screenToPdf.map(it) }, tapReachPt, numberedUnder) { items ->
             Log.i(TAG, "lasso page=$page selected=${items.size}")
             runOnUiThread {
                 // Nothing caught, or the page turned meanwhile: just wipe the grey loop. Nor a
@@ -1131,9 +1170,9 @@ class WritingActivity : Activity() {
             when (tool) {
                 // Written in the moment before fast-ink came back, say just after letting go of
                 // a selection: ink like any other, recorded the way an Onyx stroke is.
-                Tool.PEN, Tool.HIGHLIGHTER -> write(page, screenToPdf, tool, points)
-                Tool.ERASER -> erase(page, pdf)
-                Tool.LASSO -> lasso(page, screenToPdf, points)
+                Tool.PEN, Tool.HIGHLIGHTER -> write(page, screenToPdf, tool, points, screenStrokeNumbering)
+                Tool.ERASER -> erase(page, pdf, screenStrokeNumbering)
+                Tool.LASSO -> lasso(page, screenToPdf, points, screenStrokeNumbering)
                 Tool.SNIP -> Unit // the snip tool never traces: the layer has its rectangle
             }
         }
@@ -1245,6 +1284,7 @@ class WritingActivity : Activity() {
         if (m == MotionEvent.ACTION_DOWN) {
             screenPenDown = true
             screenStrokeMapping = penMapping
+            screenStrokeNumbering = session.pageNumbering
             handler.removeCallbacks(retryShow)
         }
         if (m == MotionEvent.ACTION_UP || m == MotionEvent.ACTION_CANCEL) screenPenDown = false
@@ -1438,63 +1478,79 @@ class WritingActivity : Activity() {
     /**
      * ⋯ "Remove this added page". A page with writing on it is asked about first: its ink goes
      * with it, and there's no undo. The session is asked for the page's items (strokes already
-     * in the PDF), and the page view for strokes not counted there yet.
+     * in the PDF), and the page view for strokes not counted there yet. The pen is held from
+     * this tap ([holdForPageChange]), so no stroke can be written in the meantime that neither
+     * answer has seen.
      */
     private fun removeShownPage() {
         val page = pages.viewport?.page ?: return
-        val askedUnder = numbering
+        if (!holdForPageChange("remove page ${page + 1}")) return
         session.items(page) { items ->
             runOnUiThread {
-                // The page was left, or the pages changed, while the answer came: nothing is done.
-                if (askedUnder != numbering || page != pages.viewport?.page || isFinishing) return@runOnUiThread
-                if (items.isEmpty() && pages.inkVersion(page) == 0) removePage(page) else askBeforeRemoving(page)
+                // The screen closed while the answer came: nothing is done.
+                if (isFinishing || page != pages.viewport?.page) return@runOnUiThread releasePageChangeHold()
+                if (items.isEmpty() && pages.inkVersion(page) == 0) session.removeAddedPage(page) else askBeforeRemoving(page)
             }
         }
     }
 
-    /** "Remove this page and the writing on it?", opened and closed like the other questions. */
+    /**
+     * "Remove this page and the writing on it?", opened like the other questions, with the pen
+     * held for the page change already. Cancel lets it go.
+     */
     private fun askBeforeRemoving(page: Int) {
-        if (pageChangeUnderWay || dialogOpen) return
         Log.i(TAG, "asking before removing page ${page + 1}: it has writing")
+        var removing = false
         val dialog = AlertDialog.Builder(this)
             .setMessage("Remove this page and the writing on it?")
-            .setPositiveButton("Remove") { _, _ -> removePage(page) }
+            .setPositiveButton("Remove") { _, _ ->
+                removing = true
+                session.removeAddedPage(page)
+            }
             .setNegativeButton("Cancel", null)
             .create()
         dialogOpen = true
         pausePenAndRedraw()
         dialog.setOnDismissListener {
             dialogOpen = false
-            handler.removeCallbacks(resumeFastInk)
-            handler.postDelayed(resumeFastInk, SHOW_PAUSE_MS)
+            if (!removing) {
+                Log.i(TAG, "page ${page + 1} kept")
+                releasePageChangeHold()
+            }
         }
         dialog.show()
     }
 
-    private fun removePage(page: Int) {
-        // Turned away while the question was open? Then it's not the page that was asked about.
-        if (page != pages.viewport?.page) return
-        changePages("remove page ${page + 1}") { session.removeAddedPage(page) }
+    /** Asks the session for a page change ([request]) with the pen held for it ([holdForPageChange]). */
+    private fun changePages(what: String, request: () -> Unit) {
+        if (holdForPageChange(what)) request()
     }
 
     /**
-     * Asks the session to add or remove a page ([request]), with fast-ink paused and every
-     * request that names a page refused until the answer has been laid out ([pageChangeUnderWay]):
-     * [pagesRenumbered], or [pageNotChanged]. Not while the pen is down: pausing would cut the
-     * stroke, and the stroke would carry the old numbers.
+     * Holds the pen for a page change: fast-ink paused, and every request that names a page
+     * refused, until the answer has been laid out ([pageChangeUnderWay]): [pagesRenumbered], or
+     * [releasePageChangeHold]. Returns false, holding nothing, if it can't be now: with the pen
+     * down (pausing would cut the stroke, and the stroke would carry the old numbers), fingers
+     * moving the page, or a change already under way.
      */
-    private fun changePages(what: String, request: () -> Unit) {
-        if (pageChangeUnderWay || !documentShown || pen.isWriting || screenPenDown) {
-            Log.i(TAG, "$what: refused (pen down or a page change under way)")
-            return
+    private fun holdForPageChange(what: String): Boolean {
+        val why = when {
+            pageChangeUnderWay -> "a page change is under way"
+            !documentShown -> "the pages aren't laid out yet"
+            pen.isWriting || screenPenDown -> "the pen is down"
+            fingerGesture -> "fingers are moving the page"
+            else -> null
+        }
+        if (why != null) {
+            Log.i(TAG, "$what: refused, $why")
+            return false
         }
         Log.i(TAG, what)
         pageChangeUnderWay = true
         letGoOfAll() // a selection, or an armed paste, names the page by its old number
-        dialogOpen = true
         handler.removeCallbacks(resumeFastInk)
         pausePenAndRedraw()
-        request()
+        return true
     }
 
     /**
@@ -1519,19 +1575,20 @@ class WritingActivity : Activity() {
         pages.pagesRenumbered()
         layOutPages(startPage = showPage) {
             pageChangeUnderWay = false
-            dialogOpen = false
             Log.i(TAG, "pages laid out again: ${pageCount} pages, page ${(pages.viewport?.page ?: 0) + 1} on show")
             findWrittenPages()
             showWithoutFastInk()
         }
     }
 
-    /** The page wasn't added or removed (the session has said why): the pen comes back. UI thread. */
-    private fun pageNotChanged() {
+    /**
+     * UI thread. No page change after all: the session said why it didn't make one, or the
+     * owner kept the page. The pen comes back, unless a dialog is open (its closing resumes it).
+     */
+    private fun releasePageChangeHold() {
         if (!pageChangeUnderWay) return
-        Log.i(TAG, "page not changed")
+        Log.i(TAG, "page change let go: the pen comes back")
         pageChangeUnderWay = false
-        dialogOpen = false
         handler.removeCallbacks(resumeFastInk)
         handler.postDelayed(resumeFastInk, SHOW_PAUSE_MS)
     }
@@ -1890,7 +1947,7 @@ class WritingActivity : Activity() {
             is SessionEvent.PagesRenumbered -> pagesRenumbered(event.showPage)
             is SessionEvent.PageNotChanged -> {
                 toast(event.message)
-                pageNotChanged()
+                releasePageChangeHold()
             }
             is SessionEvent.EarlierWritingKept -> toast("Unsaved writing from before this file changed was kept safe.")
             is SessionEvent.SavedToCopy -> {
