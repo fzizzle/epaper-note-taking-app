@@ -35,6 +35,25 @@ interface PdfPages : Closeable {
     /** The page's rotation: 0, 90, 180 or 270. */
     fun rotation(page: Int): Int
 
+    /**
+     * Puts a new page of dotted paper right after page [after], as wide and tall as that page
+     * is shown, and marks it as one the app added. Every page after it moves up by one, with
+     * its items.
+     */
+    fun addDottedPage(after: Int)
+
+    /** Whether [page] is one the app added with [addDottedPage], in this session or an earlier one. */
+    fun isAddedPage(page: Int): Boolean
+
+    /**
+     * Deletes [page], which must be one the app added ([isAddedPage]), and not the document's
+     * only page: a page that came with the PDF is never removed. Every page after it moves
+     * down by one, with its items.
+     *
+     * @throws IllegalArgumentException for any other page.
+     */
+    fun removeAddedPage(page: Int)
+
     fun saveTo(target: File)
 }
 
