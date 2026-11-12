@@ -26,6 +26,7 @@ import android.widget.TextView
 import android.widget.Toast
 import com.fzizzle.epapernotes.doc.DocumentSession
 import com.fzizzle.epapernotes.storage.SafeSave
+import com.fzizzle.epapernotes.library.CourseColours
 import com.fzizzle.epapernotes.library.Entry
 import com.fzizzle.epapernotes.library.FolderEntry
 import com.fzizzle.epapernotes.library.FolderListing
@@ -69,14 +70,25 @@ class LibraryActivity : Activity() {
     private lateinit var emptyNote: TextView
 
     private lateinit var lastPages: LastPageStore
+    private lateinit var courseRule: View
+    /** The colour [courseRule] has now: only set when it changes, so an unchanged listing redraws nothing. */
+    private var courseRuleColour = LibraryLook.RULE
     /** How far the owner is into each PDF on show that they've opened (progressOf), read with the listing. */
     private var progress: Map<File, Float> = emptyMap()
 
     /** A tile's marks, from memory only: its progress from the listing, its writing mark from the thumbnail's facts. */
     private fun marksFor(entry: Entry): TileMarks {
-        val pdf = entry as? PdfEntry ?: return TileMarks.NONE
+        // At the library folder each course's folder carries its colour; inside a course the line under the strip does.
+        val pdf = entry as? PdfEntry
+            ?: return TileMarks(stripe = if (root == shownFolder) courseColourOf(entry.file) else null)
         return TileMarks(progress = progress[pdf.file], hasInk = thumbnails?.factsFor(pdf)?.hasInk == true)
     }
+
+    /** Each course's colour, by its code in capitals (CourseColours.assign), read with the listing. */
+    private var courseColours: Map<String, Int> = emptyMap()
+
+    private fun courseColourOf(file: File): Int? =
+        root?.let { CourseColours.courseOf(it, file) }?.let { courseColours[it.uppercase()] }
 
     private var root: File? = null
     /** The folder asked for; [shownFolder] is the one on screen, once it's been read. */
@@ -263,7 +275,9 @@ class LibraryActivity : Activity() {
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             addView(strip, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, stripHeight))
-            addView(View(this@LibraryActivity).apply { setBackgroundColor(LibraryLook.RULE) }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 2))
+            // The line under the strip: grey, or inside a course its colour (showListing).
+            courseRule = View(this@LibraryActivity).apply { setBackgroundColor(LibraryLook.RULE) }
+            addView(courseRule, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, RULE_PX))
             addView(continueRow)
             addView(FrameLayout(this@LibraryActivity).apply {
                 addView(grid)
@@ -306,17 +320,24 @@ class LibraryActivity : Activity() {
                 val path = pdf.file.path
                 progressOf(lastPages.has(path), lastPages.get(path), lastPages.pageCount(path))?.let { progress[pdf.file] = it }
             }
+            // The courses are the library folder's own folders, whichever folder is on show.
+            val courses = root.listFiles().orEmpty()
+                .filter { !it.name.startsWith(".") && it.isDirectory }
+                .mapNotNull { CourseColours.courseOf(root, it) }
+            val courseColours = CourseColours.assign(courses).mapValues { CourseColours.PALETTE[it.value] }
             val rootMissing = !root.isDirectory
             val resume = if (shown == root) last?.takeIf { it.isFile } else null
             Log.i(TAG, "library listed ${shown.path} n=${entries.size} ms=${SystemClock.uptimeMillis() - start}")
             main.post {
-                if (ask == listed && !isDestroyed) showListing(shown, entries, progress, resume, rootMissing, redrawTiles)
+                if (ask == listed && !isDestroyed) showListing(shown, entries, progress, courseColours, resume, rootMissing, redrawTiles)
                 then()
             }
         }
     }
 
-    private fun showListing(shown: File, entries: List<Entry>, progress: Map<File, Float>, resume: File?, rootMissing: Boolean, redrawTiles: Boolean) {
+    private fun showListing(shown: File, entries: List<Entry>, progress: Map<File, Float>, courseColours: Map<String, Int>, resume: File?, rootMissing: Boolean, redrawTiles: Boolean) {
+        val coloursChanged = courseColours != this.courseColours
+        this.courseColours = courseColours
         folder = shown
         // Another folder than was asked for (that one went away), or this one was deleted and
         // perhaps recreated by a sync app since it was watched: watched afresh.
@@ -333,13 +354,20 @@ class LibraryActivity : Activity() {
             breadcrumb.show(root ?: shown, shown)
             grid.setSelection(0)
         }
+        val ruleColour = courseColourOf(shown) ?: LibraryLook.RULE
+        if (ruleColour != courseRuleColour) {
+            courseRuleColour = ruleColour
+            courseRule.setBackgroundColor(ruleColour)
+            // Thicker in colour: two pixels of it are too little to see on the colour screen.
+            courseRule.layoutParams = courseRule.layoutParams.apply { height = if (ruleColour == LibraryLook.RULE) RULE_PX else COURSE_RULE_PX }
+        }
         // Texts are only set when they differ: setting one, even to the same words, draws its
         // row again, and a listing comes after every change the folder watch sees.
         val continueText = resume?.let { "▶  Continue: ${it.nameWithoutExtension}" }.orEmpty()
         if (continueRow.text.toString() != continueText) continueRow.text = continueText
         continueRow.visibility = if (resume != null) View.VISIBLE else View.GONE
         // A document just left may only have moved to another page: the file is the same, its bar isn't.
-        val changed = redrawTiles || entries != adapter.entries || adapter.thumbnails != (thumbnails != null) || progress != this.progress
+        val changed = redrawTiles || entries != adapter.entries || adapter.thumbnails != (thumbnails != null) || progress != this.progress || coloursChanged
         this.progress = progress
         if (changed) adapter.show(entries, thumbnails = thumbnails != null, dropPictures = redrawTiles)
         val emptyText = when {
@@ -528,5 +556,8 @@ class LibraryActivity : Activity() {
         const val LEFT_SAVE_WAIT_MS = 3000L
         /** How long thumbnails are gathered before their tiles are drawn together (see pendingThumbnails). */
         const val TILE_BATCH_MS = 120L
+        /** The line under the top strip, and the same line inside a course, in the course's colour. */
+        const val RULE_PX = 2
+        const val COURSE_RULE_PX = 4
     }
 }

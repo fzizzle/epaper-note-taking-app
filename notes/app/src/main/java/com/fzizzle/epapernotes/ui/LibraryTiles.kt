@@ -110,6 +110,7 @@ class TileView(context: Context) : View(context) {
     private var marks = TileMarks.NONE
     private val barHeight = LibraryLook.dp(context, 3).toFloat()
     private val inkMark = LibraryLook.dp(context, 12).toFloat()
+    private val stripeWidth = LibraryLook.dp(context, 4).toFloat()
 
     private val pad = LibraryLook.dp(context, 8)
     private val namePaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -262,6 +263,12 @@ class TileView(context: Context) : View(context) {
         line.strokeWidth = 3f
         line.color = Color.BLACK
         canvas.drawPath(path, line)
+        // Its course's colour (TileMarks.stripe), down the folder's left side, just clear of it.
+        marks.stripe?.let { colour ->
+            line.style = Paint.Style.FILL
+            line.color = colour
+            canvas.drawRect(left - 2 * stripeWidth, top, left - stripeWidth, bottom, line)
+        }
     }
 
     private fun drawPage(canvas: Canvas) {
