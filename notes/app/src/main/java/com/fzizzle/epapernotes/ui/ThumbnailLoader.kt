@@ -211,6 +211,9 @@ class ThumbnailLoader(
         }
         try {
             try {
+                // Stored without a see-through channel (the page is solid anyway): Android reads
+                // a PNG that has one at 32-bit whatever is asked, twice the memory of 16-bit.
+                full.setHasAlpha(false)
                 val png = ByteArrayOutputStream().also { full.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
                 cache.store(pdf, png)
             } catch (e: Exception) {
