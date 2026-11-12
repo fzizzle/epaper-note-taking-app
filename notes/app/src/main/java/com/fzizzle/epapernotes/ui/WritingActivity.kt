@@ -440,8 +440,11 @@ class WritingActivity : Activity() {
             publishPenMapping()
             if (!fingers && documentShown) pen.setLimit(penLimit())
         }
+        // Read now, before anything stores a page for this file: was it ever opened before?
+        val openedBefore = lastPages.has(path)
         layOutPages(startPage = lastPages.get(path)) {
             findWrittenPages()
+            offerRotation(openedBefore)
             pages.post {
                 documentShown = true
                 // If the app opened this document by itself at its start (LaunchOpen): it got here.
@@ -1286,6 +1289,33 @@ class WritingActivity : Activity() {
         trimMargins = on
         fitPagesAgain()
         pages.viewport?.let { pageArrived(it.page) }
+    }
+
+    /**
+     * A deck of sideways slides, opened for the first time with the tablet upright: offers to
+     * rotate all its pages (RotateOffer), once. Whatever the answer, the file now counts as
+     * opened, so it isn't asked again. Not while another question is open (a damaged file's):
+     * then it isn't asked at all, and Rotate all pages is under ⋯ as ever.
+     */
+    private fun offerRotation(openedBefore: Boolean) {
+        val screen = resources.displayMetrics
+        if (dialogOpen || isFinishing || !RotateOffer.shouldOffer(pageSizes, screen.widthPixels, screen.heightPixels, openedBefore)) return
+        lastPages.set(path, pages.viewport?.page ?: 0, pageCount)
+        Log.i(TAG, "offering to rotate all pages")
+        val dialog = AlertDialog.Builder(this)
+            .setMessage("These pages are sideways. Rotate all pages?")
+            .setPositiveButton("Rotate all") { _, _ -> rotate(all = true) }
+            .setNegativeButton("Leave them", null)
+            .create()
+        // As for the other questions: fast-ink would freeze it on screen.
+        dialogOpen = true
+        pausePenAndRedraw()
+        dialog.setOnDismissListener {
+            dialogOpen = false
+            handler.removeCallbacks(resumeFastInk)
+            handler.postDelayed(resumeFastInk, SHOW_PAUSE_MS)
+        }
+        dialog.show()
     }
 
     /** Turns the page on show, or every page, 90° clockwise from where it is (spec §6.4), as one undo step. */
