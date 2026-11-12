@@ -124,6 +124,7 @@ class LibraryChanges(
 
     /** "Continue" follows its file through a rename or move made here. */
     private fun lastOpenedMoved(from: File, to: File) {
+        ContinuePicture(activity.cacheDir, prefs).moved(from, to)
         val last = prefs.lastOpened ?: return
         if (last == from) prefs.lastOpened = to
         else if (last.startsWith(from)) prefs.lastOpened = File(to, last.relativeTo(from).path)

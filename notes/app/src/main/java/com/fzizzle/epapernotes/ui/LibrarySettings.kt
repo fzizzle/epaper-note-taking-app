@@ -46,6 +46,11 @@ class LibraryPrefs(context: Context) {
         get() = file(LAST_OPENED)
         set(value) = put(LAST_OPENED, value)
 
+    /** The document the Continue picture shows (ContinuePicture): the one left last, if its picture was made. */
+    var continuePictureOf: File?
+        get() = file(CONTINUE_PICTURE)
+        set(value) = put(CONTINUE_PICTURE, value)
+
     var showThumbnails: Boolean
         get() = prefs.getBoolean(THUMBNAILS, true)
         set(value) = prefs.edit().putBoolean(THUMBNAILS, value).apply()
@@ -65,6 +70,7 @@ class LibraryPrefs(context: Context) {
         const val LAST_OPENED = "last-opened"
         const val THUMBNAILS = "show-thumbnails"
         const val OPEN_OUT = "open-out-small-folders"
+        const val CONTINUE_PICTURE = "continue-picture-of"
     }
 }
 

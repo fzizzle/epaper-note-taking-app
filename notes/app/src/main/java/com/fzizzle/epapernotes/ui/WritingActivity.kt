@@ -1458,10 +1458,33 @@ class WritingActivity : Activity() {
         pages.invalidate()
         val penOff = SystemClock.uptimeMillis()
         pages.viewport?.let { lastPages.set(path, it.page, pageCount) }
+        storeContinuePicture()
         // Going to the background or leaving: save now, not in a few seconds (spec §7.2).
         session.saveNow()
         val end = SystemClock.uptimeMillis()
         Log.i(TAG, "${if (isFinishing) "leave: " else ""}pause ms=${end - start} pen-off=${penOff - start} save-request=${end - penOff}")
+    }
+
+    /**
+     * The library's Continue row shows the page being left, with its ink: drawn small here, on
+     * the document's worker, where the PDF is open anyway, so leaving waits for nothing. In the
+     * page's true colours (no contrast step), like a thumbnail.
+     */
+    private fun storeContinuePicture() {
+        val page = pages.viewport?.page ?: return
+        val pdfFile = File(path)
+        val picture = ContinuePicture(cacheDir, LibraryPrefs(this))
+        session.runOnDocument { pdf ->
+            try {
+                val bitmap = (pdf as PdfFile).render(page, CONTINUE_WIDTH_PX, smoothInk = true)
+                bitmap.setHasAlpha(false) // so it's read back at 16-bit
+                val png = ByteArrayOutputStream().also { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
+                bitmap.recycle()
+                picture.store(pdfFile, png)
+            } catch (e: Exception) {
+                Log.w(TAG, "the Continue picture couldn't be made", e) // the row then shows the name alone
+            }
+        }
     }
 
     override fun onDestroy() {
@@ -1577,6 +1600,9 @@ class WritingActivity : Activity() {
         private const val MEASURE_WIDTH_PX = 200
 
         /** Snips (plan decision 9): 2 pixels per point, at most 2000 pixels on the long side. */
+        /** How wide the Continue row's picture of the page is made: as wide as a thumbnail. */
+        private const val CONTINUE_WIDTH_PX = 300
+
         const val SNIP_PX_PER_PT = 2f
         const val SNIP_MAX_PX = 2000f
 

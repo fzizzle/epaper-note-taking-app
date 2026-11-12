@@ -64,7 +64,17 @@ class LibraryActivity : Activity() {
 
     private lateinit var library: View
     private lateinit var breadcrumb: BreadcrumbBar
-    private lateinit var continueRow: TextView
+    private lateinit var continueRow: LinearLayout
+    private lateinit var continuePictureView: android.widget.ImageView
+    private lateinit var continueName: TextView
+    private lateinit var continueDetail: TextView
+    private lateinit var continuePicture: ContinuePicture
+
+    /** What the Continue row shows: the file, its page and page count, and its picture's date ([ContinuePicture.stamp]). */
+    private data class ContinueKey(val file: File, val page: Int, val pageCount: Int, val pictureStamp: Long)
+
+    /** Read by the disk thread, which only reads the picture again when this would change. */
+    @Volatile private var shownContinue: ContinueKey? = null
     private lateinit var grid: GridView
     private lateinit var adapter: LibraryAdapter
     private lateinit var emptyNote: TextView
@@ -113,6 +123,7 @@ class LibraryActivity : Activity() {
         prefs = LibraryPrefs(this)
         thumbnailCache = ThumbnailCache(File(cacheDir, "thumbnails"))
         lastPages = LastPageStore(this)
+        continuePicture = ContinuePicture(cacheDir, prefs)
         adapter = LibraryAdapter({ thumbnails?.bitmapFor(it) }, ::marksFor)
         changes = LibraryChanges(this, disk, prefs) { done -> list(then = done) }
         library = buildLibrary()
@@ -230,12 +241,36 @@ class LibraryActivity : Activity() {
         button(Glyph.NEW_FOLDER, "New folder") { root?.let { changes.askForNewFolder(it, shownFolder ?: it) } }
         button(Glyph.MENU, "Settings", gaps = 0) { showSettings() }
 
-        continueRow = TextView(this).apply {
+        // Continue: a picture of the page that was left, with its ink, then the file's name and where in it.
+        continuePictureView = android.widget.ImageView(this).apply {
+            adjustViewBounds = true
+            scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+            // A thin frame, as the tiles' pictures have.
+            foreground = android.graphics.drawable.GradientDrawable().apply { setStroke(2, LibraryLook.RULE) }
+            visibility = View.GONE
+        }
+        continueName = TextView(this).apply {
             textSize = 20f
             setTextColor(Color.BLACK)
+            maxLines = 2
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        }
+        continueDetail = TextView(this).apply {
+            textSize = 16f
+            setTextColor(LibraryLook.GRAPHITE)
+        }
+        continueRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(20), dp(12), dp(20), dp(12))
             background = LibraryLook.pressedFeedback()
             visibility = View.GONE
+            addView(continuePictureView, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(CONTINUE_PICTURE_DP)).apply { rightMargin = dp(16) })
+            addView(LinearLayout(this@LibraryActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(continueName)
+                addView(continueDetail)
+            }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
             setOnClickListener { prefs.lastOpened?.let(::open) }
         }
         grid = GridView(this).apply {
@@ -326,16 +361,20 @@ class LibraryActivity : Activity() {
                 .mapNotNull { CourseColours.courseOf(root, it) }
             val courseColours = CourseColours.assign(courses).mapValues { CourseColours.PALETTE[it.value] }
             val rootMissing = !root.isDirectory
-            val resume = if (shown == root) last?.takeIf { it.isFile } else null
+            val resume = (if (shown == root) last?.takeIf { it.isFile } else null)?.let {
+                ContinueKey(it, lastPages.get(it.path), lastPages.pageCount(it.path), continuePicture.stamp)
+            }
+            // The picture is only read when the row will change.
+            val resumePicture = if (resume != null && resume != shownContinue) continuePicture.load(resume.file) else null
             Log.i(TAG, "library listed ${shown.path} n=${entries.size} ms=${SystemClock.uptimeMillis() - start}")
             main.post {
-                if (ask == listed && !isDestroyed) showListing(shown, entries, progress, courseColours, resume, rootMissing, redrawTiles)
+                if (ask == listed && !isDestroyed) showListing(shown, entries, progress, courseColours, resume, resumePicture, rootMissing, redrawTiles)
                 then()
             }
         }
     }
 
-    private fun showListing(shown: File, entries: List<Entry>, progress: Map<File, Float>, courseColours: Map<String, Int>, resume: File?, rootMissing: Boolean, redrawTiles: Boolean) {
+    private fun showListing(shown: File, entries: List<Entry>, progress: Map<File, Float>, courseColours: Map<String, Int>, resume: ContinueKey?, resumePicture: Bitmap?, rootMissing: Boolean, redrawTiles: Boolean) {
         val coloursChanged = courseColours != this.courseColours
         this.courseColours = courseColours
         folder = shown
@@ -363,8 +402,16 @@ class LibraryActivity : Activity() {
         }
         // Texts are only set when they differ: setting one, even to the same words, draws its
         // row again, and a listing comes after every change the folder watch sees.
-        val continueText = resume?.let { "▶  Continue: ${it.nameWithoutExtension}" }.orEmpty()
-        if (continueRow.text.toString() != continueText) continueRow.text = continueText
+        // Only when it changed (ContinueKey): the picture read again or a text set draws the row again.
+        if (resume != shownContinue) {
+            shownContinue = resume
+            if (resume != null) {
+                continueName.text = resume.file.nameWithoutExtension
+                continueDetail.text = if (resume.pageCount > 0) "Continue · page ${minOf(resume.page + 1, resume.pageCount)} of ${resume.pageCount}" else "Continue"
+                continuePictureView.setImageBitmap(resumePicture)
+                continuePictureView.visibility = if (resumePicture != null) View.VISIBLE else View.GONE
+            }
+        }
         continueRow.visibility = if (resume != null) View.VISIBLE else View.GONE
         // A document just left may only have moved to another page: the file is the same, its bar isn't.
         val changed = redrawTiles || entries != adapter.entries || adapter.thumbnails != (thumbnails != null) || progress != this.progress || coloursChanged
@@ -562,6 +609,8 @@ class LibraryActivity : Activity() {
         /** How long thumbnails are gathered before their tiles are drawn together (see pendingThumbnails). */
         const val TILE_BATCH_MS = 120L
         /** The line under the top strip, and the same line inside a course, in the course's colour. */
+        /** How tall the Continue row's picture is. */
+        const val CONTINUE_PICTURE_DP = 96
         const val RULE_PX = 2
         const val COURSE_RULE_PX = 4
     }
