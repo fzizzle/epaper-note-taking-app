@@ -72,4 +72,63 @@ class FolderListingTest {
         assertEquals(emptyList<Entry>(), FolderListing.list(tmp.newFile("plain.txt")))
         assertEquals(emptyList<Entry>(), FolderListing.list(File(tmp.root, "missing")))
     }
+
+    private fun pdfIn(folder: File, name: String) = File(folder, name).apply { createNewFile() }
+
+    private fun opened(folder: File) = FolderListing.list(folder, openOutUpTo = FolderListing.OPEN_OUT_UP_TO)
+
+    /** A topic folder holding just a workbook and its answer key: shown as the two PDFs, where the folder was. */
+    @Test fun aFolderOfTwoPdfsIsOpenedOut() {
+        tmp.newFolder("Alpha")
+        val beams = tmp.newFolder("Beams")
+        pdfIn(beams, "workbook.pdf"); pdfIn(beams, "answer key.pdf")
+        tmp.newFolder("Zeta"); tmp.newFile("loose.pdf")
+        val list = opened(tmp.root)
+        assertEquals(listOf("Alpha", "answer key", "workbook", "Zeta", "loose"), list.map { it.name })
+        assertEquals(listOf(null, beams, beams, null, null), list.map { (it as? PdfEntry)?.group })
+        assertEquals(File(beams, "workbook.pdf"), list[2].file)
+    }
+
+    @Test fun aFolderWithASubfolderStaysAFolder() {
+        val sub = tmp.newFolder("Course")
+        pdfIn(sub, "a.pdf"); File(sub, "Week 1").mkdir()
+        assertTrue(opened(tmp.root).single() is FolderEntry)
+    }
+
+    @Test fun anEmptyFolderStaysAFolder() {
+        tmp.newFolder("Empty")
+        assertTrue(opened(tmp.root).single() is FolderEntry)
+    }
+
+    @Test fun aFourthPdfClosesTheFolderAgain() {
+        val sub = tmp.newFolder("Topic")
+        repeat(3) { pdfIn(sub, "p$it.pdf") }
+        assertEquals(3, opened(tmp.root).size)
+        pdfIn(sub, "p3.pdf")
+        val closed = opened(tmp.root).single() as FolderEntry
+        assertEquals(4, closed.pdfCount)
+    }
+
+    @Test fun hiddenAndTemporaryFilesDontCount() {
+        val sub = tmp.newFolder("Topic")
+        pdfIn(sub, "a.pdf"); pdfIn(sub, ".hidden.pdf"); pdfIn(sub, ".a.pdf.notes-tmp"); File(sub, ".stfolder").mkdir(); pdfIn(sub, "notes.txt")
+        val list = opened(tmp.root)
+        assertEquals(listOf("a"), list.map { it.name })
+        assertEquals(sub, (list.single() as PdfEntry).group)
+    }
+
+    @Test fun withZeroNothingIsOpenedOut() {
+        val sub = tmp.newFolder("Topic")
+        pdfIn(sub, "a.pdf")
+        assertTrue(FolderListing.list(tmp.root).single() is FolderEntry)
+    }
+
+    @Test fun sameNamesInTwoFoldersStayApart() {
+        val a = tmp.newFolder("A"); val b = tmp.newFolder("B")
+        pdfIn(a, "workbook.pdf"); pdfIn(b, "workbook.pdf")
+        val list = opened(tmp.root).map { it as PdfEntry }
+        assertEquals(2, list.toSet().size)
+        assertEquals(listOf(File(a, "workbook.pdf"), File(b, "workbook.pdf")), list.map { it.file })
+        assertEquals(listOf(a, b), list.map { it.group })
+    }
 }

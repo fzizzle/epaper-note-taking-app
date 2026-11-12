@@ -124,7 +124,7 @@ class LibraryActivity : Activity() {
         shownFolder?.let(watch::watch)
         // The subfolders on screen too, before the listing onResume asks for: a PDF landing in
         // one meanwhile still updates its count. The grid still holds the last entries.
-        if (shownFolder != null) watch.watchChildren(onScreen().filterIsInstance<FolderEntry>().map { it.file })
+        if (shownFolder != null) watch.watchChildren(watchedChildren())
         thumbnails?.resume()
     }
 
@@ -251,7 +251,7 @@ class LibraryActivity : Activity() {
             adapter = this@LibraryActivity.adapter
             setOnItemClickListener { _, _, position, _ -> tapped(this@LibraryActivity.adapter.entries[position]) }
             setOnItemLongClickListener { _, view, position, _ ->
-                root?.let { changes.showMenu(it, shownFolder ?: it, view, this@LibraryActivity.adapter.entries[position]) }
+                root?.let { changes.showMenu(it, shownFolder ?: it, view, this@LibraryActivity.adapter.entries[position], openFolder = ::goTo) }
                 true
             }
             setOnScrollListener(object : AbsListView.OnScrollListener {
@@ -307,7 +307,7 @@ class LibraryActivity : Activity() {
             // The folder went away (deleted or moved on a laptop): show the nearest one left.
             var shown = wanted
             while (shown != root && !shown.isDirectory) shown = shown.parentFile ?: root
-            val entries = FolderListing.list(shown)
+            val entries = FolderListing.list(shown, if (prefs.openOutSmallFolders) FolderListing.OPEN_OUT_UP_TO else 0)
             // Hidden copies a crashed save left behind (spec §7.3), never while a document in
             // this folder is open or still saving: its save may be writing one right now.
             if (!DocumentSession.anyOpenIn(shown)) {
@@ -414,7 +414,7 @@ class LibraryActivity : Activity() {
     }
 
     private fun showSettings() =
-        showLibrarySettings(this, prefs, disk, onRootChosen = ::useRoot, onThumbnailsChanged = ::switchThumbnails)
+        showLibrarySettings(this, prefs, disk, onRootChosen = ::useRoot, onThumbnailsChanged = ::switchThumbnails, onListingChanged = { list() })
 
     /**
      * The tiles on screen get their thumbnails first, and the folders among them are watched,
@@ -429,10 +429,15 @@ class LibraryActivity : Activity() {
         val now = listOf(grid.firstVisiblePosition, grid.childCount, System.identityHashCode(adapter.entries), System.identityHashCode(thumbnails), started)
         if (fromScroll && now == tilesLastReported) return
         tilesLastReported = now
-        if (started) watch.watchChildren(onScreen().filterIsInstance<FolderEntry>().map { it.file })
+        // The folders on screen, and the small ones shown opened out (their PDFs' group): a
+        // PDF arriving in one of those must show up, or close it back into a folder.
+        if (started) watch.watchChildren(watchedChildren())
         val loader = thumbnails ?: return
         loader.show(adapter.entries.filterIsInstance<PdfEntry>(), onScreen().filterIsInstance<PdfEntry>())
     }
+
+    private fun watchedChildren(): List<File> =
+        onScreen().mapNotNull { (it as? FolderEntry)?.file ?: (it as? PdfEntry)?.group }.distinct()
 
     /** What [tilesOnScreenChanged] last acted on. */
     private var tilesLastReported: List<Any> = emptyList()

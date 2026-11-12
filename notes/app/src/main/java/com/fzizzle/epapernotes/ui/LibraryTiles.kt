@@ -64,14 +64,13 @@ class LibraryAdapter(
         private set
     /** Goes up on each refresh: tiles bound before it don't keep their old pictures. */
     private var pictures = 0
-    /** The PDFs' tile names, without the part they all share (TileNames). */
-    private var pdfLabels: Map<PdfEntry, String> = emptyMap()
+    /** The PDFs' tile names: a heading for one shown in place of its small folder, and its name without the part shared with its neighbours (TileNames). */
+    private var pdfLabels: Map<PdfEntry, Pair<String?, String>> = emptyMap()
 
     /** [dropPictures]: refresh, so tiles waiting for a new thumbnail show the grey page meanwhile. */
     fun show(entries: List<Entry>, thumbnails: Boolean, dropPictures: Boolean = false) {
         this.entries = entries
-        val pdfs = entries.filterIsInstance<PdfEntry>()
-        pdfLabels = pdfs.zip(TileNames.labels(pdfs.map { it.name })).toMap()
+        pdfLabels = TileNames.grouped(entries.filterIsInstance<PdfEntry>())
         this.thumbnails = thumbnails
         if (dropPictures) pictures++
         notifyDataSetChanged()
@@ -86,8 +85,8 @@ class LibraryAdapter(
             layoutParams = AbsListView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
         val entry = entries[position]
-        val label = (entry as? PdfEntry)?.let { pdfLabels[it] } ?: entry.name
-        tile.show(entry, label, if (thumbnails && entry is PdfEntry) bitmapFor(entry) else null, thumbnails, pictures, marksFor(entry))
+        val (heading, label) = (entry as? PdfEntry)?.let { pdfLabels[it] } ?: (null to entry.name)
+        tile.show(entry, label, if (thumbnails && entry is PdfEntry) bitmapFor(entry) else null, thumbnails, pictures, marksFor(entry), heading)
         return tile
     }
 }
@@ -104,6 +103,8 @@ class TileView(context: Context) : View(context) {
         private set
     /** The name drawn: for a PDF, perhaps shorter than its file name (TileNames). */
     private var label = ""
+    /** For a PDF shown in place of its small folder: that folder's name, drawn over [label]. */
+    private var heading: String? = null
     private var bitmap: Bitmap? = null
     private var thumbnails = true
     private var pictures = 0 // the adapter's count when this tile was bound
@@ -122,6 +123,12 @@ class TileView(context: Context) : View(context) {
         textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 13f, resources.displayMetrics)
         textAlign = Paint.Align.CENTER
     }
+    /** A grouped PDF's own name, under its folder's: the name's size, in grey. */
+    private val subPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = LibraryLook.GRAPHITE
+        textSize = namePaint.textSize
+        textAlign = Paint.Align.CENTER
+    }
     private val nameLine = namePaint.getFontMetricsInt(null)
     private val countLine = countPaint.getFontMetricsInt(null)
     private var nameLayout: StaticLayout? = null
@@ -131,9 +138,11 @@ class TileView(context: Context) : View(context) {
     private val page = RectF()
     private val path = Path()
 
-    fun show(entry: Entry, label: String, bitmap: Bitmap?, thumbnails: Boolean, pictures: Int, marks: TileMarks = TileMarks.NONE) {
-        if (entry == this.entry && label == this.label && bitmap === this.bitmap && thumbnails == this.thumbnails && pictures == this.pictures && marks == this.marks) return
-        val sameLabel = label == this.label
+    fun show(entry: Entry, label: String, bitmap: Bitmap?, thumbnails: Boolean, pictures: Int, marks: TileMarks = TileMarks.NONE, heading: String? = null) {
+        if (entry == this.entry && label == this.label && heading == this.heading && bitmap === this.bitmap && thumbnails == this.thumbnails &&
+            pictures == this.pictures && marks == this.marks
+        ) return
+        val sameLabel = label == this.label && heading == this.heading
         if (!sameLabel) nameLayout = null
         // A reused tile turning from a folder into a PDF, or back, changes height.
         if ((entry is FolderEntry) != (this.entry is FolderEntry)) requestLayout()
@@ -147,6 +156,7 @@ class TileView(context: Context) : View(context) {
         val looksTheSame = sameLabel && looksLike(entry, this.entry) && newBitmap === this.bitmap && thumbnails == this.thumbnails && marks == this.marks
         this.entry = entry
         this.label = label
+        this.heading = heading
         this.bitmap = newBitmap
         this.thumbnails = thumbnails
         this.pictures = pictures
@@ -219,16 +229,24 @@ class TileView(context: Context) : View(context) {
             }
         }
         val textTop = box.bottom + pad / 2
+        // With a heading (a PDF shown in place of its small folder): the folder's name on one
+        // line in black, then the PDF's own short name under it in grey.
+        val heading = heading
+        val first = heading ?: label
         val layout = nameLayout ?: StaticLayout.Builder
-            .obtain(label, 0, label.length, namePaint, (width - 2 * pad).coerceAtLeast(1))
+            .obtain(first, 0, first.length, namePaint, (width - 2 * pad).coerceAtLeast(1))
             .setAlignment(Layout.Alignment.ALIGN_CENTER)
-            .setMaxLines(2)
+            .setMaxLines(if (heading != null) 1 else 2)
             .setEllipsize(TextUtils.TruncateAt.END)
             .build().also { nameLayout = it }
         canvas.save()
         canvas.translate(pad.toFloat(), textTop)
         layout.draw(canvas)
         canvas.restore()
+        if (heading != null) {
+            val shown = TextUtils.ellipsize(label, subPaint, (width - 2 * pad).toFloat(), TextUtils.TruncateAt.END).toString()
+            canvas.drawText(shown, width / 2f, textTop + nameLine - subPaint.fontMetrics.ascent, subPaint)
+        }
         if (entry is FolderEntry) {
             val count = when {
                 entry.pdfCount == 1 -> "1 PDF"
