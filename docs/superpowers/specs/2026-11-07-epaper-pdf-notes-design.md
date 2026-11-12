@@ -73,9 +73,9 @@ It should be lightweight and fast, and it should do a small set of core things v
 
 Layout: the PDF pages fill the screen. A **thin top strip** (a little under 5% of the height, 4.4% since 2026-11-10, always visible, one row) holds, left to right:
 
-`← library · pen · highlighter · eraser · lasso select · snip · undo · redo · ⋯ page menu`
+`← library · file name · pen · highlighter · eraser · lasso select · snip · undo · redo · paste · ⋯ page menu · ‹ page ›`
 
-How the strip is laid out (owner's decision, 2026-11-10): ← sits at the left edge. The tools, undo and redo sit together on a capsule (the "island") centred on the screen. ⋯ and the page indicator sit at the right edge. The island picks out the chosen tool. Tapping a tool shows it at once, with one quick flash, because fast-ink is on. Holding a pen button doesn't change the island: that would flash the screen at every press (owner's choice). The status bar is hidden on the writing screen, so the strip sits at the very top with even space around it. Two looks for the island (black, or white with an outline) are being compared on the tablet.
+How the strip is laid out (owner's decision, 2026-11-10): ← sits at the left edge, followed by the open file's name in grey, cut from the front when it's too long so its end shows; it never moves the island (owner, UI review decision 2, 2026-11-12). The tools, undo and redo sit together on a capsule (the "island") centred on the screen. ⋯ and the page indicator sit at the right edge. The island picks out the chosen tool. Tapping a tool shows it at once, with one quick flash, because fast-ink is on. Holding a pen button doesn't change the island: that would flash the screen at every press (owner's choice). The status bar is hidden on the writing screen, so the strip sits at the very top with even space around it. The island is white with a black outline (owner's choice, 2026-11-10).
 
 The page menu holds **rotate this page**, **rotate all pages**, and the reading settings below.
 
@@ -106,7 +106,7 @@ Navigation:
 - copied, then pasted elsewhere **in the same document** (another page or the same page),
 - deleted.
 
-**How copy, delete, and paste are reached (designer's call).** While something is selected, a small action bar appears next to the selection with **copy** and **delete**, and it disappears when the selection is cleared. After a copy or a snip, a **Paste** button appears in the top strip, and only then. Tap it, then tap the page with the pen where the content should land. The clipboard holds one item and lives only for the session. No permanent UI is added.
+**How copy, delete, and paste are reached (designer's call).** While something is selected, a small action bar appears next to the selection with **copy** and **delete**, and it disappears when the selection is cleared. A **Paste** button sits on the island, greyed out until something is copied or snipped, so the tools never move (owner, UI review decision 3, 2026-11-12; before, it appeared only after a copy and shifted the tools). Tap it, then tap the page with the pen where the content should land. The clipboard holds one item and lives only for the session.
 
 **Snip.** A separate tool from lasso. Drag a rectangle to capture that region **as a picture**, including the printed PDF content and any ink on it. Paste it onto another page in the same document. Once pasted it acts as a single image object: it can be moved, resized, deleted, and lasso-selected, but not edited stroke by stroke.
 
@@ -192,6 +192,6 @@ The owner can overturn any of these:
 - The conflict copy naming format.
 - Rotation in 90° steps, from the page menu in the toolbar.
 - ~~Pages scroll vertically and continuously.~~ Replaced by the owner on 2026-11-09: one page at a time (section 6.2).
-- Copy and delete live in a small action bar next to the selection, and Paste appears in the top strip only after a copy or snip. You place a paste with a pen tap.
+- Copy and delete live in a small action bar next to the selection, and Paste sits on the island, greyed out until there's something to paste (owner, 2026-11-12). You place a paste with a pen tap.
 - After a crash, strokes that never reached the PDF are replayed into a "my edits" copy if the file changed on disk in the meantime.
 - ~~Portrait orientation is locked.~~ Replaced on 2026-11-09: the screen follows the tablet, because Android 16 overrides the lock (section 6.2).

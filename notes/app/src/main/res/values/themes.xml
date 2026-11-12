@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        Black on white everywhere (UI review, decision 4): the system's teal accent becomes
+        black, and pop-up menus get a black outline, since the shadow they'd normally have
+        doesn't show on e-ink.
+    -->
+    <style name="Theme.Jot" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:colorAccent">#000000</item>
+        <item name="android:colorControlActivated">#000000</item>
+        <item name="android:colorControlNormal">#000000</item>
+        <item name="android:textColorHighlight">#C8C8C8</item>
+        <item name="android:popupMenuStyle">@style/Jot.PopupMenu</item>
+    </style>
+
+    <style name="Jot.PopupMenu" parent="android:Widget.Material.Light.PopupMenu">
+        <item name="android:popupBackground">@drawable/menu_frame</item>
+        <item name="android:popupElevation">0dp</item>
+    </style>
+</resources>

@@ -11,12 +11,14 @@ import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import android.view.Gravity
+import android.view.Menu
 import android.view.MotionEvent
 import android.view.View
 import android.text.InputType
 import android.view.WindowManager
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.FrameLayout
 import android.widget.PopupMenu
 import android.widget.TextView
 import android.widget.Toast
@@ -97,6 +99,10 @@ class WritingActivity : Activity() {
 
     /** The file being written into. It changes once, if the owner saves a damaged file's writing to a copy. */
     private lateinit var path: String
+    /** A strip button's side in pixels: the Paste bubble is as tall. */
+    private var stripSide = 0
+    /** The open file's name, in the strip beside ←. */
+    private lateinit var fileName: TextView
     private var pageCount = 0
     private lateinit var pen: PenInput
     private lateinit var toolButtons: Map<Tool, StripButton>
@@ -278,6 +284,7 @@ class WritingActivity : Activity() {
         pages.onFingerLongPress = { x, y -> offerPaste(x, y) }
         val gap = stripHeight / 8
         val side = stripHeight - 2 * gap
+        stripSide = side
         val left = StripRow(this, side = side, gap = gap)
         island = IslandRow(this, side = side, gap = gap / 3)
         val right = StripRow(this, side = side, gap = gap)
@@ -298,7 +305,8 @@ class WritingActivity : Activity() {
         island.addDivider(height = side * 2 / 5, gap = gap)
         undoButton = button(island, Glyph.UNDO, "Undo") { undoOrRedo(undo = true) }.apply { isEnabled = false }
         redoButton = button(island, Glyph.REDO, "Redo") { undoOrRedo(undo = false) }.apply { isEnabled = false }
-        pasteButton = button(island, Glyph.PASTE, "Paste") { togglePaste() }.apply { visibility = View.GONE }
+        // Always on the island, greyed out until something is copied, so the tools never move (UI review, decision 3).
+        pasteButton = button(island, Glyph.PASTE, "Paste") { togglePaste() }.apply { isEnabled = false }
         menuButton = button(right, Glyph.MENU, "Page menu", gaps = 2) { openPageMenu() }
         previousButton = button(right, Glyph.PREVIOUS, "Previous page") { turn(forward = false) }
         right.addView(indicator, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.MATCH_PARENT).apply { marginEnd = gap })
@@ -308,7 +316,17 @@ class WritingActivity : Activity() {
         // the screen's edges.
         left.setPadding(gap + (side * 0.12f).toInt(), 0, 0, 0)
         right.setPadding(0, 0, gap, 0)
-        val strip = CentredStrip(this, gap = gap, start = left, middle = island, end = right, middleHeight = side).apply {
+        // The open file's name, cut from the front when long so its end ("workbook") shows. Set
+        // once here (and when writing moves to a copy): a strip redraw flashes while fast-ink is on.
+        fileName = TextView(this).apply {
+            text = File(path).nameWithoutExtension
+            textSize = 16f
+            setTextColor(LibraryLook.GRAPHITE)
+            isSingleLine = true
+            ellipsize = android.text.TextUtils.TruncateAt.START
+            setPadding(gap, 0, 0, 0)
+        }
+        val strip = CentredStrip(this, gap = gap, start = left, middle = island, end = right, middleHeight = side, title = fileName).apply {
             setBackgroundColor(Color.WHITE)
         }
         stripView = strip
@@ -848,7 +866,7 @@ class WritingActivity : Activity() {
     }
 
     /**
-     * The Paste button (it shows while [ToolState.showPaste]): arms a paste for the next pen
+     * The Paste button (black while [ToolState.showPaste], grey before): arms a paste for the next pen
      * tap on the page, or cancels one already armed.
      */
     private fun togglePaste() {
@@ -873,19 +891,21 @@ class WritingActivity : Activity() {
             letGo()
             toolStateChanged()
         }
+        // As tall as a strip button, with round ends like the island (UI review, finding 8).
         val button = TextView(this).apply {
             text = "Paste"
-            textSize = 20f
+            textSize = 18f
             setTextColor(Color.BLACK)
-            val pad = (resources.displayMetrics.density * 14).toInt()
-            setPadding(pad * 2, pad, pad * 2, pad)
+            gravity = Gravity.CENTER
+            val pad = (resources.displayMetrics.density * 20).toInt()
+            setPadding(pad, 0, pad, 0)
             background = android.graphics.drawable.GradientDrawable().apply {
                 setColor(Color.WHITE)
                 setStroke((resources.displayMetrics.density * 2).toInt(), Color.BLACK)
-                cornerRadius = resources.displayMetrics.density * 8
+                cornerRadius = stripSide / 2f
             }
         }
-        val popup = android.widget.PopupWindow(button, LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT, true)
+        val popup = android.widget.PopupWindow(button, LinearLayout.LayoutParams.WRAP_CONTENT, stripSide, true)
         button.setOnClickListener {
             popup.dismiss()
             Log.i(TAG, "paste by long-press")
@@ -902,7 +922,7 @@ class WritingActivity : Activity() {
         // Just above the finger, so the finger doesn't hide it.
         button.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
         popup.showAtLocation(pages, Gravity.NO_GRAVITY,
-            (origin[0] + x - button.measuredWidth / 2f).toInt(), (origin[1] + y - button.measuredHeight * 1.5f).toInt())
+            (origin[0] + x - button.measuredWidth / 2f).toInt(), (origin[1] + y - stripSide * 1.5f).toInt())
     }
 
     /** What the selection layer reports, turned into changes. UI thread. */
@@ -919,8 +939,8 @@ class WritingActivity : Activity() {
         override fun copy() {
             toolState.clipboard = Clipboard(selected, pdfToDisplay[selectedPage])
             Log.i(TAG, "copied page=$selectedPage items=${selected.size}")
-            updateStrip() // Paste appears
-            toast(PASTE_HINT)
+            showStripChange(updateStrip()) // Paste turns black
+            showCopied()
         }
 
         override fun delete() {
@@ -991,8 +1011,9 @@ class WritingActivity : Activity() {
                 Log.i(TAG, "snip page=$page px=$size bytes=${png.size} ms=${SystemClock.uptimeMillis() - started}")
                 runOnUiThread {
                     toolState.clipboard = Clipboard(listOf(item), toDisplay)
-                    updateStrip() // Paste appears
-                    toast(PASTE_HINT)
+                    // Paste turns black. The snip may finish after fast-ink is back, so it's put on the panel.
+                    showStripChange(updateStrip())
+                    showCopied()
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "snip failed page=$page", e)
@@ -1103,9 +1124,11 @@ class WritingActivity : Activity() {
             setSelectAllOnFocus(true)
             setText((v.page + 1).toString())
         }
+        // Padded as the library's name fields are, so the number isn't against the edge.
+        val pad = LibraryLook.dp(this, 20)
         val dialog = AlertDialog.Builder(this)
             .setTitle("Go to page")
-            .setView(field)
+            .setView(FrameLayout(this).apply { setPadding(pad, pad / 2, pad, 0); addView(field) })
             .setPositiveButton("Go") { _, _ ->
                 val wanted = field.text.toString().toIntOrNull() ?: return@setPositiveButton
                 Log.i(TAG, "go to page $wanted")
@@ -1148,19 +1171,21 @@ class WritingActivity : Activity() {
     private fun openPageMenu() {
         if (pen.isWriting) return // pausing fast-ink now would cut the stroke
         val menu = PopupMenu(this, menuButton)
-        menu.menu.add("Rotate this page").setOnMenuItemClickListener { rotate(all = false); true }
-        menu.menu.add("Rotate all pages").setOnMenuItemClickListener { rotate(all = true); true }
+        // Two groups with a line between: rotating changes the PDF, the rest only the screen (UI review, decision 4).
+        menu.menu.add(ROTATE_GROUP, Menu.NONE, Menu.NONE, "Rotate this page").setOnMenuItemClickListener { rotate(all = false); true }
+        menu.menu.add(ROTATE_GROUP, Menu.NONE, Menu.NONE, "Rotate all pages").setOnMenuItemClickListener { rotate(all = true); true }
         // A submenu, not a second menu: it stays one menu to Android, so the dismiss below
         // comes once, when the last of it closes, and fast-ink stays paused in between.
-        val looks = menu.menu.addSubMenu("Contrast: ${contrast.label()}")
+        val looks = menu.menu.addSubMenu(LOOK_GROUP, Menu.NONE, Menu.NONE, "Contrast: ${contrast.label()}")
         Contrast.values().forEach { c ->
             looks.add(c.label()).setChecked(c == contrast).setOnMenuItemClickListener { chooseContrast(c); true }
         }
         looks.setGroupCheckable(0, true, true) // the one in use is ticked
-        menu.menu.add("Dark text as black").setCheckable(true).setChecked(darkTextAsBlack)
+        menu.menu.add(LOOK_GROUP, Menu.NONE, Menu.NONE, "Dark text as black").setCheckable(true).setChecked(darkTextAsBlack)
             .setOnMenuItemClickListener { chooseDarkTextAsBlack(!darkTextAsBlack); true }
-        menu.menu.add("Trim margins").setCheckable(true).setChecked(trimMargins)
+        menu.menu.add(LOOK_GROUP, Menu.NONE, Menu.NONE, "Trim margins").setCheckable(true).setChecked(trimMargins)
             .setOnMenuItemClickListener { chooseTrimMargins(!trimMargins); true }
+        menu.menu.setGroupDividerEnabled(true)
         dialogOpen = true
         pausePenAndRedraw()
         menu.setOnDismissListener {
@@ -1291,17 +1316,16 @@ class WritingActivity : Activity() {
     }
 
     /**
-     * The chosen tool picked out, and Paste there once there's something to paste, picked out
-     * while armed. Holding a pen button doesn't change it: showing that would flash the screen
+     * The chosen tool picked out, and Paste black once there's something to paste (grey before),
+     * picked out while armed. Holding a pen button doesn't change it: showing that would flash the screen
      * at every press (owner's choice, 2026-11-10). Returns whether anything changed.
      */
     private fun updateStrip(): Boolean {
         val shown = toolState.chosen
-        val pasteVisibility = if (toolState.showPaste) View.VISIBLE else View.GONE
         val changed = toolButtons.any { (tool, button) -> button.isSelected != (tool == shown) } ||
-            pasteButton.visibility != pasteVisibility || pasteButton.isSelected != toolState.pasteArmed
+            pasteButton.isEnabled != toolState.showPaste || pasteButton.isSelected != toolState.pasteArmed
         toolButtons.forEach { (tool, button) -> button.isSelected = tool == shown }
-        pasteButton.visibility = pasteVisibility
+        pasteButton.isEnabled = toolState.showPaste
         pasteButton.isSelected = toolState.pasteArmed
         return changed
     }
@@ -1312,7 +1336,10 @@ class WritingActivity : Activity() {
      * begun in a pause gets no live line. With fast-ink off it's on screen already.
      */
     private fun showStripChange(changed: Boolean) {
-        if (changed && fastInkWanted()) pen.showAlone(stripView)
+        if (changed && fastInkWanted()) {
+            Log.i(TAG, "strip shown alone")
+            pen.showAlone(stripView)
+        }
     }
 
     /** Full screen while writing: the status bar comes back for a moment with a swipe down from the top. */
@@ -1429,6 +1456,7 @@ class WritingActivity : Activity() {
                 // The session writes into the copy from here on, so the copy is what "Continue"
                 // and the remembered page must follow, not the damaged original.
                 path = event.copy.path
+                fileName.text = event.copy.nameWithoutExtension
                 pages.viewport?.let { lastPages.set(path, it.page) }
                 LibraryPrefs(this).lastOpened = event.copy
                 toast("Saved to ${event.copy.name}.")
@@ -1462,13 +1490,22 @@ class WritingActivity : Activity() {
     }
 
     /** With the app's context, not the screen's: a message can come after the screen has closed (see [show]). */
-    private fun toast(text: String) = Toast.makeText(applicationContext, text, Toast.LENGTH_LONG).show()
+    private fun toast(text: String, length: Int = Toast.LENGTH_LONG) = Toast.makeText(applicationContext, text, length).show()
+
+    /** After a copy or snip: how to paste the first few times, then just "Copied." (UI review, decision 6). */
+    private fun showCopied() {
+        val shown = readingPrefs.copyHintsShown
+        toast(copyMessage(shown), if (shown < COPY_HINTS) Toast.LENGTH_LONG else Toast.LENGTH_SHORT)
+        if (shown < COPY_HINTS) readingPrefs.copyHintsShown = shown + 1
+    }
 
     companion object {
         const val EXTRA_PATH = "path"
 
         /** After Copy or a snip, which otherwise only show as the Paste button appearing (owner, 2026-11-10). */
-        private const val PASTE_HINT = "Copied. To paste, hold a finger on the page, or tap Paste."
+        /** The ⋯ menu's groups: what changes the PDF, then what changes only the screen. */
+        private const val ROTATE_GROUP = 1
+        private const val LOOK_GROUP = 2
         private val PAGE_KEYS = setOf(
             android.view.KeyEvent.KEYCODE_VOLUME_DOWN, android.view.KeyEvent.KEYCODE_VOLUME_UP,
             android.view.KeyEvent.KEYCODE_PAGE_DOWN, android.view.KeyEvent.KEYCODE_PAGE_UP,
