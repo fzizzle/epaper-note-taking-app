@@ -55,6 +55,21 @@ class LibraryPrefs(context: Context) {
         get() = prefs.getBoolean(THUMBNAILS, true)
         set(value) = prefs.edit().putBoolean(THUMBNAILS, value).apply()
 
+    /** Start in the last document, not the library (LaunchOpen). Off unless turned on. */
+    var openLastAtLaunch: Boolean
+        get() = prefs.getBoolean(OPEN_LAST, false)
+        set(value) = prefs.edit().putBoolean(OPEN_LAST, value).apply()
+
+    /**
+     * Set just before the app opens the last document by itself at a start, cleared once that
+     * document is on screen (or says it can't be opened). Still set at the next start, the
+     * open never finished. Written at once, not in the background: it must be on disk before
+     * the document is opened, or a crash there would leave no trace.
+     */
+    var launchOpenUnfinished: Boolean
+        get() = prefs.getBoolean(LAUNCH_UNFINISHED, false)
+        set(value) { prefs.edit().putBoolean(LAUNCH_UNFINISHED, value).commit() }
+
     /** The library as a compact list, not tiles. */
     var listView: Boolean
         get() = prefs.getBoolean(LIST_VIEW, false)
@@ -76,6 +91,8 @@ class LibraryPrefs(context: Context) {
         const val THUMBNAILS = "show-thumbnails"
         const val OPEN_OUT = "open-out-small-folders"
         const val LIST_VIEW = "list-view"
+        const val OPEN_LAST = "open-last-at-launch"
+        const val LAUNCH_UNFINISHED = "launch-open-unfinished"
         const val CONTINUE_PICTURE = "continue-picture-of"
     }
 }
@@ -182,6 +199,10 @@ fun showLibrarySettings(
         addView(thumbnailsRow)
         addView(View(activity).apply { setBackgroundColor(LibraryLook.RULE) }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 2))
         addView(openOutRow)
+        addView(View(activity).apply { setBackgroundColor(LibraryLook.RULE) }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 2))
+        addView(onOffRow("Start in the last document", "Opening the app goes straight to where you were", { prefs.openLastAtLaunch }) {
+            prefs.openLastAtLaunch = it
+        })
     }
     AlertDialog.Builder(activity)
         .setTitle("Settings")

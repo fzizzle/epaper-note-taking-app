@@ -32,6 +32,7 @@ import com.fzizzle.epapernotes.library.FolderEntry
 import com.fzizzle.epapernotes.library.FolderListing
 import com.fzizzle.epapernotes.library.FolderWatch
 import com.fzizzle.epapernotes.library.HookPath
+import com.fzizzle.epapernotes.library.LaunchOpen
 import com.fzizzle.epapernotes.library.PdfEntry
 import com.fzizzle.epapernotes.library.ThumbnailCache
 import com.fzizzle.epapernotes.library.TileMarks
@@ -154,6 +155,29 @@ class LibraryActivity : Activity() {
         adapter = LibraryAdapter({ thumbnails?.bitmapFor(it) }, ::marksFor, ::detailFor)
         changes = LibraryChanges(this, disk, prefs) { done -> list(then = done) }
         library = buildLibrary()
+        // Started from nothing, from the launcher: the one moment "Start in the last document" acts.
+        freshStart = savedInstanceState == null && intent?.action == Intent.ACTION_MAIN && intent?.hasCategory(Intent.CATEGORY_LAUNCHER) == true
+    }
+
+    /** True until the first [onResume] with file access has decided where to start (LaunchOpen). */
+    private var freshStart = false
+
+    /** "Start in the last document": at a fresh start, opens it, unless the last try at that never finished. */
+    private fun startWhereTheSettingSays() {
+        val fresh = freshStart
+        freshStart = false
+        val last = prefs.lastOpened
+        when (LaunchOpen.decide(fresh, prefs.openLastAtLaunch, last?.isFile == true, prefs.launchOpenUnfinished)) {
+            LaunchOpen.Start.LIBRARY -> Unit
+            LaunchOpen.Start.LAST_DOCUMENT -> {
+                prefs.launchOpenUnfinished = true // cleared by the writing screen once the document shows
+                open(last!!)
+            }
+            LaunchOpen.Start.LIBRARY_AFTER_FAILED_OPEN -> {
+                prefs.launchOpenUnfinished = false
+                toast("Didn't reopen ${last?.nameWithoutExtension ?: "the last document"}: it didn't finish opening last time.")
+            }
+        }
     }
 
     override fun onStart() {
@@ -197,6 +221,7 @@ class LibraryActivity : Activity() {
             }
         }
         val root = prefs.root ?: return chooseFirstRoot()
+        startWhereTheSettingSays()
         if (root != this.root) {
             this.root = root
             folder = prefs.folderOnShow?.takeIf { it.startsWith(root) } ?: root

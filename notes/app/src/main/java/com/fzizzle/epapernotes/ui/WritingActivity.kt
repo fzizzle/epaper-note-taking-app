@@ -430,6 +430,8 @@ class WritingActivity : Activity() {
         layOutPages(startPage = lastPages.get(path)) {
             pages.post {
                 documentShown = true
+                // If the app opened this document by itself at its start (LaunchOpen): it got here.
+                LibraryPrefs(this).let { if (it.launchOpenUnfinished) it.launchOpenUnfinished = false }
                 publishPenMapping()
                 // A slow document can finish opening after the screen was left. The pen must not
                 // come on for a screen in the background; onResume turns it on if the screen comes back.
@@ -1539,6 +1541,8 @@ class WritingActivity : Activity() {
                 toast("Saved to ${event.copy.name}.")
             }
             is SessionEvent.OpenFailed -> {
+                // Said plainly that it can't be opened: not the silent failure LaunchOpen guards against.
+                LibraryPrefs(this).let { if (it.launchOpenUnfinished) it.launchOpenUnfinished = false }
                 toast(event.message)
                 finish()
             }
