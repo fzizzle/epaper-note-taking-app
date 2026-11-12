@@ -229,7 +229,7 @@ class LibraryActivity : Activity() {
             }
             setOnScrollListener(object : AbsListView.OnScrollListener {
                 override fun onScrollStateChanged(view: AbsListView, scrollState: Int) {}
-                override fun onScroll(view: AbsListView, first: Int, count: Int, total: Int) = tilesOnScreenChanged()
+                override fun onScroll(view: AbsListView, first: Int, count: Int, total: Int) = tilesOnScreenChanged(fromScroll = true)
             })
         }
         emptyNote = TextView(this).apply {
@@ -369,11 +369,22 @@ class LibraryActivity : Activity() {
      * The tiles on screen get their thumbnails first, and the folders among them are watched,
      * so a PDF arriving inside one updates its count (spec §6.1).
      */
-    private fun tilesOnScreenChanged() {
+    private fun tilesOnScreenChanged(fromScroll: Boolean = false) {
+        // The grid's scroll callback comes many times for one swipe, and again with nothing
+        // moved. Unless the tiles on screen or the folder's contents changed since the last
+        // call, there's nothing new to tell anyone. Every other caller is always acted on.
+        // The grid calls its scroll listener once while it's being set up, before `grid` holds it.
+        if (!::grid.isInitialized) return
+        val now = listOf(grid.firstVisiblePosition, grid.childCount, System.identityHashCode(adapter.entries), System.identityHashCode(thumbnails), started)
+        if (fromScroll && now == tilesLastReported) return
+        tilesLastReported = now
         if (started) watch.watchChildren(onScreen().filterIsInstance<FolderEntry>().map { it.file })
         val loader = thumbnails ?: return
         loader.show(adapter.entries.filterIsInstance<PdfEntry>(), onScreen().filterIsInstance<PdfEntry>())
     }
+
+    /** What [tilesOnScreenChanged] last acted on. */
+    private var tilesLastReported: List<Any> = emptyList()
 
     /** The entries whose tiles are on screen now. */
     private fun onScreen(): List<Entry> {
