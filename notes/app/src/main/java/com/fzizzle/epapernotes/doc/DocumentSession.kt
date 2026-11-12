@@ -76,6 +76,19 @@ class DocumentSession(
     // next rewritten whole, so the message isn't shown at every stroke.
     private var journalBroken = false
 
+    /**
+     * How many times this session has added or removed a page, so a request can say which page
+     * numbers it was made with: the screen latches it when the pen lands. It goes up, and the
+     * change's mapping is kept in [pageChanges], in the same locked step that moves `unsaved`
+     * to the new numbers ([restartJournal]). Written under lock, on the worker; read anywhere.
+     */
+    @Volatile var pageNumbering = 0
+        private set
+
+    // Guarded by lock. Each page change of this session, as old page number to new (null: the
+    // page is gone). Entry k takes a page number from numbering k to numbering k + 1.
+    private val pageChanges = ArrayList<(Int) -> Int?>()
+
     /** Opened once the journal is ready, so no stroke can be written before its header. */
     private val journalReady = CountDownLatch(1)
 
@@ -239,9 +252,14 @@ class DocumentSession(
         scheduler.post { redrawFaultyInkFrom(page + 1) }
     }
 
-    /** A finished stroke, from the pen's thread. Safe in the journal when this returns (see [commit] for a full tablet). */
-    fun addStroke(page: Int, stroke: Stroke) {
-        record(AddItems(page, listOf(InkItem(ItemIds.next(), stroke))))
+    /**
+     * A finished stroke, from the pen's thread. Safe in the journal when this returns (see
+     * [commit] for a full tablet). [numbering] is the [pageNumbering] the stroke's [page] was
+     * read under, when the pen landed: a stroke handed over after a page change is moved to its
+     * page's new number (see [record]).
+     */
+    fun addStroke(page: Int, stroke: Stroke, numbering: Int = pageNumbering) {
+        record(AddItems(page, listOf(InkItem(ItemIds.next(), stroke))), numbering)
     }
 
     /**
@@ -259,20 +277,39 @@ class DocumentSession(
      * Returns the change as journaled, or null if it was empty and ignored. It can differ from
      * [change]: a plan-2 item gets a new id when moved (see [withFreshIds]), and a caller that
      * keeps hold of the moved items, like the selection, must use these.
+     *
+     * [numbering]: the [pageNumbering] the change's page numbers were read under. If pages have
+     * been added or removed since, the change is moved to the new numbers here, under the lock,
+     * so nothing can renumber in between; one on a page removed since has nowhere to go and
+     * isn't recorded (null).
      */
-    fun record(change: Change): Change? {
+    fun record(change: Change, numbering: Int = pageNumbering): Change? {
         journalReady.await()
         val fresh = withFreshIds(change)
         if (isEmpty(fresh)) return null
-        synchronized(lock) {
-            commit(fresh) {
-                undoable.addLast(fresh)
+        val placed = synchronized(lock) {
+            val placed = movedSince(fresh, numbering)
+            if (placed == null) {
+                System.err.println("DocumentSession: a change on page ${fresh.pages} came after its page was removed: not recorded")
+                return null
+            }
+            commit(placed) {
+                undoable.addLast(placed)
                 if (undoable.size > HISTORY_LIMIT) undoable.removeFirst()
                 redoable.clear()
             }
+            placed
         }
         scheduleAutosave()
-        return fresh
+        return placed
+    }
+
+    /** Called with [lock] held. [change], made under [numbering], with the page numbers of now; null if one of its pages is gone. */
+    private fun movedSince(change: Change, numbering: Int): Change? {
+        var moved: Change? = change
+        for (k in numbering.coerceIn(0, pageNumbering) until pageNumbering) moved = moved?.let { renumbered(it, pageChanges[k]) }
+        if (moved !== change) System.err.println("DocumentSession: a change from before a page change moved from page ${change.pages} to ${moved?.pages}")
+        return moved
     }
 
     /**
@@ -344,20 +381,29 @@ class DocumentSession(
      * Removes the items an eraser [trail] (PDF space) touches on [page]. [answer] gets how many,
      * on the worker, before the [SessionEvent.PageChanged] the removal brings: the screen needs
      * to know whether to expect one.
+     *
+     * [numbering]: the [pageNumbering] [page] was read under. If a page was added or removed
+     * since, nothing is erased (0 hits): a trail drawn on the old page isn't worth redoing on a
+     * renumbered one. Checked on the worker, where page changes run, so it's exact.
      */
-    fun erase(page: Int, trail: List<Pt>, answer: (hits: Int) -> Unit = {}) {
+    fun erase(page: Int, trail: List<Pt>, numbering: Int = pageNumbering, answer: (hits: Int) -> Unit = {}) {
         var count = 0
         onWorker("erase on page $page", then = { answer(count) }) { p ->
+            if (stale(numbering, "erase on page $page")) return@onWorker
             val hits = Eraser.hits(p.items(page), trail) // items() once: it's costly for snips
             if (hits.isNotEmpty()) record(RemoveItems(page, hits))
             count = hits.size
         }
     }
 
-    /** The items a lasso [loop] (PDF space) picks up on [page], given to [answer] on the worker. */
-    fun select(page: Int, loop: List<Pt>, tapReachPt: Float? = null, answer: (List<Item>) -> Unit) {
+    /**
+     * The items a lasso [loop] (PDF space) picks up on [page], given to [answer] on the worker.
+     * Nothing, if a page was added or removed since [numbering], as for [erase].
+     */
+    fun select(page: Int, loop: List<Pt>, tapReachPt: Float? = null, numbering: Int = pageNumbering, answer: (List<Item>) -> Unit) {
         var found = emptyList<Item>()
         onWorker("select on page $page", then = { answer(found) }) { p ->
+            if (stale(numbering, "select on page $page")) return@onWorker
             // A tap with the lasso (the screen says so by giving its reach) picks the one item
             // under it; a loop, everything inside.
             found = if (tapReachPt != null) TapSelect.pick(p.items(page), loop, tapReachPt) else Lasso.selects(p.items(page), loop)
@@ -769,6 +815,9 @@ class DocumentSession(
                 remaining = moved.filterNotNull()
                 undoable.clear()
                 redoable.clear()
+                // From here on, a change made under the old numbers is moved as it's recorded.
+                pageChanges += newPageNumber
+                pageNumbering++
             }
             try {
                 // A copy: if the rewrite below fails, later strokes must still go into a whole
@@ -806,6 +855,13 @@ class DocumentSession(
             applied = 0
             oldJournal.clear()
         }
+    }
+
+    /** Worker thread only. Whether a request made under [numbering] has been overtaken by a page change. */
+    private fun stale(numbering: Int, what: String): Boolean {
+        if (numbering == pageNumbering) return false
+        System.err.println("DocumentSession: $what was asked for before a page change: not done")
+        return true
     }
 
     /**

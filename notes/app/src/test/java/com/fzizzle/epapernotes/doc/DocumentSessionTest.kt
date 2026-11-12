@@ -1226,4 +1226,98 @@ class DocumentSessionTest {
         s.isAddedPage(9) { answers += it }
         assertEquals(listOf(true, false, false), answers)
     }
+
+    // Requests made before a page change, arriving after it (Task 5, review r1). The screen
+    // latches the session's page numbering when the pen lands and passes it with the stroke.
+
+    /** A late stroke from before an add lands on its own page: one further if after the new page, unchanged before it. */
+    @Test fun aLateStrokeFromBeforeAnAddLandsOnItsOwnPage() {
+        val s = session()
+        val before = s.pageNumbering
+        s.addPageAfter(1)
+        assertEquals(before + 1, s.pageNumbering)
+        s.addStroke(2, line, before) // the old page 2, now 3
+        s.addStroke(0, dot, before) // before the new page: unchanged
+        assertEquals(listOf(line), strokesOn(3))
+        assertTrue(strokesOn(2).isEmpty()) // the added page stays empty
+        assertEquals(listOf(dot), strokesOn(0))
+        assertEquals(listOf(3, 0), journalChanges().map { (it as AddItems).page })
+    }
+
+    /** Across a removal later pages move one earlier, and a stroke on the page removed has nowhere to go: not recorded. */
+    @Test fun aLateStrokeFromBeforeARemovalMovesOrIsNotRecorded() {
+        fake.addedPages += 1
+        val s = session()
+        val before = s.pageNumbering
+        s.removeAddedPage(1)
+        s.addStroke(3, line, before) // the old page 3, now 2
+        s.addStroke(1, dot, before) // the page removed
+        assertEquals(listOf(line), strokesOn(2))
+        assertEquals(listOf(2), journalChanges().map { (it as AddItems).page })
+        assertEquals(1, fake.itemCount)
+    }
+
+    @Test fun aLateStrokeIsMovedThroughEveryPageChangeSince() {
+        val s = session()
+        val before = s.pageNumbering
+        s.addPageAfter(0) // old 4 is now 5
+        s.addPageAfter(3) // and now 6
+        s.addStroke(4, line, before)
+        s.addStroke(0, dot, before)
+        assertEquals(listOf(line), strokesOn(6))
+        assertEquals(listOf(dot), strokesOn(0))
+        assertEquals(before + 2, s.pageNumbering)
+    }
+
+    /** An erase drawn before a page change isn't worth redoing on a renumbered page: it removes nothing. */
+    @Test fun aLateEraseFromBeforeAPageChangeRemovesNothing() {
+        val s = session()
+        s.addStroke(1, line) // the old page 1 becomes 2, under the trail's page number
+        val before = s.pageNumbering
+        s.addPageAfter(0)
+        var hits = -1
+        s.erase(2, acrossLine, before) { hits = it }
+        assertEquals(0, hits)
+        assertEquals(listOf(line), strokesOn(2))
+    }
+
+    /** Stale is decided on the worker, when the erase runs: asked for with the numbering current then, it ran after the change. */
+    @Test fun anEraseQueuedBehindAPageChangeRemovesNothing() {
+        val s = session()
+        s.addStroke(1, line) // moves to page 2 with the add
+        var hits = -1
+        scheduler.post {
+            s.addPageAfter(0)
+            // Page 2 as numbered when asked (empty then); the add runs first, and would put the line under it.
+            s.erase(2, acrossLine, s.pageNumbering) { hits = it }
+        }
+        assertEquals(0, hits)
+        assertEquals(listOf(line), strokesOn(2))
+    }
+
+    @Test fun aLateLassoFromBeforeAPageChangeFindsNothing() {
+        val s = session()
+        s.addStroke(1, line)
+        val before = s.pageNumbering
+        s.addPageAfter(0)
+        var picked: List<Item>? = null
+        s.select(2, listOf(Pt(0f, 80f), Pt(60f, 80f), Pt(60f, 120f), Pt(0f, 120f)), numbering = before) { picked = it }
+        assertEquals(emptyList<Item>(), picked)
+    }
+
+    /** With the numbering current, strokes, erases and lassos behave as ever. */
+    @Test fun theCurrentNumberingChangesNothing() {
+        val s = session()
+        s.addPageAfter(0)
+        val now = s.pageNumbering
+        s.addStroke(2, line, now)
+        assertEquals(listOf(line), strokesOn(2))
+        var picked: List<Item>? = null
+        s.select(2, listOf(Pt(0f, 80f), Pt(60f, 80f), Pt(60f, 120f), Pt(0f, 120f)), numbering = now) { picked = it }
+        assertEquals(1, picked?.size)
+        var hits = -1
+        s.erase(2, acrossLine, now) { hits = it }
+        assertEquals(1, hits)
+        assertTrue(strokesOn(2).isEmpty())
+    }
 }
