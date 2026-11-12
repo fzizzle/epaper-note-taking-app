@@ -55,6 +55,10 @@ class PageView(context: Context) : View(context) {
     var onStylusDown: (PenButton) -> Unit = {}
     var onStylusHover: (PenButton) -> Unit = {}
 
+    /** Button 2 pressed while hovering close, then dragged: an eraser trail in view pixels ([HoverErase]). */
+    var onHoverEraseTrail: (List<FloatArray>) -> Unit = {}
+    private val hoverErase = HoverErase()
+
     /**
      * While set, pen events go here instead of being ignored. Set only while fast-ink is off
      * for a tool (ToolState.fastInkOn is false): with fast-ink on, Onyx has the pen.
@@ -827,13 +831,29 @@ class PageView(context: Context) : View(context) {
         // Not on exit: the pen leaves hover just as it lands, and a missing button there must
         // not turn a grey lasso line back into ink.
         if (isPen(event) && event.actionMasked != MotionEvent.ACTION_HOVER_EXIT) onStylusHover(penButtonOf(event))
+        if (isPen(event)) feedHoverErase(event)
         return super.onHoverEvent(event)
+    }
+
+    private fun feedHoverErase(event: MotionEvent) {
+        if (event.actionMasked == MotionEvent.ACTION_HOVER_EXIT) {
+            hoverErase.ended()?.let(onHoverEraseTrail)
+            return
+        }
+        val held = event.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS && event.isButtonPressed(MotionEvent.BUTTON_STYLUS_SECONDARY)
+        for (h in 0 until event.historySize) {
+            hoverErase.sample(held, event.getHistoricalPressure(h), event.getHistoricalX(h), event.getHistoricalY(h))?.let(onHoverEraseTrail)
+        }
+        hoverErase.sample(held, event.pressure, event.x, event.y)?.let(onHoverEraseTrail)
     }
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
         val m = event.actionMasked
         if (isPen(event)) penSeenAt = event.eventTime
-        if (m == MotionEvent.ACTION_DOWN && isPen(event)) onStylusDown(penButtonOf(event))
+        if (m == MotionEvent.ACTION_DOWN && isPen(event)) {
+            hoverErase.cancel() // a real touch: Onyx's eraser or the screen has this one
+            onStylusDown(penButtonOf(event))
+        }
         if (m == MotionEvent.ACTION_DOWN || m == MotionEvent.ACTION_POINTER_DOWN) {
             val lag = android.os.SystemClock.uptimeMillis() - event.eventTime
             android.util.Log.i("Notes", "touch ${MotionEvent.actionToString(m)} tool=${event.getToolType(event.actionIndex)} pointers=${event.pointerCount} deliveredLateMs=$lag")
