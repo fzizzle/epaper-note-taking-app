@@ -367,6 +367,23 @@ class PdfFile private constructor(private val doc: PDFDocument) : PdfPages {
     }
 
     /**
+     * Takes every one of the app's items (strokes and snips) off every page, for a fresh
+     * attempt, and returns how many went. It goes through the same remove as erasing, so other
+     * apps' annotations stay, and so do pages: a dotted page the owner added stays, empty.
+     */
+    fun removeOwnItems(): Int {
+        var removed = 0
+        for (page in 0 until pageCount) {
+            // Asking for the ids alone is quick; most pages of a workbook have no writing.
+            if (!hasOwnItems(page)) continue
+            val own = items(page)
+            apply(RemoveItems(page, own))
+            removed += own.size
+        }
+        return removed
+    }
+
+    /**
      * The page as shown (rotation applied, ink included), cut to [displayBox] in display points
      * (origin top-left, y down), at [pxPerPt] pixels per point. Snips use it as it is, with
      * all ink smoothed. With [smoothInk] false, ink is drawn as [render] draws it: the sharp

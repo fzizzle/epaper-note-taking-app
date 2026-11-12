@@ -541,4 +541,37 @@ class PdfFileStrokesTest {
             assertEquals(1, it.strokes(0).size); assertEquals(1, it.strokes(2).size)
         }
     }
+
+    /** A fresh attempt takes off the owner's strokes and snips, and nothing another app put there. */
+    @Test fun aFreshAttemptKeepsOtherAppsMarks() {
+        val out = File(dir, "attempt.pdf")
+        PdfFile.open(TestPdfs.withHighlight(dir)).use {
+            it.add(0, line)
+            it.add(0, line)
+            it.apply(AddItems(0, listOf(ImageItem(ItemIds.next(), Box(200f, 200f, 300f, 300f), 0, TestPdfs.redBluePng(40, 20)))))
+            assertEquals(3, it.removeOwnItems())
+            it.saveTo(out)
+        }
+        PdfFile.open(out).use {
+            assertTrue(it.items(0).isEmpty())
+            assertEquals(1, it.foreignAnnotationCount(0))
+        }
+    }
+
+    /** A dotted page the owner added stays, empty: it may be where the next attempt is worked. */
+    @Test fun aFreshAttemptKeepsAddedPages() {
+        val out = File(dir, "attempt-pages.pdf")
+        PdfFile.open(TestPdfs.blank(dir, pages = 2)).use {
+            it.addDottedPage(0)
+            it.add(0, line)
+            it.add(1, line)
+            assertEquals(2, it.removeOwnItems())
+            it.saveTo(out)
+        }
+        PdfFile.open(out).use {
+            assertEquals(3, it.pageCount)
+            assertTrue(it.isAddedPage(1))
+            assertTrue((0 until 3).all { page -> it.items(page).isEmpty() })
+        }
+    }
 }

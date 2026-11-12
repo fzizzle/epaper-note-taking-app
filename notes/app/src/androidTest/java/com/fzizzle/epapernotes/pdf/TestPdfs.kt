@@ -88,6 +88,21 @@ object TestPdfs {
         return file
     }
 
+    /** A one-page PDF with a single highlight, as another app might leave. */
+    fun withHighlight(dir: File): File {
+        val source = blank(dir, pages = 1)
+        val doc = PDFDocument.openDocument(source.path).asPDF()
+        val page = doc.loadPage(0) as PDFPage
+        page.createAnnotation(PDFAnnotation.TYPE_HIGHLIGHT).apply {
+            setQuadPoints(arrayOf(Quad(Rect(100f, 100f, 300f, 120f)))); update()
+        }
+        page.update()
+        val file = File.createTempFile("highlight", ".pdf", dir)
+        doc.save(file.path, "")
+        doc.destroy()
+        return file
+    }
+
     /** Subtype and /Rect of every annotation on page 0 that the app didn't make, to compare across a save. */
     fun foreignSignature(file: File): List<String> {
         val doc = PDFDocument.openDocument(file.path).asPDF()
