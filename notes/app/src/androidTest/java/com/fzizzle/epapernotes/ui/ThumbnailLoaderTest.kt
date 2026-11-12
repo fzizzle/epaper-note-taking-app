@@ -5,6 +5,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.fzizzle.epapernotes.ink.Box
 import com.fzizzle.epapernotes.library.PdfEntry
+import com.fzizzle.epapernotes.library.PdfFacts
 import com.fzizzle.epapernotes.library.THUMB_MAX_HEIGHT_PX
 import com.fzizzle.epapernotes.library.THUMB_WIDTH_PX
 import com.fzizzle.epapernotes.library.ThumbnailCache
@@ -104,6 +105,58 @@ class ThumbnailLoaderTest {
             assertEquals(Bitmap.Config.RGB_565, fromCache.config)
         } finally {
             second.stop()
+        }
+    }
+
+    /** The page count and "has writing" come with the thumbnail, read from the PDF itself, and are kept with it. */
+    @Test fun aRenderedThumbnailBringsItsFacts() {
+        val clean = entry(TestPdfs.blank(dir, pages = 3))
+        val written = TestPdfs.blank(dir, pages = 3).copyTo(File(dir, "written.pdf"))
+        val stroke = com.fzizzle.epapernotes.ink.Stroke(
+            com.fzizzle.epapernotes.ink.StrokeKind.PEN,
+            (0..10).map { com.fzizzle.epapernotes.ink.StrokePoint(100f + it * 5, 300f, 0.5f) },
+        )
+        com.fzizzle.epapernotes.pdf.PdfFile.open(written).use {
+            // On the second page: the look must go past the first.
+            it.apply(com.fzizzle.epapernotes.doc.AddItems(1, listOf(com.fzizzle.epapernotes.ink.InkItem(com.fzizzle.epapernotes.ink.ItemIds.next(), stroke))))
+            val out = File(dir, "written-saved.pdf")
+            it.saveTo(out)
+        }
+        val inked = entry(File(dir, "written-saved.pdf"))
+        loader.show(listOf(clean, inked), onScreen = listOf(clean, inked))
+        next(); next()
+        assertEquals(PdfFacts(3, false), loader.factsFor(clean))
+        assertEquals(PdfFacts(3, true), loader.factsFor(inked))
+        assertEquals(PdfFacts(3, true), cache.facts(inked))
+        // And again from the cache, as after the app starts afresh.
+        val again = LinkedBlockingQueue<Pair<PdfEntry, Bitmap?>>()
+        val second = ThumbnailLoader(cache) { pdf, bmp -> again += pdf to bmp }
+        try {
+            second.show(listOf(inked), onScreen = listOf(inked))
+            again.poll(10, TimeUnit.SECONDS) ?: throw AssertionError("no thumbnail from the cache")
+            assertEquals(PdfFacts(3, true), second.factsFor(inked))
+        } finally {
+            second.stop()
+        }
+    }
+
+    /**
+     * The list view shows no pictures, but still the writing mark and the page count: the
+     * loader finds a PDF's facts without drawing it, and says when it has them.
+     */
+    @Test fun factsComeWithoutAPictureForTheList() {
+        val page = entry(TestPdfs.blank(dir, pages = 3))
+        val told = LinkedBlockingQueue<PdfEntry>()
+        val forList = ThumbnailLoader(cache, onFacts = { told += it }) { pdf, bmp -> answers += pdf to bmp }
+        try {
+            forList.showFacts(listOf(page))
+            assertEquals(page, told.poll(10, TimeUnit.SECONDS))
+            assertEquals(PdfFacts(3, false), forList.factsFor(page))
+            assertEquals(PdfFacts(3, false), cache.facts(page))
+            assertEquals(null, cache.cached(page)) // nothing was drawn
+            assertEquals(null, answers.poll(300, TimeUnit.MILLISECONDS))
+        } finally {
+            forList.stop()
         }
     }
 

@@ -29,6 +29,8 @@ class FakePdfPages(override var wasRepaired: Boolean = false, private val saveDe
 
     val itemCount get() = pageItems.values.sumOf { it.size }
 
+    override fun hasOwnItems(page: Int): Boolean = pageItems[page].orEmpty().isNotEmpty()
+
     override fun items(page: Int): List<Item> {
         checkPage(page)
         val now = pageItems[page].orEmpty().toList()

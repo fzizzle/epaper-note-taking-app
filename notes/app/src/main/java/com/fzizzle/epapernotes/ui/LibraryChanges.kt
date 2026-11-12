@@ -50,16 +50,27 @@ class LibraryChanges(
     }
 
     /** The long-press menu on [tile]. [here] is the folder on show, where Move's chooser starts. */
-    fun showMenu(root: File, here: File, tile: View, entry: Entry) {
+    fun showMenu(root: File, here: File, tile: View, entry: Entry, openFolder: (File) -> Unit = {}) {
         if (busy) return
         // The tile stays grey while its menu is open, so it's clear which one the menu is for.
-        val marked = tile as? TileView
+        val marked = tile as? LibraryItemView
         marked?.marked = true
         PopupMenu(activity, tile).apply {
             setOnDismissListener { marked?.marked = false }
             menu.add("Rename").setOnMenuItemClickListener { askForName(root, entry); true }
             menu.add("Move").setOnMenuItemClickListener { askWhereTo(root, here, entry); true }
             menu.add("Delete").setOnMenuItemClickListener { askToDelete(root, entry); true }
+            // A PDF shown in place of its small folder (FolderListing): the folder has no tile
+            // of its own, so it's reached from here.
+            (entry as? PdfEntry)?.group?.let { group ->
+                val folder = FolderEntry(group, group.name, pdfCount = 0)
+                menu.addSubMenu("Folder: ${group.name}").apply {
+                    add("Open").setOnMenuItemClickListener { openFolder(group); true }
+                    add("Rename").setOnMenuItemClickListener { askForName(root, folder); true }
+                    add("Move").setOnMenuItemClickListener { askWhereTo(root, here, folder); true }
+                    add("Delete").setOnMenuItemClickListener { askToDelete(root, folder); true }
+                }
+            }
         }.show()
     }
 
@@ -113,6 +124,7 @@ class LibraryChanges(
 
     /** "Continue" follows its file through a rename or move made here. */
     private fun lastOpenedMoved(from: File, to: File) {
+        ContinuePicture(activity.cacheDir, prefs).moved(from, to)
         val last = prefs.lastOpened ?: return
         if (last == from) prefs.lastOpened = to
         else if (last.startsWith(from)) prefs.lastOpened = File(to, last.relativeTo(from).path)

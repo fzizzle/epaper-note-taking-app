@@ -254,6 +254,8 @@ class PdfFile private constructor(private val doc: PDFDocument) : PdfPages {
     override fun items(page: Int): List<Item> =
         itemsByPage.getOrPut(page) { readItems(page).toCollection(ArrayList()) }.toList()
 
+    override fun hasOwnItems(page: Int): Boolean = idsFor(page).isNotEmpty()
+
     /** A page's items decoded from the PDF itself, every time. [items] is the one to use; tests compare the two. */
     internal fun readItems(page: Int): List<Item> = annotationDicts(page).mapNotNull { annotations.read(it) }
 

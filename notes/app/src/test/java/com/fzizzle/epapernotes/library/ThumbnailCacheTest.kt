@@ -75,6 +75,36 @@ class ThumbnailCacheTest {
         assertNull(cache.cached(deleted))
     }
 
+    @Test fun factsAreStoredBesideTheThumbnail() {
+        val a = pdf("/s/a.pdf", 10, 5)
+        assertNull(cache.facts(a))
+        cache.store(a, byteArrayOf(1))
+        cache.storeFacts(a, PdfFacts(30, true))
+        assertEquals(PdfFacts(30, true), cache.facts(a))
+        assertTrue(cache.cached(a) != null)
+    }
+
+    /** The facts are of one version of the file: a changed file has none until it's looked at again. */
+    @Test fun aChangedFileHasNoFactsYet() {
+        val old = pdf("/s/a.pdf", 10, 5)
+        val new = pdf("/s/a.pdf", 12, 7)
+        cache.store(old, byteArrayOf(1))
+        cache.storeFacts(old, PdfFacts(30, false))
+        assertNull(cache.facts(new))
+        cache.store(new, byteArrayOf(2))
+        assertNull(cache.facts(old)) // swept with the old thumbnail
+    }
+
+    @Test fun pruneRemovesOrphanedFacts() {
+        val gone = real("gone.pdf")
+        cache.store(gone, byteArrayOf(1))
+        cache.storeFacts(gone, PdfFacts(3, true))
+        gone.file.delete()
+        cache.pruneMissing()
+        assertNull(cache.facts(gone))
+        assertTrue(dir.list()!!.none { it.endsWith(".facts") })
+    }
+
     @Test fun pruneKeepsLiveOnes() {
         val live = real("live.pdf")
         val gone = real("gone.pdf")

@@ -26,13 +26,17 @@ import android.widget.TextView
 import android.widget.Toast
 import com.fzizzle.epapernotes.doc.DocumentSession
 import com.fzizzle.epapernotes.storage.SafeSave
+import com.fzizzle.epapernotes.library.CourseColours
 import com.fzizzle.epapernotes.library.Entry
 import com.fzizzle.epapernotes.library.FolderEntry
 import com.fzizzle.epapernotes.library.FolderListing
 import com.fzizzle.epapernotes.library.FolderWatch
 import com.fzizzle.epapernotes.library.HookPath
+import com.fzizzle.epapernotes.library.LaunchOpen
 import com.fzizzle.epapernotes.library.PdfEntry
 import com.fzizzle.epapernotes.library.ThumbnailCache
+import com.fzizzle.epapernotes.library.TileMarks
+import com.fzizzle.epapernotes.library.progressOf
 import com.fzizzle.epapernotes.library.Volumes
 import com.fzizzle.epapernotes.ui.StripButton.Glyph
 import java.io.File
@@ -61,10 +65,68 @@ class LibraryActivity : Activity() {
 
     private lateinit var library: View
     private lateinit var breadcrumb: BreadcrumbBar
-    private lateinit var continueRow: TextView
+    private lateinit var continueRow: LinearLayout
+    private lateinit var continuePictureView: android.widget.ImageView
+    private lateinit var continueName: TextView
+    private lateinit var continueDetail: TextView
+    private lateinit var continuePicture: ContinuePicture
+
+    /** What the Continue row shows: the file, its page and page count, and its picture's date ([ContinuePicture.stamp]). */
+    private data class ContinueKey(val file: File, val page: Int, val pageCount: Int, val pictureStamp: Long)
+
+    /** Read by the disk thread, which only reads the picture again when this would change. */
+    @Volatile private var shownContinue: ContinueKey? = null
     private lateinit var grid: GridView
     private lateinit var adapter: LibraryAdapter
     private lateinit var emptyNote: TextView
+
+    private lateinit var lastPages: LastPageStore
+    private lateinit var courseRule: View
+    /** The colour [courseRule] has now: only set when it changes, so an unchanged listing redraws nothing. */
+    private var courseRuleColour = LibraryLook.RULE
+    /** How far the owner is into each PDF on show that they've opened (progressOf), read with the listing. */
+    private var progress: Map<File, Float> = emptyMap()
+
+    /** For the list view: "12 / 30" for each PDF on show that's been opened, read with the listing like [progress]. */
+    private var pageTexts: Map<File, String> = emptyMap()
+
+    /** A list row's right-hand words: where the owner is in a PDF, or its pages if it's unopened; what a folder holds. */
+    private fun detailFor(entry: Entry): String = when (entry) {
+        is FolderEntry -> folderCountText(entry)
+        is PdfEntry -> pageTexts[entry.file] ?: thumbnails?.factsFor(entry)?.let { if (it.pages == 1) "1 page" else "${it.pages} pages" }.orEmpty()
+    }
+
+    private lateinit var viewButton: StripButton
+
+    /** Tiles to list or back (decision 6), kept for next time. One redraw of the grid. */
+    private fun switchView() {
+        prefs.listView = !prefs.listView
+        viewButton.glyph = if (prefs.listView) Glyph.TILES else Glyph.LIST
+        grid.numColumns = columnsFor(resources.configuration)
+        adapter.show(adapter.entries, thumbnails = adapter.thumbnails, listView = prefs.listView)
+        tilesOnScreenChanged()
+    }
+
+    /** Marks [file]'s tile or row as the one just come back from, or with null takes the mark off. Only the views on screen are touched: no rebinding, so a tap in hand isn't lost. */
+    private fun markCameBackFrom(file: File?) {
+        if (adapter.markedFile == file) return
+        adapter.markedFile = file
+        for (i in 0 until grid.childCount) (grid.getChildAt(i) as? LibraryItemView)?.let { it.marked = file != null && it.entry?.file == file }
+    }
+
+    /** A tile's marks, from memory only: its progress from the listing, its writing mark from the thumbnail's facts. */
+    private fun marksFor(entry: Entry): TileMarks {
+        // At the library folder each course's folder carries its colour; inside a course the line under the strip does.
+        val pdf = entry as? PdfEntry
+            ?: return TileMarks(stripe = if (root == shownFolder) courseColourOf(entry.file) else null)
+        return TileMarks(progress = progress[pdf.file], hasInk = thumbnails?.factsFor(pdf)?.hasInk == true)
+    }
+
+    /** Each course's colour, by its code in capitals (CourseColours.assign), read with the listing. */
+    private var courseColours: Map<String, Int> = emptyMap()
+
+    private fun courseColourOf(file: File): Int? =
+        root?.let { CourseColours.courseOf(it, file) }?.let { courseColours[it.uppercase()] }
 
     private var root: File? = null
     /** The folder asked for; [shownFolder] is the one on screen, once it's been read. */
@@ -88,9 +150,34 @@ class LibraryActivity : Activity() {
         super.onCreate(savedInstanceState)
         prefs = LibraryPrefs(this)
         thumbnailCache = ThumbnailCache(File(cacheDir, "thumbnails"))
-        adapter = LibraryAdapter { thumbnails?.bitmapFor(it) }
+        lastPages = LastPageStore(this)
+        continuePicture = ContinuePicture(cacheDir, prefs)
+        adapter = LibraryAdapter({ thumbnails?.bitmapFor(it) }, ::marksFor, ::detailFor)
         changes = LibraryChanges(this, disk, prefs) { done -> list(then = done) }
         library = buildLibrary()
+        // Started from nothing, from the launcher: the one moment "Start in the last document" acts.
+        freshStart = savedInstanceState == null && intent?.action == Intent.ACTION_MAIN && intent?.hasCategory(Intent.CATEGORY_LAUNCHER) == true
+    }
+
+    /** True until the first [onResume] with file access has decided where to start (LaunchOpen). */
+    private var freshStart = false
+
+    /** "Start in the last document": at a fresh start, opens it, unless the last try at that never finished. */
+    private fun startWhereTheSettingSays() {
+        val fresh = freshStart
+        freshStart = false
+        val last = prefs.lastOpened
+        when (LaunchOpen.decide(fresh, prefs.openLastAtLaunch, last?.isFile == true, prefs.launchOpenUnfinished)) {
+            LaunchOpen.Start.LIBRARY -> Unit
+            LaunchOpen.Start.LAST_DOCUMENT -> {
+                prefs.launchOpenUnfinished = true // cleared by the writing screen once the document shows
+                open(last!!)
+            }
+            LaunchOpen.Start.LIBRARY_AFTER_FAILED_OPEN -> {
+                prefs.launchOpenUnfinished = false
+                toast("Didn't reopen ${last?.nameWithoutExtension ?: "the last document"}: it didn't finish opening last time.")
+            }
+        }
     }
 
     override fun onStart() {
@@ -99,7 +186,7 @@ class LibraryActivity : Activity() {
         shownFolder?.let(watch::watch)
         // The subfolders on screen too, before the listing onResume asks for: a PDF landing in
         // one meanwhile still updates its count. The grid still holds the last entries.
-        if (shownFolder != null) watch.watchChildren(onScreen().filterIsInstance<FolderEntry>().map { it.file })
+        if (shownFolder != null) watch.watchChildren(watchedChildren())
         thumbnails?.resume()
     }
 
@@ -134,6 +221,7 @@ class LibraryActivity : Activity() {
             }
         }
         val root = prefs.root ?: return chooseFirstRoot()
+        startWhereTheSettingSays()
         if (root != this.root) {
             this.root = root
             folder = prefs.folderOnShow?.takeIf { it.startsWith(root) } ?: root
@@ -142,7 +230,10 @@ class LibraryActivity : Activity() {
         // Back from a document, its last save is still landing (spec §7.2): list once it has,
         // so the file's new size and date redraw its tile now, not when the folder watch
         // notices 0.4 s later. The folder as it was stays on screen meanwhile.
-        list(afterSaveOf = if (backFromDocument && shownFolder != null) prefs.lastOpened else null)
+        list(
+            afterSaveOf = if (backFromDocument && shownFolder != null) prefs.lastOpened else null,
+            cameBackFrom = if (backFromDocument) prefs.lastOpened else null,
+        )
     }
 
     /** A check hook's path, as the library writes paths (Ruling L1); one outside every volume that's in is refused. */
@@ -201,16 +292,43 @@ class LibraryActivity : Activity() {
         strip.addView(breadcrumb, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f).apply { rightMargin = gap })
         fun button(glyph: Glyph, description: String, gaps: Int = 1, onClick: () -> Unit) =
             strip.addSquare(StripButton(this, glyph, description).apply { setOnClickListener { onClick() } }, gaps)
+        // Shows the view it switches to.
+        viewButton = StripButton(this, if (prefs.listView) Glyph.TILES else Glyph.LIST, "List or tiles").apply { setOnClickListener { switchView() } }
+        strip.addSquare(viewButton)
         button(Glyph.REFRESH, "Refresh") { refresh() }
         button(Glyph.NEW_FOLDER, "New folder") { root?.let { changes.askForNewFolder(it, shownFolder ?: it) } }
         button(Glyph.MENU, "Settings", gaps = 0) { showSettings() }
 
-        continueRow = TextView(this).apply {
+        // Continue: a picture of the page that was left, with its ink, then the file's name and where in it.
+        continuePictureView = android.widget.ImageView(this).apply {
+            adjustViewBounds = true
+            scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+            // A thin frame, as the tiles' pictures have.
+            foreground = android.graphics.drawable.GradientDrawable().apply { setStroke(2, LibraryLook.RULE) }
+            visibility = View.GONE
+        }
+        continueName = TextView(this).apply {
             textSize = 20f
             setTextColor(Color.BLACK)
+            maxLines = 2
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        }
+        continueDetail = TextView(this).apply {
+            textSize = 16f
+            setTextColor(LibraryLook.GRAPHITE)
+        }
+        continueRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(20), dp(12), dp(20), dp(12))
             background = LibraryLook.pressedFeedback()
             visibility = View.GONE
+            addView(continuePictureView, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(CONTINUE_PICTURE_DP)).apply { rightMargin = dp(16) })
+            addView(LinearLayout(this@LibraryActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(continueName)
+                addView(continueDetail)
+            }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
             setOnClickListener { prefs.lastOpened?.let(::open) }
         }
         grid = GridView(this).apply {
@@ -226,8 +344,13 @@ class LibraryActivity : Activity() {
             adapter = this@LibraryActivity.adapter
             setOnItemClickListener { _, _, position, _ -> tapped(this@LibraryActivity.adapter.entries[position]) }
             setOnItemLongClickListener { _, view, position, _ ->
-                root?.let { changes.showMenu(it, shownFolder ?: it, view, this@LibraryActivity.adapter.entries[position]) }
+                root?.let { changes.showMenu(it, shownFolder ?: it, view, this@LibraryActivity.adapter.entries[position], openFolder = ::goTo) }
                 true
+            }
+            // The mark on the document just come back from goes at the next touch. Not taken: the touch does what it would.
+            setOnTouchListener { _, event ->
+                if (event.actionMasked == android.view.MotionEvent.ACTION_DOWN) markCameBackFrom(null)
+                false
             }
             setOnScrollListener(object : AbsListView.OnScrollListener {
                 override fun onScrollStateChanged(view: AbsListView, scrollState: Int) {}
@@ -250,7 +373,9 @@ class LibraryActivity : Activity() {
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             addView(strip, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, stripHeight))
-            addView(View(this@LibraryActivity).apply { setBackgroundColor(LibraryLook.RULE) }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 2))
+            // The line under the strip: grey, or inside a course its colour (showListing).
+            courseRule = View(this@LibraryActivity).apply { setBackgroundColor(LibraryLook.RULE) }
+            addView(courseRule, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, RULE_PX))
             addView(continueRow)
             addView(FrameLayout(this@LibraryActivity).apply {
                 addView(grid)
@@ -260,14 +385,18 @@ class LibraryActivity : Activity() {
     }
 
     /** About 5 tiles across in portrait, 7 in landscape (decision 2). */
-    private fun columnsFor(config: Configuration) = if (config.orientation == Configuration.ORIENTATION_LANDSCAPE) 7 else 5
+    private fun columnsFor(config: Configuration): Int {
+        val sideways = config.orientation == Configuration.ORIENTATION_LANDSCAPE
+        // The list view: one column upright, two sideways.
+        return if (prefs.listView) (if (sideways) 2 else 1) else (if (sideways) 7 else 5)
+    }
 
     /**
      * Reads the folder on show on [disk], then shows it. Unchanged contents leave the screen
      * alone (no e-ink refresh). [then] runs on the main thread afterwards, even if a newer
      * listing took this one's place.
      */
-    private fun list(redrawTiles: Boolean = false, afterSaveOf: File? = null, then: () -> Unit = {}) {
+    private fun list(redrawTiles: Boolean = false, afterSaveOf: File? = null, cameBackFrom: File? = null, then: () -> Unit = {}) {
         val root = root ?: return then()
         val wanted = folder ?: root
         val ask = ++listed
@@ -280,24 +409,50 @@ class LibraryActivity : Activity() {
             // The folder went away (deleted or moved on a laptop): show the nearest one left.
             var shown = wanted
             while (shown != root && !shown.isDirectory) shown = shown.parentFile ?: root
-            val entries = FolderListing.list(shown)
+            val entries = FolderListing.list(shown, if (prefs.openOutSmallFolders) FolderListing.OPEN_OUT_UP_TO else 0)
             // Hidden copies a crashed save left behind (spec §7.3), never while a document in
             // this folder is open or still saving: its save may be writing one right now.
             if (!DocumentSession.anyOpenIn(shown)) {
                 val removed = SafeSave.cleanStale(shown)
                 if (removed > 0) Log.i(TAG, "removed $removed stale temporary file(s) in ${shown.path}")
             }
+            // Read here, with the listing, not as tiles are drawn.
+            val progress = HashMap<File, Float>()
+            val pageTexts = HashMap<File, String>()
+            for (pdf in entries.filterIsInstance<PdfEntry>()) {
+                val path = pdf.file.path
+                val page = lastPages.get(path)
+                val count = lastPages.pageCount(path)
+                progressOf(lastPages.has(path), page, count)?.let {
+                    progress[pdf.file] = it
+                    pageTexts[pdf.file] = "${minOf(page + 1, count)} / $count"
+                }
+            }
+            // The courses are the library folder's own folders, whichever folder is on show.
+            val courses = root.listFiles().orEmpty()
+                .filter { !it.name.startsWith(".") && it.isDirectory }
+                .mapNotNull { CourseColours.courseOf(root, it) }
+            val courseColours = CourseColours.assign(courses).mapValues { CourseColours.PALETTE[it.value] }
             val rootMissing = !root.isDirectory
-            val resume = if (shown == root) last?.takeIf { it.isFile } else null
+            val resume = (if (shown == root) last?.takeIf { it.isFile } else null)?.let {
+                ContinueKey(it, lastPages.get(it.path), lastPages.pageCount(it.path), continuePicture.stamp)
+            }
+            // The picture is only read when the row will change.
+            val resumePicture = if (resume != null && resume != shownContinue) continuePicture.load(resume.file) else null
             Log.i(TAG, "library listed ${shown.path} n=${entries.size} ms=${SystemClock.uptimeMillis() - start}")
             main.post {
-                if (ask == listed && !isDestroyed) showListing(shown, entries, resume, rootMissing, redrawTiles)
+                if (ask == listed && !isDestroyed) showListing(shown, entries, progress, pageTexts, courseColours, resume, resumePicture, rootMissing, redrawTiles, cameBackFrom)
                 then()
             }
         }
     }
 
-    private fun showListing(shown: File, entries: List<Entry>, resume: File?, rootMissing: Boolean, redrawTiles: Boolean) {
+    private fun showListing(
+        shown: File, entries: List<Entry>, progress: Map<File, Float>, pageTexts: Map<File, String>, courseColours: Map<String, Int>,
+        resume: ContinueKey?, resumePicture: Bitmap?, rootMissing: Boolean, redrawTiles: Boolean, cameBackFrom: File?,
+    ) {
+        val coloursChanged = courseColours != this.courseColours
+        this.courseColours = courseColours
         folder = shown
         // Another folder than was asked for (that one went away), or this one was deleted and
         // perhaps recreated by a sync app since it was watched: watched afresh.
@@ -314,15 +469,45 @@ class LibraryActivity : Activity() {
             breadcrumb.show(root ?: shown, shown)
             grid.setSelection(0)
         }
+        val ruleColour = courseColourOf(shown) ?: LibraryLook.RULE
+        if (ruleColour != courseRuleColour) {
+            courseRuleColour = ruleColour
+            courseRule.setBackgroundColor(ruleColour)
+            // Thicker in colour: two pixels of it are too little to see on the colour screen.
+            courseRule.layoutParams = courseRule.layoutParams.apply { height = if (ruleColour == LibraryLook.RULE) RULE_PX else COURSE_RULE_PX }
+        }
         // Texts are only set when they differ: setting one, even to the same words, draws its
         // row again, and a listing comes after every change the folder watch sees.
-        val continueText = resume?.let { "▶  Continue: ${it.nameWithoutExtension}" }.orEmpty()
-        if (continueRow.text.toString() != continueText) continueRow.text = continueText
+        // Only when it changed (ContinueKey): the picture read again or a text set draws the row again.
+        if (resume != shownContinue) {
+            shownContinue = resume
+            if (resume != null) {
+                continueName.text = resume.file.nameWithoutExtension
+                continueDetail.text = if (resume.pageCount > 0) "Continue · page ${minOf(resume.page + 1, resume.pageCount)} of ${resume.pageCount}" else "Continue"
+                continuePictureView.setImageBitmap(resumePicture)
+                continuePictureView.visibility = if (resumePicture != null) View.VISIBLE else View.GONE
+            }
+        }
         continueRow.visibility = if (resume != null) View.VISIBLE else View.GONE
-        val changed = redrawTiles || entries != adapter.entries || adapter.thumbnails != (thumbnails != null)
-        if (changed) adapter.show(entries, thumbnails = thumbnails != null, dropPictures = redrawTiles)
+        // A document just left may only have moved to another page: the file is the same, its bar isn't.
+        val changed = redrawTiles || entries != adapter.entries || adapter.thumbnails != (thumbnails != null) || progress != this.progress || coloursChanged
+        this.progress = progress
+        this.pageTexts = pageTexts
+        if (changed || adapter.listView != prefs.listView) {
+            adapter.show(entries, thumbnails = thumbnails != null, dropPictures = redrawTiles, listView = prefs.listView)
+        }
+        // Back from a document (decision 7): its tile is brought into view if it isn't, and
+        // marked until the next touch, so the eye finds its place again.
+        if (cameBackFrom != null) {
+            val at = entries.indexOfFirst { it.file == cameBackFrom }
+            if (at >= 0) {
+                if (at < grid.firstVisiblePosition || at > grid.lastVisiblePosition) grid.setSelection(at)
+                markCameBackFrom(cameBackFrom)
+            }
+        }
         val emptyText = when {
-            !rootMissing -> "No folders or PDFs here."
+            // An empty folder says how to fill it (decision 8).
+            !rootMissing -> "Nothing here yet.\n\nCopy PDFs into\n${Volumes.whereIs(StorageVolumes.mounted(this), shown)}\nfrom a computer or a sync app, and they show up here by themselves."
             Volumes.isOnCardThatsOut(StorageVolumes.mounted(this), root ?: shown) ->
                 "The library folder is on the memory card or USB drive, which isn't in. Put it back, or tap here to choose another folder in Settings (⋯)."
             else -> "The library folder isn't there. Tap here to choose another in Settings (⋯)."
@@ -360,12 +545,13 @@ class LibraryActivity : Activity() {
     }
 
     private fun goTo(target: File) {
+        markCameBackFrom(null)
         folder = target
         list()
     }
 
     private fun showSettings() =
-        showLibrarySettings(this, prefs, disk, onRootChosen = ::useRoot, onThumbnailsChanged = ::switchThumbnails)
+        showLibrarySettings(this, prefs, disk, onRootChosen = ::useRoot, onThumbnailsChanged = ::switchThumbnails, onListingChanged = { list() })
 
     /**
      * The tiles on screen get their thumbnails first, and the folders among them are watched,
@@ -380,10 +566,18 @@ class LibraryActivity : Activity() {
         val now = listOf(grid.firstVisiblePosition, grid.childCount, System.identityHashCode(adapter.entries), System.identityHashCode(thumbnails), started)
         if (fromScroll && now == tilesLastReported) return
         tilesLastReported = now
-        if (started) watch.watchChildren(onScreen().filterIsInstance<FolderEntry>().map { it.file })
+        // The folders on screen, and the small ones shown opened out (their PDFs' group): a
+        // PDF arriving in one of those must show up, or close it back into a folder.
+        if (started) watch.watchChildren(watchedChildren())
         val loader = thumbnails ?: return
+        // The list view shows no pictures, so none are fetched for it.
+        // But the rows' writing marks and page counts come from the PDFs' facts all the same.
+        if (prefs.listView) return loader.showFacts(onScreen().filterIsInstance<PdfEntry>())
         loader.show(adapter.entries.filterIsInstance<PdfEntry>(), onScreen().filterIsInstance<PdfEntry>())
     }
+
+    private fun watchedChildren(): List<File> =
+        onScreen().mapNotNull { (it as? FolderEntry)?.file ?: (it as? PdfEntry)?.group }.distinct()
 
     /** What [tilesOnScreenChanged] last acted on. */
     private var tilesLastReported: List<Any> = emptyList()
@@ -400,7 +594,16 @@ class LibraryActivity : Activity() {
         thumbnailCache,
         // Asked afresh each time: a card can come and go while the app runs.
         storageIn = { Volumes.holding(StorageVolumes.mounted(this), it) != null },
+        onFacts = { factsReady() },
     ) { pdf, bitmap -> thumbnailReady(pdf, bitmap) }
+
+    /** Facts arrived for list rows, one PDF at a time: the rows are bound again together, as thumbnails are shown together. A row only redraws if what it shows changed. */
+    private val showArrivedFacts = Runnable { adapter.notifyDataSetChanged() }
+
+    private fun factsReady() {
+        main.removeCallbacks(showArrivedFacts)
+        main.postDelayed(showArrivedFacts, TILE_BATCH_MS)
+    }
 
     /**
      * Thumbnails that have arrived and aren't on their tiles yet. They come one at a time, a
@@ -412,7 +615,10 @@ class LibraryActivity : Activity() {
         for (i in 0 until grid.childCount) {
             val tile = grid.getChildAt(i) as? TileView ?: continue
             val entry = tile.entry as? PdfEntry ?: continue
-            if (pendingThumbnails.containsKey(entry)) tile.showBitmap(pendingThumbnails[entry])
+            if (pendingThumbnails.containsKey(entry)) {
+                tile.showBitmap(pendingThumbnails[entry])
+                tile.showMarks(marksFor(entry)) // its facts came with it
+            }
         }
         Log.i(TAG, "thumbnails shown n=${pendingThumbnails.size}")
         pendingThumbnails.clear()
@@ -504,5 +710,10 @@ class LibraryActivity : Activity() {
         const val LEFT_SAVE_WAIT_MS = 3000L
         /** How long thumbnails are gathered before their tiles are drawn together (see pendingThumbnails). */
         const val TILE_BATCH_MS = 120L
+        /** The line under the top strip, and the same line inside a course, in the course's colour. */
+        /** How tall the Continue row's picture is. */
+        const val CONTINUE_PICTURE_DP = 96
+        const val RULE_PX = 2
+        const val COURSE_RULE_PX = 4
     }
 }

@@ -46,9 +46,39 @@ class LibraryPrefs(context: Context) {
         get() = file(LAST_OPENED)
         set(value) = put(LAST_OPENED, value)
 
+    /** The document the Continue picture shows (ContinuePicture): the one left last, if its picture was made. */
+    var continuePictureOf: File?
+        get() = file(CONTINUE_PICTURE)
+        set(value) = put(CONTINUE_PICTURE, value)
+
     var showThumbnails: Boolean
         get() = prefs.getBoolean(THUMBNAILS, true)
         set(value) = prefs.edit().putBoolean(THUMBNAILS, value).apply()
+
+    /** Start in the last document, not the library (LaunchOpen). Off unless turned on. */
+    var openLastAtLaunch: Boolean
+        get() = prefs.getBoolean(OPEN_LAST, false)
+        set(value) = prefs.edit().putBoolean(OPEN_LAST, value).apply()
+
+    /**
+     * Set just before the app opens the last document by itself at a start, cleared once that
+     * document is on screen (or says it can't be opened). Still set at the next start, the
+     * open never finished. Written at once, not in the background: it must be on disk before
+     * the document is opened, or a crash there would leave no trace.
+     */
+    var launchOpenUnfinished: Boolean
+        get() = prefs.getBoolean(LAUNCH_UNFINISHED, false)
+        set(value) { prefs.edit().putBoolean(LAUNCH_UNFINISHED, value).commit() }
+
+    /** The library as a compact list, not tiles. */
+    var listView: Boolean
+        get() = prefs.getBoolean(LIST_VIEW, false)
+        set(value) = prefs.edit().putBoolean(LIST_VIEW, value).apply()
+
+    /** A folder of up to three PDFs is shown as its PDFs (FolderListing). On unless turned off. */
+    var openOutSmallFolders: Boolean
+        get() = prefs.getBoolean(OPEN_OUT, true)
+        set(value) = prefs.edit().putBoolean(OPEN_OUT, value).apply()
 
     private fun file(key: String) = prefs.getString(key, null)?.let(::File)
 
@@ -59,6 +89,11 @@ class LibraryPrefs(context: Context) {
         const val FOLDER = "folder-on-show"
         const val LAST_OPENED = "last-opened"
         const val THUMBNAILS = "show-thumbnails"
+        const val OPEN_OUT = "open-out-small-folders"
+        const val LIST_VIEW = "list-view"
+        const val OPEN_LAST = "open-last-at-launch"
+        const val LAUNCH_UNFINISHED = "launch-open-unfinished"
+        const val CONTINUE_PICTURE = "continue-picture-of"
     }
 }
 
@@ -89,6 +124,8 @@ fun showLibrarySettings(
     disk: Executor,
     onRootChosen: (File) -> Unit,
     onThumbnailsChanged: (Boolean) -> Unit,
+    /** A setting changed what the folder on show lists: read it again. */
+    onListingChanged: () -> Unit = {},
 ) {
     val pad = LibraryLook.dp(activity, 20)
     fun row(title: String) = LinearLayout(activity).apply {
@@ -118,30 +155,41 @@ fun showLibrarySettings(
         }
     }
 
-    val thumbnailsRow = row("Show thumbnails")
-    thumbnailsRow.detail().text = "The first page of each PDF"
     // A plain On/Off box rather than a switch, whose sliding knob would flash on e-ink.
-    val state = TextView(activity).apply {
-        textSize = 18f
-        gravity = Gravity.CENTER
-        minWidth = LibraryLook.dp(activity, 64)
-        setPadding(LibraryLook.dp(activity, 12), LibraryLook.dp(activity, 6), LibraryLook.dp(activity, 12), LibraryLook.dp(activity, 6))
-    }
-    fun showState() {
-        val on = prefs.showThumbnails
-        state.text = if (on) "On" else "Off"
-        state.setTextColor(if (on) Color.WHITE else Color.BLACK)
-        state.background = GradientDrawable().apply {
-            setColor(if (on) Color.BLACK else Color.WHITE)
-            setStroke(3, Color.BLACK)
+    fun onOffRow(title: String, detail: String, isOn: () -> Boolean, set: (Boolean) -> Unit): LinearLayout {
+        val row = row(title)
+        row.detail().text = detail
+        val state = TextView(activity).apply {
+            textSize = 18f
+            gravity = Gravity.CENTER
+            minWidth = LibraryLook.dp(activity, 64)
+            setPadding(LibraryLook.dp(activity, 12), LibraryLook.dp(activity, 6), LibraryLook.dp(activity, 12), LibraryLook.dp(activity, 6))
         }
-    }
-    showState()
-    thumbnailsRow.addView(state)
-    thumbnailsRow.setOnClickListener {
-        prefs.showThumbnails = !prefs.showThumbnails
+        fun showState() {
+            val on = isOn()
+            state.text = if (on) "On" else "Off"
+            state.setTextColor(if (on) Color.WHITE else Color.BLACK)
+            state.background = GradientDrawable().apply {
+                setColor(if (on) Color.BLACK else Color.WHITE)
+                setStroke(3, Color.BLACK)
+            }
+        }
         showState()
-        onThumbnailsChanged(prefs.showThumbnails)
+        row.addView(state)
+        row.setOnClickListener {
+            set(!isOn())
+            showState()
+        }
+        return row
+    }
+
+    val thumbnailsRow = onOffRow("Show thumbnails", "The first page of each PDF", { prefs.showThumbnails }) {
+        prefs.showThumbnails = it
+        onThumbnailsChanged(it)
+    }
+    val openOutRow = onOffRow("Open out small folders", "A folder of up to three PDFs is shown as its PDFs", { prefs.openOutSmallFolders }) {
+        prefs.openOutSmallFolders = it
+        onListingChanged()
     }
 
     val content = LinearLayout(activity).apply {
@@ -149,6 +197,12 @@ fun showLibrarySettings(
         addView(folderRow)
         addView(View(activity).apply { setBackgroundColor(LibraryLook.RULE) }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 2))
         addView(thumbnailsRow)
+        addView(View(activity).apply { setBackgroundColor(LibraryLook.RULE) }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 2))
+        addView(openOutRow)
+        addView(View(activity).apply { setBackgroundColor(LibraryLook.RULE) }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 2))
+        addView(onOffRow("Start in the last document", "Opening the app goes straight to where you were", { prefs.openLastAtLaunch }) {
+            prefs.openLastAtLaunch = it
+        })
     }
     AlertDialog.Builder(activity)
         .setTitle("Settings")

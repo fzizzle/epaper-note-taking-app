@@ -23,9 +23,17 @@ import android.view.View
  * On the writing strip's island ([onIsland] set) there are no frames: the outlined capsule groups
  * the buttons, and the selected one sits in a black circle with a white mark.
  */
-class StripButton(context: Context, private val glyph: Glyph, description: String) : View(context) {
+class StripButton(context: Context, glyph: Glyph, description: String) : View(context) {
 
-    enum class Glyph { BACK, PREVIOUS, NEXT, PEN, HIGHLIGHTER, ERASER, LASSO, SNIP, UNDO, REDO, PASTE, MENU, REFRESH, NEW_FOLDER }
+    enum class Glyph { BACK, PREVIOUS, NEXT, PEN, HIGHLIGHTER, ERASER, LASSO, SNIP, UNDO, REDO, PASTE, MENU, REFRESH, NEW_FOLDER, LIST, TILES }
+
+    /** The mark drawn. A button that switches between two things shows the other one's mark. */
+    var glyph: Glyph = glyph
+        set(value) {
+            if (value == field) return
+            field = value
+            invalidate()
+        }
 
     init {
         contentDescription = description
@@ -276,6 +284,27 @@ class StripButton(context: Context, private val glyph: Glyph, description: Strin
                 path.close()
                 ink.style = Paint.Style.FILL
                 canvas.drawPath(path, ink)
+            }
+            Glyph.LIST -> {
+                // Three lines, each after a dot: a list.
+                ink.style = Paint.Style.STROKE
+                ink.strokeWidth = s * 0.06f
+                for (i in -1..1) {
+                    val y = cy + i * s * 0.17f
+                    canvas.drawLine(cx - s * 0.12f, y, cx + s * 0.26f, y, ink)
+                    canvas.drawPoint(cx - s * 0.25f, y, ink)
+                }
+            }
+            Glyph.TILES -> {
+                // Four squares: tiles.
+                ink.style = Paint.Style.STROKE
+                ink.strokeWidth = s * 0.05f
+                val a = s * 0.2f
+                val g = s * 0.04f
+                canvas.drawRect(cx - a - g, cy - a - g, cx - g, cy - g, ink)
+                canvas.drawRect(cx + g, cy - a - g, cx + a + g, cy - g, ink)
+                canvas.drawRect(cx - a - g, cy + g, cx - g, cy + a + g, ink)
+                canvas.drawRect(cx + g, cy + g, cx + a + g, cy + a + g, ink)
             }
             Glyph.NEW_FOLDER -> {
                 // A folder: its body and the tab on top, with a plus inside.

@@ -125,4 +125,20 @@ class FolderWatchTest {
         Thread.sleep(1000)
         assertEquals(0, calls.get())
     }
+
+    /**
+     * A small folder shown opened out has its PDFs on screen, not just a count: a file copied
+     * straight into it (not through a temporary name) is only whole when its writer closes
+     * it, and one overwritten in place gives no other sign at all. Both must be noticed.
+     */
+    @Test fun aFileFinishedOrRewrittenInAWatchedSubfolderIsSeen() {
+        val topic = File(scratch, "Topic").apply { mkdirs() }
+        val pdf = File(topic, "a.pdf").apply { writeText("first") }
+        Thread.sleep(1000)
+        watch.watchChildren(listOf(topic))
+        calls.set(0)
+        pdf.outputStream().use { it.write("written again, in place".toByteArray()) }
+        Thread.sleep(1000)
+        assertEquals(1, calls.get())
+    }
 }
