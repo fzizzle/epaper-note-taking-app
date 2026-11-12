@@ -4,6 +4,11 @@ import android.os.Debug
 import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.artifex.mupdf.fitz.Buffer
+import com.artifex.mupdf.fitz.ColorSpace
+import com.artifex.mupdf.fitz.Matrix
+import com.artifex.mupdf.fitz.PDFDocument
+import com.artifex.mupdf.fitz.Rect
 import com.fzizzle.epapernotes.doc.AddItems
 import com.fzizzle.epapernotes.ink.Box
 import com.fzizzle.epapernotes.ink.ImageItem
@@ -66,6 +71,42 @@ class MuPdfStressTest {
             }
             val back = PdfFile.open(out).use { it.items(0) }
             assertEquals("round $round", listOf("p" to box), back.map { (it as ImageItem).id to it.box })
+        }
+    }
+
+    /**
+     * The page calls that adding and removing pages will rest on: addPage, insertPage, loadPage
+     * and deletePage, 200 rounds in a row with the garbage collector forced every 20 rounds.
+     * Page 0 carries a stroke, and it must read back exactly as it was.
+     */
+    @Test fun addingAndRemovingPagesIsSafe() {
+        val source = File(dir, "pages-source.pdf")
+        PdfFile.open(TestPdfs.blank(dir)).use { it.apply(AddItems(0, listOf(InkItem("keep", line)))); it.saveTo(source) }
+        val before = PdfFile.open(source).use { it.items(0) }
+
+        val doc = PDFDocument.openDocument(source.path).asPDF()
+        val mediabox = Rect(0f, 0f, 612f, 792f)
+        var expectedPages = doc.countPages()
+        for (round in 0 until 200) {
+            val content = Buffer().apply { writeLine("0.5 g 10 10 50 50 re f") }
+            val page = doc.addPage(mediabox, 0, doc.newDictionary(), content)
+            doc.insertPage(1, page)
+            expectedPages++
+            val loaded = doc.loadPage(1)
+            val pix = loaded.toPixmap(Matrix(300f / 612f), ColorSpace.DeviceRGB, false, true)
+            assertEquals("round $round width", 300, pix.width)
+            pix.destroy(); loaded.destroy()
+            if (round % 10 == 9) { doc.deletePage(1); expectedPages-- }
+            assertEquals("round $round page count", expectedPages, doc.countPages())
+            if (round % 20 == 19) { Runtime.getRuntime().gc(); System.runFinalization() }
+        }
+        val out = File(dir, "pages-out.pdf")
+        doc.save(out.path, "")
+        doc.destroy()
+
+        PdfFile.open(out).use {
+            assertEquals(expectedPages, it.pageCount)
+            assertEquals(before, it.items(0))
         }
     }
 
