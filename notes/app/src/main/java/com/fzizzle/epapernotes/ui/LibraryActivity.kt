@@ -155,6 +155,9 @@ class LibraryActivity : Activity() {
         started = false
         watch.stop()
         thumbnails?.pause()
+        // Tiles ask the loader for their picture when they're next drawn, so nothing is lost.
+        main.removeCallbacks(showPendingThumbnails)
+        pendingThumbnails.clear()
     }
 
     override fun onDestroy() {
@@ -382,11 +385,26 @@ class LibraryActivity : Activity() {
 
     private fun newThumbnails() = ThumbnailLoader(thumbnailCache) { pdf, bitmap -> thumbnailReady(pdf, bitmap) }
 
-    private fun thumbnailReady(pdf: PdfEntry, bitmap: Bitmap?) {
+    /**
+     * Thumbnails that have arrived and aren't on their tiles yet. They come one at a time, a
+     * few milliseconds apart, and each tile drawn by itself is a panel update of its own: a
+     * folder filled in tile by tile. Those arriving within [TILE_BATCH_MS] go on together.
+     */
+    private val pendingThumbnails = HashMap<PdfEntry, Bitmap?>()
+    private val showPendingThumbnails = Runnable {
         for (i in 0 until grid.childCount) {
             val tile = grid.getChildAt(i) as? TileView ?: continue
-            if (tile.entry == pdf) tile.showBitmap(bitmap)
+            val entry = tile.entry as? PdfEntry ?: continue
+            if (pendingThumbnails.containsKey(entry)) tile.showBitmap(pendingThumbnails[entry])
         }
+        Log.i(TAG, "thumbnails shown n=${pendingThumbnails.size}")
+        pendingThumbnails.clear()
+    }
+
+    private fun thumbnailReady(pdf: PdfEntry, bitmap: Bitmap?) {
+        val waiting = pendingThumbnails.isNotEmpty()
+        pendingThumbnails[pdf] = bitmap
+        if (!waiting) main.postDelayed(showPendingThumbnails, TILE_BATCH_MS)
     }
 
     private fun switchThumbnails(on: Boolean) {
@@ -467,5 +485,7 @@ class LibraryActivity : Activity() {
         const val EXTRA_ROOT = "root"
         /** The longest the first listing waits for a document's last save; it's usually well under a second. */
         const val LEFT_SAVE_WAIT_MS = 3000L
+        /** How long thumbnails are gathered before their tiles are drawn together (see pendingThumbnails). */
+        const val TILE_BATCH_MS = 120L
     }
 }

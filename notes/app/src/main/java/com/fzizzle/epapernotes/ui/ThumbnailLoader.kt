@@ -101,7 +101,8 @@ class ThumbnailLoader(private val cache: ThumbnailCache, private val onReady: (P
     private class Store(val pdf: PdfEntry) : Job
 
     private fun run() {
-        Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND)
+        var priority = Process.THREAD_PRIORITY_BACKGROUND
+        Process.setThreadPriority(priority)
         // Thumbnails of PDFs that are gone; it can trip over a file that vanishes as it reads.
         try {
             cache.pruneMissing()
@@ -117,6 +118,14 @@ class ThumbnailLoader(private val cache: ThumbnailCache, private val onReady: (P
                     if (next == null) lock.wait()
                 }
                 next
+            }
+            // A tile on screen is waiting for a Show: that runs at normal priority. At background
+            // priority the tablet keeps the thread to its slow cores, and a folder's tiles filled
+            // in one by one. The rest of the folder (Store) and the tidying stay in the background.
+            val wanted = if (job is Show) Process.THREAD_PRIORITY_DEFAULT else Process.THREAD_PRIORITY_BACKGROUND
+            if (wanted != priority) {
+                priority = wanted
+                Process.setThreadPriority(priority)
             }
             when (job) {
                 is Drop -> {
