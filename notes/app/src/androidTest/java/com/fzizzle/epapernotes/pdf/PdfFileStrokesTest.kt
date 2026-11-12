@@ -574,4 +574,44 @@ class PdfFileStrokesTest {
             assertTrue((0 until 3).all { page -> it.items(page).isEmpty() })
         }
     }
+
+    /**
+     * One of the app's strokes whose stroke data no longer decodes: items() can't show it, but
+     * it is still the owner's ink, so a fresh attempt takes it off too.
+     */
+    @Test fun aFreshAttemptRemovesAStrokeThatDoesNotDecode() {
+        val written = File(dir, "undecodable-src.pdf")
+        PdfFile.open(TestPdfs.withHighlight(dir)).use { it.add(0, line); it.saveTo(written) }
+        val spoiled = File(dir, "undecodable.pdf")
+        val raw = PDFDocument.openDocument(written.path).asPDF()
+        val annots = raw.findPage(0).get("Annots")
+        (0 until annots.size()).map { annots.get(it) }.single { it.get(StrokeCodec.KEY).isString }.put(StrokeCodec.KEY, "rubbish")
+        raw.save(spoiled.path, "")
+        raw.destroy()
+
+        val out = File(dir, "undecodable-attempt.pdf")
+        PdfFile.open(spoiled).use {
+            assertTrue(it.items(0).isEmpty())
+            assertTrue(it.hasOwnItems(0))
+            assertEquals(1, it.removeOwnItems())
+            it.saveTo(out)
+        }
+        PdfFile.open(out).use {
+            assertTrue(!it.hasOwnItems(0))
+            assertEquals(1, it.foreignAnnotationCount(0))
+        }
+    }
+
+    @Test fun aFreshAttemptRemovesAPageHoldingOnlyASnip() {
+        val out = File(dir, "snip-attempt.pdf")
+        PdfFile.open(TestPdfs.blank(dir, pages = 2)).use {
+            it.apply(AddItems(1, listOf(ImageItem(ItemIds.next(), Box(200f, 200f, 300f, 300f), 0, TestPdfs.redBluePng(40, 20)))))
+            assertEquals(1, it.removeOwnItems())
+            it.saveTo(out)
+        }
+        PdfFile.open(out).use {
+            assertEquals(2, it.pageCount)
+            assertTrue(!it.hasOwnItems(0) && !it.hasOwnItems(1))
+        }
+    }
 }

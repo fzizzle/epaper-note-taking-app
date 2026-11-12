@@ -101,7 +101,8 @@ class LibraryChanges(
     private fun makeFreshAttempt(root: File, pdf: File) {
         change(root, { ops ->
             ops.freshAttempt(pdf) { from, to ->
-                PdfFile.open(from).use { it.removeOwnItems(); SafeSave.replace(to) { t -> it.saveTo(t) } }
+                // createNew: a whole file or nothing, and never over one that arrives meanwhile.
+                PdfFile.open(from).use { it.removeOwnItems(); SafeSave.createNew(to) { t -> it.saveTo(t) } }
             }
         })
     }

@@ -367,18 +367,32 @@ class PdfFile private constructor(private val doc: PDFDocument) : PdfPages {
     }
 
     /**
-     * Takes every one of the app's items (strokes and snips) off every page, for a fresh
-     * attempt, and returns how many went. It goes through the same remove as erasing, so other
-     * apps' annotations stay, and so do pages: a dotted page the owner added stays, empty.
+     * Takes every one of the app's annotations (strokes and snips) off every page, for a fresh
+     * attempt, and returns how many went. Other apps' annotations stay, and so do pages: a
+     * dotted page the owner added stays, empty.
+     *
+     * It goes by what marks an annotation as the app's, not by [items]: a stroke whose data no
+     * longer decodes isn't among the items, yet it is still the owner's ink. And nothing is
+     * decoded, so a page of snips doesn't have each picture made into a PNG just to remove it.
      */
     fun removeOwnItems(): Int {
         var removed = 0
         for (page in 0 until pageCount) {
             // Asking for the ids alone is quick; most pages of a workbook have no writing.
             if (!hasOwnItems(page)) continue
-            val own = items(page)
-            apply(RemoveItems(page, own))
-            removed += own.size
+            try {
+                onPage(page) { p ->
+                    p.annotations.orEmpty().filter { annotations.isOurs(it.getObject()) }.forEach {
+                        annotations.forget(it.getObject())
+                        p.deleteAnnotation(it)
+                        removed++
+                    }
+                    UPDATE_PAGE
+                }
+            } finally {
+                // Nothing of the app's is left on it (or, after a failure, it's read again).
+                forgetPage(page)
+            }
         }
         return removed
     }

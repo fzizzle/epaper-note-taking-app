@@ -123,4 +123,20 @@ class SafeSaveTest {
     @Test fun cleaningAFolderThatIsNotThereRemovesNothing() {
         assertEquals(0, SafeSave.cleanStale(File(tmp.root, "card-that-is-out")))
     }
+
+    @Test fun createNewWritesAFileThatWasNotThere() {
+        val f = File(tmp.root, "new.pdf")
+        SafeSave.createNew(f) { it.writeText("clean") }
+        assertEquals("clean", f.readText())
+    }
+
+    /** A file that arrives at the name while the new one is written (a sync app's) is left alone. */
+    @Test fun createNewLeavesAFileThatAppearedMeanwhile() {
+        val f = File(tmp.root, "new.pdf")
+        assertThrows(IOException::class.java) {
+            SafeSave.createNew(f) { f.writeText("synced"); it.writeText("clean") }
+        }
+        assertEquals("synced", f.readText())
+        assertFalse(SafeSave.tempFileFor(f).exists())
+    }
 }

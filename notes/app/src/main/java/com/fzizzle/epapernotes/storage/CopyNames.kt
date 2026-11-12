@@ -27,6 +27,9 @@ object CopyNames {
         return candidates.map { File(folder, "$base ($it).pdf") }.first { !it.exists() }
     }
 
+    /** From here an attempt's number isn't counted on, so counting never runs past what an Int holds. */
+    private const val MAX_ATTEMPT = 1_000_000
+
     /** "W (attempt 3)": the name before the number, and the number. */
     private val ATTEMPT = Regex("""^(.*) \(attempt (\d+)\)$""")
 
@@ -38,8 +41,8 @@ object CopyNames {
     fun attempt(original: File, taken: (File) -> Boolean = File::exists): File {
         val folder = original.absoluteFile.parentFile
         val found = ATTEMPT.find(original.nameWithoutExtension)
-        val number = found?.groupValues?.get(2)?.toIntOrNull()
         // A number too big to count on is just part of the name.
+        val number = found?.groupValues?.get(2)?.toIntOrNull()?.takeIf { it < MAX_ATTEMPT }
         val base = if (number != null) found.groupValues[1] else original.nameWithoutExtension
         val first = (number ?: 1) + 1
         return generateSequence(first) { it + 1 }

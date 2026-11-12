@@ -49,6 +49,10 @@ class CopyNamesTest {
         assertEquals("W (attempt x) (attempt 2).pdf", CopyNames.attempt(File(dir, "W (attempt x).pdf")) { false }.name)
     }
 
+    /** A number too big to count on is part of the name: no overflow to a negative attempt. */
+    @Test fun aHugeNumberIsPartOfTheName() =
+        assertEquals("W (attempt 2147483647) (attempt 2).pdf", CopyNames.attempt(File(dir, "W (attempt 2147483647).pdf")) { false }.name)
+
     @Test fun anAttemptIsBesideTheOriginalAndNeverAnExistingFile() {
         val original = tmp.newFile("W.pdf")
         tmp.newFile("W (attempt 2).pdf")

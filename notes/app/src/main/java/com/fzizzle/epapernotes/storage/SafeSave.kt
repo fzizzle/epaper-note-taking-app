@@ -55,6 +55,18 @@ object SafeSave {
     }
 
     /**
+     * [replace] for a file that must not exist yet, such as a fresh attempt's copy. If a file
+     * arrives at [target] while the new one is written (a sync app dropping that name, say),
+     * it is left alone and this throws instead of swapping over it. On a memory card the check
+     * ignores case, as the card does.
+     */
+    fun createNew(target: File, write: (File) -> Unit) = replace(
+        target,
+        beforeSwap = { if (target.exists()) throw IOException("'${target.name}' appeared meanwhile") },
+        write = write,
+    )
+
+    /**
      * The rename itself lives in the folder, so flush the folder too. Only then is the new
      * version sure to survive a power cut, which matters because the crash journal is cleared
      * once replace() returns. Some storage refuses to sync folders; the file is already

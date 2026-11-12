@@ -114,6 +114,10 @@ class FileOps(
      * ("W (attempt 2).pdf"). [writeClean] writes it from the original to the new name: it is
      * passed in because taking the ink off needs MuPDF, which this file stays free of. The
      * original is only read.
+     *
+     * [writeClean] must leave either a whole file at the new name or nothing, and never write
+     * over a file that arrives there meanwhile (SafeSave.createNew does both). So after a failed
+     * write, anything at that name is someone else's, and it is left alone.
      */
     fun freshAttempt(target: File, writeClean: (from: File, to: File) -> Unit): Result {
         val from = target.normal()
@@ -128,14 +132,16 @@ class FileOps(
             writeClean(from, to)
         } catch (e: Exception) {
             log("fresh attempt of ${from.name} failed: $e")
-            // The name was free when chosen, so anything there now is this write's. The app's
-            // writeClean goes through SafeSave.replace, which only ever puts a whole file in
-            // place and removes its own temporary file when it fails; this is for any other.
-            if (to.exists() && !to.delete()) log("couldn't remove ${to.name}")
             return Result.Refused("A fresh attempt of '${from.name}' couldn't be made: ${e.message}")
         }
-        // A page remembered under this name belongs to an earlier file: the new one opens at its start.
+        // What the app kept under this name belongs to an earlier file of that name. Its page is
+        // dropped, so the copy opens at its start. Its journal is set aside, as a rename does,
+        // so that writing is never put onto the clean copy, and never lost either.
         lastPages.remove(to.path)
+        val journal = ChangeJournal.journalFileFor(journalDir, to)
+        for (old in liveJournalFilesOf(to)) {
+            if (!old.renameTo(keptName(journal))) log("couldn't set aside ${old.name}")
+        }
         return Result.Made(to)
     }
 
