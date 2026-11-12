@@ -24,9 +24,15 @@ class ReadingPrefs(context: Context) {
         get() = prefs.getBoolean(TRIM_MARGINS, false)
         set(value) = prefs.edit().putBoolean(TRIM_MARGINS, value).apply()
 
+    /** How many times a copy has said how to paste (CopyMessage). */
+    var copyHintsShown: Int
+        get() = prefs.getInt(COPY_HINTS_SHOWN, 0)
+        set(value) = prefs.edit().putInt(COPY_HINTS_SHOWN, value).apply()
+
     private companion object {
         const val CONTRAST = "contrast"
         const val DARK_TEXT_AS_BLACK = "darkTextAsBlack"
         const val TRIM_MARGINS = "trimMargins"
+        const val COPY_HINTS_SHOWN = "copyHintsShown"
     }
 }

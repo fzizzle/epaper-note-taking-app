@@ -83,8 +83,9 @@ class StripButton(context: Context, private val glyph: Glyph, description: Strin
         val cy = h / 2f
         // Centre line: one S-shaped curve across the tile.
         fun point(t: Float): Pair<Float, Float> {
-            val x = cx + s * (-0.3f + 0.6f * t)
-            val y = cy + s * 0.13f * kotlin.math.sin(t * 2f * Math.PI.toFloat() * 0.85f + 0.6f)
+            // Kept inside the 0.4 circle that picks the pen out (UI review, finding 9).
+            val x = cx + s * (-0.24f + 0.48f * t)
+            val y = cy + s * 0.11f * kotlin.math.sin(t * 2f * Math.PI.toFloat() * 0.85f + 0.6f)
             return x to y
         }
         val steps = 24

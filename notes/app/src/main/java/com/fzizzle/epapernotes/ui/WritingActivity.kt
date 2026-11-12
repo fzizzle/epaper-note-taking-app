@@ -99,6 +99,8 @@ class WritingActivity : Activity() {
 
     /** The file being written into. It changes once, if the owner saves a damaged file's writing to a copy. */
     private lateinit var path: String
+    /** A strip button's side in pixels: the Paste bubble is as tall. */
+    private var stripSide = 0
     /** The open file's name, in the strip beside ←. */
     private lateinit var fileName: TextView
     private var pageCount = 0
@@ -282,6 +284,7 @@ class WritingActivity : Activity() {
         pages.onFingerLongPress = { x, y -> offerPaste(x, y) }
         val gap = stripHeight / 8
         val side = stripHeight - 2 * gap
+        stripSide = side
         val left = StripRow(this, side = side, gap = gap)
         island = IslandRow(this, side = side, gap = gap / 3)
         val right = StripRow(this, side = side, gap = gap)
@@ -888,19 +891,21 @@ class WritingActivity : Activity() {
             letGo()
             toolStateChanged()
         }
+        // As tall as a strip button, with round ends like the island (UI review, finding 8).
         val button = TextView(this).apply {
             text = "Paste"
-            textSize = 20f
+            textSize = 18f
             setTextColor(Color.BLACK)
-            val pad = (resources.displayMetrics.density * 14).toInt()
-            setPadding(pad * 2, pad, pad * 2, pad)
+            gravity = Gravity.CENTER
+            val pad = (resources.displayMetrics.density * 20).toInt()
+            setPadding(pad, 0, pad, 0)
             background = android.graphics.drawable.GradientDrawable().apply {
                 setColor(Color.WHITE)
                 setStroke((resources.displayMetrics.density * 2).toInt(), Color.BLACK)
-                cornerRadius = resources.displayMetrics.density * 8
+                cornerRadius = stripSide / 2f
             }
         }
-        val popup = android.widget.PopupWindow(button, LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT, true)
+        val popup = android.widget.PopupWindow(button, LinearLayout.LayoutParams.WRAP_CONTENT, stripSide, true)
         button.setOnClickListener {
             popup.dismiss()
             Log.i(TAG, "paste by long-press")
@@ -917,7 +922,7 @@ class WritingActivity : Activity() {
         // Just above the finger, so the finger doesn't hide it.
         button.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
         popup.showAtLocation(pages, Gravity.NO_GRAVITY,
-            (origin[0] + x - button.measuredWidth / 2f).toInt(), (origin[1] + y - button.measuredHeight * 1.5f).toInt())
+            (origin[0] + x - button.measuredWidth / 2f).toInt(), (origin[1] + y - stripSide * 1.5f).toInt())
     }
 
     /** What the selection layer reports, turned into changes. UI thread. */
@@ -935,7 +940,7 @@ class WritingActivity : Activity() {
             toolState.clipboard = Clipboard(selected, pdfToDisplay[selectedPage])
             Log.i(TAG, "copied page=$selectedPage items=${selected.size}")
             updateStrip() // Paste appears
-            toast(PASTE_HINT)
+            showCopied()
         }
 
         override fun delete() {
@@ -1007,7 +1012,7 @@ class WritingActivity : Activity() {
                 runOnUiThread {
                     toolState.clipboard = Clipboard(listOf(item), toDisplay)
                     updateStrip() // Paste appears
-                    toast(PASTE_HINT)
+                    showCopied()
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "snip failed page=$page", e)
@@ -1481,7 +1486,14 @@ class WritingActivity : Activity() {
     }
 
     /** With the app's context, not the screen's: a message can come after the screen has closed (see [show]). */
-    private fun toast(text: String) = Toast.makeText(applicationContext, text, Toast.LENGTH_LONG).show()
+    private fun toast(text: String, length: Int = Toast.LENGTH_LONG) = Toast.makeText(applicationContext, text, length).show()
+
+    /** After a copy or snip: how to paste the first few times, then just "Copied." (UI review, decision 6). */
+    private fun showCopied() {
+        val shown = readingPrefs.copyHintsShown
+        toast(copyMessage(shown), if (shown < COPY_HINTS) Toast.LENGTH_LONG else Toast.LENGTH_SHORT)
+        if (shown < COPY_HINTS) readingPrefs.copyHintsShown = shown + 1
+    }
 
     companion object {
         const val EXTRA_PATH = "path"
@@ -1490,7 +1502,6 @@ class WritingActivity : Activity() {
         /** The ⋯ menu's groups: what changes the PDF, then what changes only the screen. */
         private const val ROTATE_GROUP = 1
         private const val LOOK_GROUP = 2
-        private const val PASTE_HINT = "Copied. To paste, hold a finger on the page, or tap Paste."
         private val PAGE_KEYS = setOf(
             android.view.KeyEvent.KEYCODE_VOLUME_DOWN, android.view.KeyEvent.KEYCODE_VOLUME_UP,
             android.view.KeyEvent.KEYCODE_PAGE_DOWN, android.view.KeyEvent.KEYCODE_PAGE_UP,
