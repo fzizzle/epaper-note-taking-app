@@ -370,6 +370,134 @@ class DocumentSession(
         onWorker("items on page $page", then = { answer(found) }) { p -> found = p.items(page) }
     }
 
+    /**
+     * Puts a page of dotted paper after [page] and saves at once. Then
+     * [SessionEvent.PagesRenumbered] shows the new page, or [SessionEvent.PageNotChanged] says
+     * why it wasn't added. See [changePages].
+     */
+    fun addPageAfter(page: Int) = changePages(
+        "added",
+        page,
+        newNumber = { if (it > page) it + 1 else it },
+        change = { it.addDottedPage(page) },
+        showPage = { page + 1 },
+    )
+
+    /**
+     * Removes [page], with its ink, if it's one the app added, and saves at once. Then
+     * [SessionEvent.PagesRenumbered] shows the page now in its place (the one before, if it was
+     * the last), or [SessionEvent.PageNotChanged] says why it wasn't removed.
+     */
+    fun removeAddedPage(page: Int) = changePages(
+        "removed",
+        page,
+        newNumber = { if (it < page) it else if (it > page) it - 1 else null },
+        refuse = { p ->
+            when {
+                !p.isAddedPage(page) -> "Only pages you added can be removed."
+                p.pageCount == 1 -> "The only page can't be removed."
+                else -> null
+            }
+        },
+        change = { it.removeAddedPage(page) },
+        showPage = { p -> minOf(page, p.pageCount - 1) },
+    )
+
+    /** Whether [page] is one the app added (so it can be removed), given to [answer] on the worker. */
+    fun isAddedPage(page: Int, answer: (Boolean) -> Unit) {
+        var added = false
+        onWorker("is page $page added", then = { answer(added) }) { p -> added = page in 0 until p.pageCount && p.isAddedPage(page) }
+    }
+
+    /**
+     * Adds or removes a page, on the worker. This isn't a change in the journal like a stroke:
+     * every page after it gets a new number, and the journal, the undo list and the screen all
+     * go by page number. So it's saved into the file at once instead, and only then does the
+     * rest of the app hear of the new numbers ([SessionEvent.PagesRenumbered]). Until then,
+     * every change recorded has the old numbers.
+     *
+     * In order, in one task: everything recorded so far goes into the PDF under the old numbers
+     * ([applyPending]); nothing is done if the file can't be saved into now; the page is added
+     * or removed ([change]); the file is saved; and the undo list is emptied, its changes having
+     * the old numbers. If the save fails, the open PDF holds a page the file doesn't: it's
+     * opened again from the file, and the journal's changes applied again.
+     *
+     * The screen pauses the pen until it hears back, so nothing should be recorded meanwhile.
+     * If something is (a stroke during the save), it has the old numbers, and [restartJournal]
+     * gives it the new ones ([newNumber] of each old number; null for the page removed) at the
+     * moment the journal moves to the new file. A save like this one also leaves no note in the
+     * journal before the swap (see [save]), so a kill in between can't replay old numbers onto
+     * the new file.
+     *
+     * The caller always gets an answer, whatever goes wrong: the screen waits for one.
+     */
+    private fun changePages(
+        what: String,
+        page: Int,
+        newNumber: (Int) -> Int?,
+        refuse: (PdfPages) -> String? = { null },
+        change: (PdfPages) -> Unit,
+        showPage: (PdfPages) -> Int,
+    ) {
+        scheduler.post {
+            try {
+                val p = pages ?: return@post events(SessionEvent.PageNotChanged("The file isn't open, so the page wasn't $what."))
+                if (page !in 0 until p.pageCount) return@post events(SessionEvent.PageNotChanged("There's no such page."))
+                applyPending()
+                val why = refuse(p) ?: whyPagesCantChange(p, what) // refuse first: it doesn't read the whole file
+                if (why != null) return@post events(SessionEvent.PageNotChanged(why))
+                val saved = try {
+                    change(p)
+                    save(newPageNumber = newNumber)
+                } catch (e: Exception) {
+                    // MuPDF failed midway: the PDF may hold part of it, and it isn't saved.
+                    System.err.println("DocumentSession: a page couldn't be $what: $e")
+                    false
+                }
+                if (saved) {
+                    events(SessionEvent.HistoryChanged(canUndo = false, canRedo = false))
+                    events(SessionEvent.PagesRenumbered(showPage(p)))
+                } else {
+                    openAgainFromTheFile()
+                    events(SessionEvent.PageNotChanged("The file couldn't be saved, so the page wasn't $what."))
+                }
+            } catch (e: Exception) {
+                System.err.println("DocumentSession: changing pages failed: $e")
+                events(SessionEvent.PageNotChanged("Something went wrong, so the page wasn't $what."))
+            }
+        }
+    }
+
+    /** Worker thread only. Why the file can't be saved into right now, for the owner, or null if it can. */
+    private fun whyPagesCantChange(p: PdfPages, what: String): String? = when {
+        applyFailed -> "A change couldn't be written into this file, so the page wasn't $what."
+        checkRepair(p) -> "Answer the question about the damaged file first."
+        stoppedBecauseChanged || !fileUnchanged() -> "This file was changed elsewhere, so the page wasn't $what."
+        else -> null
+    }
+
+    /**
+     * Worker thread only, after a page was added or removed in the open PDF but not saved: the
+     * PDF is opened again from the file, which never had that change. None of `unsaved` is in
+     * it then, so they're all applied again, in order. If it can't be opened, the owner is
+     * told, and the writing waits in the journal for the next opening.
+     */
+    private fun openAgainFromTheFile() {
+        runCatching { pages?.close() }
+        pages = null
+        val reopened = try {
+            open(file)
+        } catch (e: Exception) {
+            System.err.println("DocumentSession: opening again failed: $e")
+            events(SessionEvent.OpenFailed("${file.name} couldn't be opened again. Your writing is kept safe and comes back when you open it."))
+            return
+        }
+        pages = reopened
+        synchronized(lock) { applied = 0 }
+        applyPending()
+        checkRepair(reopened)
+    }
+
     /** Turns each of [pageNumbers] by 90° clockwise, as one undo step. */
     fun rotate(pageNumbers: List<Int>) {
         onWorker("rotate $pageNumbers") { p ->
@@ -515,28 +643,30 @@ class DocumentSession(
         return true
     }
 
-    /** Worker thread only. Any failure is reported: a failed save must never be silent (spec §7.3). */
-    private fun save() {
-        val p = pages ?: return
+    /**
+     * Worker thread only. Any failure is reported: a failed save must never be silent (spec
+     * §7.3). Returns whether the new version is in place.
+     *
+     * [newPageNumber] is given when the open PDF has just had a page added or removed (see
+     * [changePages]): it's saved even with nothing journaled, and the journal moves to the new
+     * page numbers with the file. That save leaves no note before the swap ([markSaving]): the
+     * note would let the next opening replay the changes after it onto the new file, and they
+     * have the old numbers. Without it, a kill between the swap and [restartJournal] keeps the
+     * journal aside instead, as for any changed file, and nothing is lost or misplaced.
+     */
+    private fun save(newPageNumber: ((Int) -> Int?)? = null): Boolean {
+        val p = pages ?: return false
         val inThisSave = applied
-        if (inThisSave == 0 && !inkRedrawn) return
-        if (applyFailed || stoppedBecauseChanged || checkRepair(p)) return
+        if (inThisSave == 0 && !inkRedrawn && newPageNumber == null) return false
+        if (applyFailed || stoppedBecauseChanged || checkRepair(p)) return false
 
+        var swapped = false
         try {
             // Timed in three parts, to see where a slow save spends its time: checking the
             // file is still ours, writing the new PDF, and the rest (reading the new file,
             // the journal, moving it into place).
             val started = System.nanoTime()
-            val now = try { FileIdentity.of(file) } catch (e: Exception) { null }
-            // Contents only: a sync app that just reset the file's date changed nothing.
-            if (now?.sameContentAs(known) != true) {
-                // A laptop or sync app changed, moved or deleted the file. Writing over it
-                // would lose their change, so stop saving into it. The changes stay in the
-                // journal (plan 5 adds the copy).
-                stoppedBecauseChanged = true
-                events(SessionEvent.ChangedOnDisk)
-                return
-            }
+            if (!fileUnchanged()) return false
 
             // The new version is read once, while it's still the temporary file: moving it
             // into place changes nothing about it, so the file needn't be read again after.
@@ -546,29 +676,46 @@ class DocumentSession(
             SafeSave.replace(file, beforeSwap = { temp ->
                 val result = FileIdentity.of(temp)
                 next = result
-                markSaving(result, inThisSave)
+                if (newPageNumber == null) markSaving(result, inThisSave)
             }) {
                 val writeStarted = System.nanoTime()
                 p.saveTo(it)
                 writeNs = System.nanoTime() - writeStarted
             }
+            swapped = true
             val saved = next!!
             known = saved
             inkRedrawn = false
-            restartJournal(saved, inThisSave)
+            restartJournal(saved, inThisSave, newPageNumber)
             val totalNs = System.nanoTime() - started
             System.err.println(
                 "DocumentSession: save ms=${totalNs / 1_000_000} check=${checkNs / 1_000_000} write=${writeNs / 1_000_000} " +
                     "swap=${(totalNs - checkNs - writeNs) / 1_000_000} bytes=${file.length()}",
             )
             events(SessionEvent.Saved)
+            return true
         } catch (e: Throwable) {
             // Throwable, not Exception: running out of memory while saving must be told and
             // tried again like any other failure. Nothing lost: the changes are still in
             // memory and in the journal. Try again later.
             events(SessionEvent.SaveFailed(e.message ?: "The file couldn't be saved."))
             scheduler.postDelayed(AUTOSAVE, RETRY_DELAY_MS) { save() }
+            return swapped
         }
+    }
+
+    /**
+     * Worker thread only. Whether the file is still as it was when opened or last saved.
+     * Contents only: a sync app that just reset the file's date changed nothing. If a laptop or
+     * sync app changed, moved or deleted it, writing over it would lose their change, so saving
+     * into it stops. The changes stay in the journal (plan 5 adds the copy).
+     */
+    private fun fileUnchanged(): Boolean {
+        val now = try { FileIdentity.of(file) } catch (e: Exception) { null }
+        if (now?.sameContentAs(known) == true) return true
+        stoppedBecauseChanged = true
+        events(SessionEvent.ChangedOnDisk)
+        return false
     }
 
     /**
@@ -604,12 +751,27 @@ class DocumentSession(
      * dropped from `unsaved` either way: counting the save as failed would save the same
      * changes again and again. A journal that couldn't be rewritten still holds the old
      * version of the file and its changes; the next opening sorts that out, losing nothing.
+     *
+     * After a page was added or removed ([changePages]), the changes the save didn't include
+     * were recorded with the old page numbers: they get their [newPageNumber] here, under the
+     * same lock as the journal's move to the new file, and the undo list (old numbers too) is
+     * emptied with it. A change on the page removed has nowhere to go: the old journal, which
+     * holds it, is kept aside first, so it's never lost.
      */
-    private fun restartJournal(base: FileIdentity, saved: Int) {
+    private fun restartJournal(base: FileIdentity, saved: Int, newPageNumber: ((Int) -> Int?)? = null) {
         var tellOwner = false
         synchronized(lock) {
-            val remaining = unsaved.drop(saved)
+            var remaining = unsaved.drop(saved)
+            var keepOldJournal = false
+            if (newPageNumber != null) {
+                val moved = remaining.map { renumbered(it, newPageNumber) }
+                keepOldJournal = null in moved
+                remaining = moved.filterNotNull()
+                undoable.clear()
+                redoable.clear()
+            }
             try {
+                if (keepOldJournal) setAside()
                 journal.rewrite(base, remaining)
                 journalBroken = false // whole again, with everything unsaved in it
             } catch (e: IOException) {
@@ -652,6 +814,18 @@ class DocumentSession(
         val kept = File(journalDir, journal.file.name + ".kept-" + System.currentTimeMillis())
         if (!journal.file.renameTo(kept)) journal.file.copyTo(kept, overwrite = false)
         events(SessionEvent.EarlierWritingKept(kept))
+    }
+
+    /** [change] with each page's [newNumber], or null if it touches a page that's gone. */
+    private fun renumbered(change: Change, newNumber: (Int) -> Int?): Change? {
+        if (change.pages.any { newNumber(it) == null }) return null
+        fun moved(page: Int) = newNumber(page)!!
+        return when (change) {
+            is AddItems -> change.copy(page = moved(change.page))
+            is RemoveItems -> change.copy(page = moved(change.page))
+            is ReplaceItems -> change.copy(page = moved(change.page))
+            is RotatePages -> RotatePages(change.before.mapKeys { moved(it.key) }, change.after.mapKeys { moved(it.key) })
+        }
     }
 
     /** A change with nothing in it isn't worth a journal line or an undo step. */

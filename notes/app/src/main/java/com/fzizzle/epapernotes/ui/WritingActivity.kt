@@ -1676,6 +1676,8 @@ class WritingActivity : Activity() {
                 undoButton.isEnabled = event.canUndo
                 redoButton.isEnabled = event.canRedo
             }
+            is SessionEvent.PagesRenumbered -> Unit // Task 5 lays the document out again here
+            is SessionEvent.PageNotChanged -> toast(event.message)
             is SessionEvent.EarlierWritingKept -> toast("Unsaved writing from before this file changed was kept safe.")
             is SessionEvent.SavedToCopy -> {
                 // The session writes into the copy from here on, so the copy is what "Continue"

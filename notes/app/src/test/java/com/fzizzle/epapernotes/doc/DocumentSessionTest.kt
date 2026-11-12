@@ -966,4 +966,245 @@ class DocumentSessionTest {
         // The journal written afresh at this opening holds the picture for the one move left.
         assertEquals(listOf<Change>(ReplaceItems(0, listOf(at(10f)), listOf(at(20f)))), journalChanges())
     }
+
+    // Pages added and removed (pages plan, Task 4). The fake opens with five pages, 0 to 4.
+
+    private fun pageNotChanged() = events.filterIsInstance<SessionEvent.PageNotChanged>()
+
+    /** As the file on disk is after a failed save: the fake opened again from it, without the added page. */
+    private fun reopenFreshFromTheFile() {
+        opening = { FakePdfPages().also { fake = it } }
+    }
+
+    @Test fun addingAPageSavesAndRenumbers() {
+        val s = session()
+        s.addStroke(0, dot)
+        s.addPageAfter(0)
+        assertEquals(6, fake.pageCount) // one more page than before
+        assertTrue(fake.isAddedPage(1))
+        assertEquals(listOf(dot), strokesOn(0))
+        assertEquals("items=1", pdf.readText())
+        assertEquals(SessionEvent.Saved, events[events.size - 3])
+        assertEquals(SessionEvent.PagesRenumbered(1), events.last())
+        assertEquals(0, journalStrokes()) // nothing unsaved
+    }
+
+    /** A page is saved at once, even with no writing waiting to be saved. */
+    @Test fun anAddedPageIsSavedWithNothingElseUnsaved() {
+        val s = session()
+        s.addPageAfter(2)
+        assertEquals(1, fake.saves)
+        assertEquals(SessionEvent.PagesRenumbered(3), events.last())
+    }
+
+    /**
+     * Recorded before the add's turn on the worker, with the page numbers as they were: it goes
+     * in under those numbers first, then moves with its page.
+     */
+    @Test fun aStrokeRecordedJustBeforeStaysOnItsPage() {
+        val s = session()
+        scheduler.post {
+            s.addPageAfter(0)
+            s.addStroke(1, dot) // recorded after the request, before the worker gets to it: not yet applied
+        }
+        assertEquals(listOf(dot), strokesOn(2)) // the old page 1
+        assertTrue(strokesOn(1).isEmpty()) // the new page is empty
+        assertEquals("items=1", pdf.readText())
+        assertEquals(0, journalStrokes())
+    }
+
+    @Test fun addingAPageEmptiesTheUndoList() {
+        val s = session()
+        s.addStroke(0, dot)
+        s.addPageAfter(0)
+        assertEquals(SessionEvent.HistoryChanged(canUndo = false, canRedo = false), events[events.size - 2])
+        assertEquals(null, s.undo())
+        assertEquals(null, s.redo())
+    }
+
+    @Test fun noPageIsAddedToAFileChangedElsewhere() {
+        val s = session()
+        s.addStroke(0, dot)
+        pdf.writeText("edited on the laptop")
+        s.addPageAfter(0)
+        assertEquals(1, pageNotChanged().size)
+        assertEquals(5, fake.pageCount)
+        assertTrue(fake.addedPages.isEmpty()) // never asked to add
+        assertEquals("edited on the laptop", pdf.readText())
+        assertTrue(events.contains(SessionEvent.ChangedOnDisk))
+        assertEquals(1, journalStrokes())
+    }
+
+    @Test fun noPageIsAddedWhileTheRepairQuestionIsOpen() {
+        fake = FakePdfPages(wasRepaired = true)
+        val s = session()
+        s.addPageAfter(0)
+        assertEquals(listOf(SessionEvent.PageNotChanged("Answer the question about the damaged file first.")), pageNotChanged())
+        assertEquals(5, fake.pageCount)
+        assertEquals(0, fake.saves)
+        assertEquals("original", pdf.readText())
+    }
+
+    @Test fun noPageIsAddedAfterAPageThatIsNotThere() {
+        val s = session()
+        s.addPageAfter(5)
+        s.removeAddedPage(-1)
+        assertEquals(2, pageNotChanged().size)
+        assertEquals(5, fake.pageCount)
+    }
+
+    /** A failed save leaves the open PDF as the file is: without the page, with every stroke on its own page. */
+    @Test fun aPageThatCouldNotBeSavedIsTakenBackOut() {
+        val s = session()
+        s.addStroke(1, dot)
+        val added = fake
+        added.failNextSave = true
+        reopenFreshFromTheFile()
+        s.addPageAfter(0)
+        assertTrue(events.any { it is SessionEvent.SaveFailed })
+        assertEquals(1, pageNotChanged().size)
+        assertTrue(events.none { it is SessionEvent.PagesRenumbered })
+        assertTrue(added.closed)
+        assertEquals(5, fake.pageCount) // the PDF opened again from the file
+        assertEquals(listOf(dot), strokesOn(1))
+        assertEquals("original", pdf.readText())
+        assertEquals(listOf(1), journalChanges().map { (it as AddItems).page })
+        s.saveNow() // and saving carries on as before
+        assertEquals("items=1", pdf.readText())
+    }
+
+    /** If the file can't even be opened again, the owner is told, and the writing waits in the journal. */
+    @Test fun aFileThatCanNotBeOpenedAgainIsNotSilent() {
+        val s = session()
+        s.addStroke(1, dot)
+        fake.failNextSave = true
+        opening = { throw IllegalStateException("mupdf error") }
+        s.addPageAfter(0)
+        assertTrue(events.any { it is SessionEvent.OpenFailed })
+        assertEquals(1, pageNotChanged().size)
+        assertEquals(1, journalStrokes())
+    }
+
+    @Test fun aKillWhileAddingLosesNothing() {
+        val s = session()
+        s.addStroke(1, dot)
+        fake.failNextSave = true // the add's save never reaches the disk, as if killed midway
+        reopenFreshFromTheFile()
+        s.addPageAfter(0)
+        assertEquals("original", pdf.readText())
+        opening = { fake }
+        reopenAfterKill()
+        assertTrue(events.contains(SessionEvent.Replayed(1)))
+        assertEquals(5, fake.pageCount)
+        assertEquals(listOf(dot), strokesOn(1)) // its old page, in the old file
+    }
+
+    /**
+     * Killed after the new PDF (with the page) is in place, before the journal hears of it. Its
+     * changes have the old page numbers, so they're never replayed onto the new file: they're
+     * kept aside, as for any file changed since.
+     */
+    @Test fun aKillJustAfterTheAddsSwapReplaysNothingOntoTheNewNumbers() {
+        val s = session()
+        s.addStroke(1, dot)
+        journals.setWritable(false) // the rewrite after the save needs a new file in the folder
+        try {
+            assumeFalse("can't lock the folder here (running as root?)", journals.canWrite())
+            s.addPageAfter(0)
+            assertEquals("items=1", pdf.readText())
+        } finally {
+            journals.setWritable(true)
+        }
+        events.clear()
+        fake = FakePdfPages().apply { pageItems[2] = mutableListOf(InkItem("saved", dot)) } // the file as saved
+        session()
+        assertTrue(events.none { it is SessionEvent.Replayed })
+        assertTrue(events.any { it is SessionEvent.EarlierWritingKept })
+        assertTrue(strokesOn(1).isEmpty())
+        assertEquals(listOf(dot), strokesOn(2))
+    }
+
+    /**
+     * The pen shouldn't write while a page is added (the screen pauses it), but if a stroke
+     * does arrive during the add's save, it has the old page numbers: it moves with its page.
+     */
+    @Test fun aStrokeArrivingDuringTheAddLandsOnItsOwnPage() {
+        val s = session()
+        fake.duringSave = { fake.duringSave = null; s.addStroke(2, dot) }
+        s.addPageAfter(0)
+        assertEquals(listOf(dot), strokesOn(3)) // the old page 2
+        assertTrue(strokesOn(2).isEmpty())
+        assertEquals(listOf(3), journalChanges().map { (it as AddItems).page })
+        reopenAfterKill() // and after a kill it comes back there too
+        assertEquals(listOf(dot), strokesOn(3))
+    }
+
+    @Test fun removingAnAddedPageWithInkRemovesItsInkToo() {
+        val s = session()
+        s.addPageAfter(0)
+        s.addStroke(1, dot)
+        s.addStroke(2, line) // the PDF's own page after it
+        s.removeAddedPage(1)
+        assertEquals(5, fake.pageCount)
+        assertTrue(fake.addedPages.isEmpty())
+        assertEquals(listOf(line), strokesOn(1))
+        assertEquals("items=1", pdf.readText())
+        assertEquals(0, journalStrokes())
+        assertEquals(SessionEvent.PagesRenumbered(1), events.last()) // the page now where it was
+        assertEquals(null, s.undo())
+    }
+
+    @Test fun removingTheLastPageShowsTheOneBefore() {
+        val s = session()
+        s.addPageAfter(4)
+        s.removeAddedPage(5)
+        assertEquals(SessionEvent.PagesRenumbered(4), events.last())
+    }
+
+    /** A page added in an earlier session can be removed too. */
+    @Test fun aPageAddedEarlierCanBeRemoved() {
+        fake.addedPages += 3
+        val s = session()
+        s.removeAddedPage(3)
+        assertEquals(4, fake.pageCount)
+        assertEquals(SessionEvent.PagesRenumbered(3), events.last())
+    }
+
+    @Test fun aPdfsOwnPageIsNotRemoved() {
+        val s = session()
+        s.addStroke(1, dot)
+        s.removeAddedPage(1)
+        assertEquals(listOf(SessionEvent.PageNotChanged("Only pages you added can be removed.")), pageNotChanged())
+        assertEquals(5, fake.pageCount)
+        assertEquals(listOf(dot), strokesOn(1))
+        assertEquals(0, fake.saves)
+    }
+
+    /**
+     * A stroke arriving during the removal, on the very page removed, has nowhere to go in the
+     * new file. It isn't dropped: the journal it is in is kept aside, as for a changed file.
+     */
+    @Test fun aStrokeOnTheRemovedPageArrivingDuringTheRemovalIsKeptAside() {
+        fake.addedPages += 1
+        val s = session()
+        fake.duringSave = { fake.duringSave = null; s.addStroke(1, dot); s.addStroke(3, line) }
+        s.removeAddedPage(1)
+        val kept = events.filterIsInstance<SessionEvent.EarlierWritingKept>().single().journal
+        assertEquals(listOf(1, 3), journalOf(kept).map { (it as AddItems).page }) // as recorded, old numbers
+        assertEquals(listOf(line), strokesOn(2)) // the other moved with its page
+        assertEquals(listOf(2), journalChanges().map { (it as AddItems).page })
+        assertEquals(4, fake.pageCount)
+    }
+
+    private fun journalOf(file: File) = ChangeJournal(file).read()!!.changes
+
+    @Test fun isAddedPageAnswersOnTheWorker() {
+        val s = session()
+        s.addPageAfter(1)
+        val answers = mutableListOf<Boolean>()
+        s.isAddedPage(2) { answers += it }
+        s.isAddedPage(1) { answers += it }
+        s.isAddedPage(9) { answers += it }
+        assertEquals(listOf(true, false, false), answers)
+    }
 }
