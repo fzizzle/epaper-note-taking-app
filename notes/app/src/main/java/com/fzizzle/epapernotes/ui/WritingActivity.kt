@@ -866,7 +866,7 @@ class WritingActivity : Activity() {
     }
 
     /**
-     * The Paste button (it shows while [ToolState.showPaste]): arms a paste for the next pen
+     * The Paste button (black while [ToolState.showPaste], grey before): arms a paste for the next pen
      * tap on the page, or cancels one already armed.
      */
     private fun togglePaste() {
@@ -939,7 +939,7 @@ class WritingActivity : Activity() {
         override fun copy() {
             toolState.clipboard = Clipboard(selected, pdfToDisplay[selectedPage])
             Log.i(TAG, "copied page=$selectedPage items=${selected.size}")
-            updateStrip() // Paste appears
+            showStripChange(updateStrip()) // Paste turns black
             showCopied()
         }
 
@@ -1011,7 +1011,8 @@ class WritingActivity : Activity() {
                 Log.i(TAG, "snip page=$page px=$size bytes=${png.size} ms=${SystemClock.uptimeMillis() - started}")
                 runOnUiThread {
                     toolState.clipboard = Clipboard(listOf(item), toDisplay)
-                    updateStrip() // Paste appears
+                    // Paste turns black. The snip may finish after fast-ink is back, so it's put on the panel.
+                    showStripChange(updateStrip())
                     showCopied()
                 }
             } catch (e: Exception) {
@@ -1335,7 +1336,10 @@ class WritingActivity : Activity() {
      * begun in a pause gets no live line. With fast-ink off it's on screen already.
      */
     private fun showStripChange(changed: Boolean) {
-        if (changed && fastInkWanted()) pen.showAlone(stripView)
+        if (changed && fastInkWanted()) {
+            Log.i(TAG, "strip shown alone")
+            pen.showAlone(stripView)
+        }
     }
 
     /** Full screen while writing: the status bar comes back for a moment with a swipe down from the top. */
