@@ -7,6 +7,9 @@ import com.fzizzle.epapernotes.ink.Box
 /** A page's size as shown (rotation applied), in PDF points. */
 data class SizePt(val w: Float, val h: Float)
 
+/** Where a zoomed page turn lands on the new page ([Viewport.turn]). */
+enum class Land { SAME_PLACE, TOP, BOTTOM }
+
 /**
  * One page at a time (spec §6.2): which page is showing, how far it's zoomed, and where it
  * sits on screen.
@@ -62,16 +65,39 @@ class Viewport(
     }
 
     /** Returns false at the last page. */
-    fun next(): Boolean {
-        if (page >= sizes.size - 1) return false
-        goTo(page + 1)
-        return true
-    }
+    fun next(): Boolean = turn(forward = true, keepZoom = false)
 
     /** Returns false at the first page. */
-    fun previous(): Boolean {
-        if (page <= 0) return false
-        goTo(page - 1)
+    fun previous(): Boolean = turn(forward = false, keepZoom = false)
+
+    /** The same page, whole (or its box) and centred again: what the Fit button does. */
+    fun fit() = goTo(page)
+
+    /**
+     * The next or previous page; false, and nothing changes, at either end. With [keepZoom]
+     * the new page is shown as zoomed as this one, at the same place on the page ([land]:
+     * or at its top or bottom), so a run of slides laid out alike can be read at one zoom.
+     * A page of another size is never shown past its own edges. Without [keepZoom] the new
+     * page is fitted, as [goTo] does.
+     */
+    fun turn(forward: Boolean, keepZoom: Boolean, land: Land = Land.SAME_PLACE): Boolean {
+        val to = if (forward) page + 1 else page - 1
+        if (to !in sizes.indices) return false
+        if (!keepZoom) {
+            goTo(to)
+            return true
+        }
+        page = to
+        // The same zoom of this page's own fitted size; where the page's corner is stays as
+        // it was, and clamping brings a page of another size back inside its edges.
+        val b = box(page)
+        val s = pxPerPt()
+        when (land) {
+            Land.SAME_PLACE -> Unit
+            Land.TOP -> y0 = -b.y0 * s
+            Land.BOTTOM -> y0 = viewHeightPx - (b.y1 - b.y0) * s - b.y0 * s
+        }
+        clamp()
         return true
     }
 

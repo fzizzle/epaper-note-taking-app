@@ -117,6 +117,7 @@ class WritingActivity : Activity() {
     private lateinit var redoButton: StripButton
     private lateinit var pasteButton: StripButton
     private lateinit var menuButton: StripButton
+    private lateinit var fitButton: StripButton
     private lateinit var island: IslandRow
     private lateinit var stripView: View
     private lateinit var previousButton: StripButton
@@ -293,6 +294,7 @@ class WritingActivity : Activity() {
         trimMargins = readingPrefs.trimMargins
 
         pages = PageView(this)
+        pages.keepZoom = readingPrefs.keepZoom
         indicator = TextView(this).apply {
             textSize = 20f
             setTextColor(Color.BLACK)
@@ -332,6 +334,9 @@ class WritingActivity : Activity() {
         redoButton = button(island, Glyph.REDO, "Redo") { undoOrRedo(undo = false) }.apply { isEnabled = false }
         // Always on the island, greyed out until something is copied, so the tools never move (UI review, decision 3).
         pasteButton = button(island, Glyph.PASTE, "Paste") { togglePaste() }.apply { isEnabled = false }
+        // Always there, grey at normal size, so nothing on the strip moves (as Paste). It only
+        // changes with a zoom, which refreshes the screen anyway.
+        fitButton = button(right, Glyph.FIT, "Fit the whole page") { fitPage() }.apply { isEnabled = false }
         menuButton = button(right, Glyph.MENU, "Page menu", gaps = 2) { openPageMenu() }
         previousButton = button(right, Glyph.PREVIOUS, "Previous page") { turn(forward = false) }
         right.addView(indicator, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.MATCH_PARENT).apply { marginEnd = gap })
@@ -1236,6 +1241,13 @@ class WritingActivity : Activity() {
             .setOnMenuItemClickListener { chooseDarkTextAsBlack(!darkTextAsBlack); true }
         menu.menu.add(LOOK_GROUP, Menu.NONE, Menu.NONE, "Trim margins").setCheckable(true).setChecked(trimMargins)
             .setOnMenuItemClickListener { chooseTrimMargins(!trimMargins); true }
+        menu.menu.add(LOOK_GROUP, Menu.NONE, Menu.NONE, "Keep zoom when turning").setCheckable(true).setChecked(pages.keepZoom)
+            .setOnMenuItemClickListener {
+                readingPrefs.keepZoom = !pages.keepZoom
+                pages.keepZoom = readingPrefs.keepZoom
+                Log.i(TAG, "keep zoom ${pages.keepZoom}")
+                true
+            }
         menu.menu.setGroupDividerEnabled(true)
         dialogOpen = true
         pausePenAndRedraw()
@@ -1333,7 +1345,35 @@ class WritingActivity : Activity() {
 
     private fun turn(forward: Boolean) {
         Log.i(TAG, "turn forward=$forward")
-        if (pages.turn(forward)) showWithoutFastInk()
+        if (pages.turn(forward)) showTurnedPage()
+    }
+
+    /**
+     * Shows the page just turned to. Still zoomed in (PageView.keepZoom), its sharp patch is
+     * on its way: the refresh waits for it, as after a pinch ([heldCleanRefresh]), so the turn
+     * ends in one panel update with the text sharp, not two.
+     */
+    private fun showTurnedPage() {
+        if (!pages.sharpPatchComing || pen.isWriting) return showWithoutFastInk()
+        Log.i(TAG, "show: pause fast-ink, refresh held for the sharp patch")
+        showPending = false
+        eraseSettle.shown()
+        handler.removeCallbacks(retryShow)
+        pausePenAndRedraw()
+        // As in showWithoutFastInk: the screen takes the pen for the pause, so a stroke begun in it is kept.
+        pages.penHandler = screenPen
+        screenHasPen = true
+        handler.removeCallbacks(resumeFastInk)
+        handler.removeCallbacks(heldCleanRefresh)
+        cleanRefreshHeld = true
+        handler.postDelayed(heldCleanRefresh, PATCH_WAIT_MS)
+    }
+
+    /** The Fit button: the whole page again, with one refresh. */
+    private fun fitPage() {
+        if (pen.isWriting || screenPenDown) return
+        Log.i(TAG, "fit")
+        if (pages.fitPage()) showWithoutFastInk()
     }
 
     /**
@@ -1548,6 +1588,7 @@ class WritingActivity : Activity() {
         indicator.contentDescription = "Page ${v.page + 1} of $pageCount. Tap to go to a page."
         previousButton.isEnabled = v.page > 0
         nextButton.isEnabled = v.page < pageCount - 1
+        fitButton.isEnabled = v.zoom > 1.05f
     }
 
     private fun show(event: SessionEvent) {

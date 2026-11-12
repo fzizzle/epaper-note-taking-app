@@ -25,7 +25,7 @@ import android.view.View
  */
 class StripButton(context: Context, glyph: Glyph, description: String) : View(context) {
 
-    enum class Glyph { BACK, PREVIOUS, NEXT, PEN, HIGHLIGHTER, ERASER, LASSO, SNIP, UNDO, REDO, PASTE, MENU, REFRESH, NEW_FOLDER, LIST, TILES }
+    enum class Glyph { BACK, PREVIOUS, NEXT, PEN, HIGHLIGHTER, ERASER, LASSO, SNIP, UNDO, REDO, PASTE, MENU, REFRESH, NEW_FOLDER, LIST, TILES, FIT }
 
     /** The mark drawn. A button that switches between two things shows the other one's mark. */
     var glyph: Glyph = glyph
@@ -284,6 +284,19 @@ class StripButton(context: Context, glyph: Glyph, description: String) : View(co
                 path.close()
                 ink.style = Paint.Style.FILL
                 canvas.drawPath(path, ink)
+            }
+            Glyph.FIT -> {
+                // Four corner marks pointing outwards: back to the whole page.
+                ink.style = Paint.Style.STROKE
+                ink.strokeWidth = s * 0.06f
+                val a = s * 0.26f
+                val l = s * 0.14f
+                for ((dx, dy) in listOf(-1 to -1, 1 to -1, -1 to 1, 1 to 1)) {
+                    val x = cx + dx * a
+                    val y = cy + dy * a
+                    canvas.drawLine(x, y, x - dx * l, y, ink)
+                    canvas.drawLine(x, y, x, y - dy * l, ink)
+                }
             }
             Glyph.LIST -> {
                 // Three lines, each after a dot: a list.
