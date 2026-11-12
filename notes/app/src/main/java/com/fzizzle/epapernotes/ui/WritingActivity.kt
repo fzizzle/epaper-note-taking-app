@@ -90,6 +90,9 @@ class WritingActivity : Activity() {
     private val printedAreas = HashMap<Int, PrintedArea>()
     private val measuring = HashSet<Int>()
 
+    /** Pages whose measure has come back, with a box or without: their pictures may be made ahead (PageView.mayReadyAhead). */
+    private val measuredOnce = HashSet<Int>()
+
     /**
      * True from a page being arrived at until the pen or a finger gesture first touches it.
      * Only until then may its printed area, arriving, refit it: a page never moves under the
@@ -495,6 +498,7 @@ class WritingActivity : Activity() {
             }
         }
         pages.quietTime = { pen.drawsInk && !pen.isWriting }
+        pages.mayReadyAhead = { !trimMargins || (it in measuredOnce && it !in measuring) }
         // Its picture then reaches the panel the usual way (onPageShown, below).
         pages.onRefitReady = { refitShownPage() }
         pages.onPageShown = { page, version ->
@@ -554,9 +558,13 @@ class WritingActivity : Activity() {
                 pdfToDisplay.indices.filter { it < transforms.size && transforms[it] != pdfToDisplay[it] }.forEach {
                     pages.pageRotated(it)
                     printedAreas.remove(it)
+                    measuredOnce.remove(it)
                     measuring.remove(it)
                 }
-                if (first != null && firstArea != null) printedAreas[first] = PrintedArea(firstArea, firstInk)
+                if (first != null && firstArea != null) {
+                    printedAreas[first] = PrintedArea(firstArea, firstInk)
+                    measuredOnce += first
+                }
                 pageCount = sizes.size
                 pageSizes = sizes
                 pdfToDisplay = transforms
@@ -696,12 +704,15 @@ class WritingActivity : Activity() {
         // The page turned since: layOutPages dropped this one and has asked again.
         if (page !in pdfToDisplay.indices || pdfToDisplay[page] != turnedAs) return
         measuring -= page
-        if (box == null) return
+        measuredOnce += page
+        if (box == null) return pages.readyAhead() // not measurable: its picture is made ahead at the whole page's width
         // The box in use until now: the whole page if it hadn't been measured. A page that comes
         // out whole (blank, full-bleed) is then no change, and costs no refit or panel update.
         val had = printedAreas[page]?.box ?: Box(0f, 0f, pageSizes[page].w, pageSizes[page].h)
         printedAreas[page] = PrintedArea(box, inkVersion)
-        if (!trimMargins || box == had) return
+        // A neighbour's picture waited for this measure (PageView.mayReadyAhead). With the box
+        // unchanged it's asked for here; a changed box is handed over below, which asks too.
+        if (!trimMargins || box == had) return pages.readyAhead()
         val v = pages.viewport ?: return
         val boxes = fitBoxes() ?: return
         if (page == v.page && mayRefitShownPage()) {

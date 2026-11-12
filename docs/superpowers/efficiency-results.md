@@ -29,3 +29,9 @@ Notes:
 - Opening wasn't timed after a reboot: restarting the owner's tablet wasn't worth it for one number. With the file already read once, the whole-file read is 57 ms of 133.
 - The old-ink check costs 18 ms for 125 pages. It needs no plan (decision 4's limit was 100 ms).
 - The panel's own log (`SDM update_to_display`) shows nothing for the library screen, so a folder's fill is counted in frames drawn.
+
+## After, task by task
+
+| Task | What | Before | After | Kept? |
+|---|---|---|---|---|
+| 2. A neighbour page drawn once with Trim margins | page pictures made for ten page turns on a workbook | 23 | 13: one per page, each at its final width, still made ahead of the turn | yes |

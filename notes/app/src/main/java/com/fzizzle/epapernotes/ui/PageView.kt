@@ -111,6 +111,15 @@ class PageView(context: Context) : View(context) {
      */
     var quietTime: () -> Boolean = { false }
 
+    /**
+     * Whether a neighbour [page]'s picture may be made ahead now ([readyNeighbours]). With
+     * Trim margins the screen says no until the page's printed area is measured: asked for
+     * before, the picture came at the whole page's width and again at the trimmed one, two
+     * drawings and two pictures kept for every page turned to. The screen calls [readyAhead]
+     * once the measure is in.
+     */
+    var mayReadyAhead: (page: Int) -> Boolean = { true }
+
     var viewport: Viewport? = null
         private set
     private var sizes: List<SizePt> = emptyList()
@@ -652,8 +661,15 @@ class PageView(context: Context) : View(context) {
     /** At normal size, the pages either side of the one on show are made ahead, so turning to one is instant. */
     private fun readyNeighbours(v: Viewport) {
         if (v.zoom > 1.05f) return
-        if (v.page + 1 < v.pageCount) ensureRendered(v.page + 1, renderWidth(v, v.page + 1))
-        if (v.page > 0) ensureRendered(v.page - 1, renderWidth(v, v.page - 1))
+        for (page in listOf(v.page + 1, v.page - 1)) {
+            if (page in 0 until v.pageCount && mayReadyAhead(page)) ensureRendered(page, renderWidth(v, page))
+        }
+    }
+
+    /** Asks for the neighbours' pictures now, as a draw would: something they waited for has come ([mayReadyAhead]). UI thread. */
+    fun readyAhead() {
+        val v = viewport ?: return
+        if (!pinching) readyNeighbours(v)
     }
 
 
