@@ -85,11 +85,18 @@ What the library shows beyond that (owner's decisions, 2026-11-12; [library desi
 
 Layout: the PDF pages fill the screen. A **thin top strip** (a little under 5% of the height, 4.4% since 2026-11-10, always visible, one row) holds, left to right:
 
-`← library · file name · pen · highlighter · eraser · lasso select · snip · undo · redo · paste · ⋯ page menu · ‹ page ›`
+`← library · file name · pen · highlighter · eraser · lasso select · snip · undo · redo · paste · fit · ⋯ page menu · ‹ page ›`
 
 How the strip is laid out (owner's decision, 2026-11-10): ← sits at the left edge, followed by the open file's name in grey, cut from the front when it's too long so its end shows; it never moves the island (owner, UI review decision 2, 2026-11-12). The tools, undo and redo sit together on a capsule (the "island") centred on the screen. ⋯ and the page indicator sit at the right edge. The island picks out the chosen tool. Tapping a tool shows it at once, with one quick flash, because fast-ink is on. Holding a pen button doesn't change the island: that would flash the screen at every press (owner's choice). The status bar is hidden on the writing screen, so the strip sits at the very top with even space around it. The island is white with a black outline (owner's choice, 2026-11-10).
 
 The page menu holds **rotate this page**, **rotate all pages**, and the reading settings below.
+
+Added on 2026-11-12 (owner's decisions; [writing screen design plan](../plans/2026-11-12-writing-screen-design.md)):
+
+- **The line under the strip shows where you are.** It is black from the left as far as the page on show and grey after, with a small black tick under it for each page that has writing. It takes 8 pixels and only changes when the page does.
+- **Fit** sits at the right, before ⋯: grey at normal size, black when zoomed in, where a tap brings the whole page back with one refresh. It is always there, so nothing on the strip moves.
+- **"Go to page" is a pad of big buttons** (0 to 9, ⌫, Go), not a text field: the system keyboard is slow to come and flashes on e-ink.
+- **Holding ‹ goes to the first page, holding › to the last.**
 
 Easier-to-read pages (owner's decisions, 2026-11-10; [readability plan](../plans/2026-11-10-review-readability.md)). These change only the picture on screen: the PDF, the ink, snips and thumbnails are never touched, and the settings are kept in the app's own preferences, the same for all documents. **Sharp zoom**, always on: after a zoom or a move, the part of the page on screen is drawn again at its true size a moment after the fingers lift. Under ⋯: **Contrast** (Normal, Stronger, Strongest: a gamma curve that darkens greys and keeps white and black), **Dark text as black** (on unless turned off: nearly grey pixels are shown neutral and darker, so tinted dark text is drawn black at the screen's 300 ppi instead of as dithered colour at 150 ppi; clear colours keep their colour), and **Trim margins** (each page fitted to its printed area plus a small border, with ink counted as printed). A page turn and the refresh after a zoom use the REGAL update: little flash and no ghost. At normal size the page is drawn on whole pixels. The tablet's own per-app display settings were tried first and did very little, since the page is a picture to them. Left out: inverting dark slides, removing coloured backgrounds, reflowing text, and per-document settings.
 
@@ -99,6 +106,7 @@ Orientation: **follows the tablet** (owner's decision, 2026-11-09). The design f
 
 Navigation:
 
+- **Zoom stays through a page turn** (owner's decision, 2026-11-12): turned with ‹ ›, the volume buttons or a push past the edge, the new page is shown as zoomed, at the same place on the page, for slides laid out alike; a push past the bottom lands at the next page's top, past the top at the previous page's bottom. "Keep zoom when turning" under ⋯ turns it off; then a turn shows the whole page, as it did before. "Go to page" and a held arrow always show the whole page.
 - **One page at a time** (owner's decision, 2026-11-09, replacing the continuous scroll). The page is fitted to the screen, and **‹ ›** in the strip go to the previous and next page. Tapping the page number opens a small "Go to page" box; ‹ and › are greyed out on the first and last page (lightweight additions the owner allowed, 2026-11-09).
 - **Two fingers pinch-zoom. When zoomed in, one finger moves around the page, and pushing on past the page's top or bottom edge turns the page.** At normal size a one-finger swipe does nothing, so pages only turn on purpose. The pen never moves the page, and a finger never draws.
 - A resting palm or hand must neither draw nor move the page.
@@ -111,14 +119,14 @@ Navigation:
 
 **Stroke eraser.** Touching any part of a stroke removes the whole stroke. This applies to pen strokes, highlighter strokes, and pasted snips. The page is drawn again, with one refresh, once the eraser rests: 0.4 s after the last erase and with button 2 let go or the pen lifted away, and 3 s after a run's first erase at the latest (owner's decision, 2026-11-12: one refresh for a run of erases, not one each).
 
-**Lasso select.** Draw a loop. Every ink stroke and pasted snip inside the loop gets selected. Printed PDF content is never selected. The selection can be:
+**Lasso select.** Draw a loop. Every ink stroke and pasted snip inside the loop gets selected. Printed PDF content is never selected. A tap with the lasso selects the one stroke or snip under it, the top one where they overlap; a tap on nothing selects nothing (owner, 2026-11-12). The selection can be:
 
 - dragged to move it,
 - resized with corner handles (proportional scaling), which the owner does very often,
 - copied, then pasted elsewhere **in the same document** (another page or the same page),
 - deleted.
 
-**How copy, delete, and paste are reached (designer's call).** While something is selected, a small action bar appears next to the selection with **copy** and **delete**, and it disappears when the selection is cleared. A **Paste** button sits on the island, greyed out until something is copied or snipped, so the tools never move (owner, UI review decision 3, 2026-11-12; before, it appeared only after a copy and shifted the tools). Tap it, then tap the page with the pen where the content should land. The clipboard holds one item and lives only for the session.
+**How copy, delete, and paste are reached (designer's call).** While something is selected, a small action bar appears next to the selection with **copy**, **duplicate** (a copy a little down and right of the original, which becomes the selection, ready to drag; owner, 2026-11-12) and **delete**, and it disappears when the selection is cleared. A **Paste** button sits on the island, greyed out until something is copied or snipped, so the tools never move (owner, UI review decision 3, 2026-11-12; before, it appeared only after a copy and shifted the tools). Tap it, then tap the page with the pen where the content should land. The clipboard holds one item and lives only for the session.
 
 **Snip.** A separate tool from lasso. Drag a rectangle to capture that region **as a picture**, including the printed PDF content and any ink on it. Paste it onto another page in the same document. Once pasted it acts as a single image object: it can be moved, resized, deleted, and lasso-selected, but not edited stroke by stroke.
 
@@ -133,6 +141,7 @@ Typical use is once per document: a deck of landscape slides gets rotated so it 
 - **Rotate all pages** and **rotate this page**, each in 90° steps.
 - The rotation is saved into the PDF (the page's rotation property), so it looks the same in other viewers.
 - Ink already on a page turns with the page.
+- The first time a file is opened, if most of its pages are sideways and the tablet is held upright, the app offers "Rotate all pages?" once (owner, 2026-11-12). Whatever the answer, it isn't asked for that file again.
 
 ## 7. Storage and saving: never lose writing
 
@@ -206,5 +215,6 @@ The owner can overturn any of these:
 - ~~Pages scroll vertically and continuously.~~ Replaced by the owner on 2026-11-09: one page at a time (section 6.2).
 - Copy and delete live in a small action bar next to the selection, and Paste sits on the island, greyed out until there's something to paste (owner, 2026-11-12). You place a paste with a pen tap.
 - After a crash, strokes that never reached the PDF are replayed into a "my edits" copy if the file changed on disk in the meantime.
+- On the writing screen (2026-11-12): the progress line's size (a 4 px line, 3 px ticks); 14 points for how far a duplicate lands; 6 points as the most a lasso stroke may span and still be a tap; 1.2 wide to 1 tall as "sideways"; the refresh of a zoomed page turn waits for the sharp picture, so it comes as one.
 - In the library (2026-11-12): three PDFs as the most a folder may hold and still be opened out; the eight course colours and how a course gets one; the look of the progress bar, the writing mark and the list rows; the Continue picture's size (96 dp tall); a file's writing is looked for in its first 300 pages.
 - ~~Portrait orientation is locked.~~ Replaced on 2026-11-09: the screen follows the tablet, because Android 16 overrides the lock (section 6.2).
