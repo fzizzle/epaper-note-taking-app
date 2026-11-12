@@ -49,6 +49,15 @@ internal object LibraryLook {
     fun dp(context: Context, v: Int) = (v * context.resources.displayMetrics.density).toInt()
 }
 
+/** What a folder holds, in a word or two: its PDFs, or its folders if it has none. */
+internal fun folderCountText(folder: FolderEntry): String = when {
+    folder.pdfCount == 1 -> "1 PDF"
+    folder.pdfCount > 1 -> "${folder.pdfCount} PDFs"
+    folder.folderCount == 1 -> "1 folder"
+    folder.folderCount > 1 -> "${folder.folderCount} folders"
+    else -> "No PDFs"
+}
+
 /**
  * The grid's tiles, reused as it scrolls. [bitmapFor] only looks in memory (ThumbnailLoader),
  * so binding a tile never touches the disk. With [thumbnails] off, PDF tiles are drawn pages.
@@ -57,7 +66,16 @@ class LibraryAdapter(
     private val bitmapFor: (PdfEntry) -> Bitmap?,
     /** A tile's progress bar, writing mark and colour (TileMarks), asked each time a tile is bound: memory only. */
     private val marksFor: (Entry) -> TileMarks = { TileMarks.NONE },
+    /** The right-hand words of a list row: "12 / 30", "30 pages", "4 PDFs". Memory only. */
+    private val detailFor: (Entry) -> String = { "" },
 ) : BaseAdapter() {
+    /** Rows, not tiles (the list view). */
+    var listView = false
+        private set
+
+    /** The file whose tile or row is marked: the document just come back from. Null for none. */
+    var markedFile: java.io.File? = null
+
     var entries: List<Entry> = emptyList()
         private set
     var thumbnails = true
@@ -68,8 +86,9 @@ class LibraryAdapter(
     private var pdfLabels: Map<PdfEntry, Pair<String?, String>> = emptyMap()
 
     /** [dropPictures]: refresh, so tiles waiting for a new thumbnail show the grey page meanwhile. */
-    fun show(entries: List<Entry>, thumbnails: Boolean, dropPictures: Boolean = false) {
+    fun show(entries: List<Entry>, thumbnails: Boolean, dropPictures: Boolean = false, listView: Boolean = this.listView) {
         this.entries = entries
+        this.listView = listView
         pdfLabels = TileNames.grouped(entries.filterIsInstance<PdfEntry>())
         this.thumbnails = thumbnails
         if (dropPictures) pictures++
@@ -80,13 +99,24 @@ class LibraryAdapter(
     override fun getItem(position: Int) = entries[position]
     override fun getItemId(position: Int) = position.toLong()
 
+    // Tiles and rows are kept apart, so the grid never hands a tile back to be a row.
+    override fun getViewTypeCount() = 2
+    override fun getItemViewType(position: Int) = if (listView) 1 else 0
+
     override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-        val tile = convertView as? TileView ?: TileView(parent.context).apply {
-            layoutParams = AbsListView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        }
         val entry = entries[position]
         val (heading, label) = (entry as? PdfEntry)?.let { pdfLabels[it] } ?: (null to entry.name)
+        val params = AbsListView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        if (listView) {
+            val row = convertView as? RowView ?: RowView(parent.context).apply { layoutParams = params }
+            // On one line: the small folder a PDF is shown in place of, then its own short name.
+            row.show(entry, if (heading != null) "$heading — $label" else label, detailFor(entry), marksFor(entry))
+            row.marked = entry.file == markedFile
+            return row
+        }
+        val tile = convertView as? TileView ?: TileView(parent.context).apply { layoutParams = params }
         tile.show(entry, label, if (thumbnails && entry is PdfEntry) bitmapFor(entry) else null, thumbnails, pictures, marksFor(entry), heading)
+        tile.marked = entry.file == markedFile
         return tile
     }
 }
@@ -98,8 +128,8 @@ class LibraryAdapter(
  * how many PDFs are directly inside (decision 2). Folder tiles are shorter, so a course's topics
  * fit on one screen (UI review, decision 5); a row holding both takes the PDF tiles' height.
  */
-class TileView(context: Context) : View(context) {
-    var entry: Entry? = null
+class TileView(context: Context) : View(context), LibraryItemView {
+    override var entry: Entry? = null
         private set
     /** The name drawn: for a PDF, perhaps shorter than its file name (TileNames). */
     private var label = ""
@@ -165,7 +195,7 @@ class TileView(context: Context) : View(context) {
     }
 
     /** The marks changed for the entry on this tile: say, its thumbnail came, and with it whether it has writing. */
-    fun showMarks(marks: TileMarks) {
+    override fun showMarks(marks: TileMarks) {
         if (marks == this.marks) return
         this.marks = marks
         invalidate()
@@ -209,7 +239,7 @@ class TileView(context: Context) : View(context) {
     }
 
     /** Grey as if pressed, while this tile's long-press menu is open (UI review, decision 4). */
-    var marked = false
+    override var marked = false
         set(value) {
             if (value == field) return
             field = value
@@ -248,14 +278,7 @@ class TileView(context: Context) : View(context) {
             canvas.drawText(shown, width / 2f, textTop + nameLine - subPaint.fontMetrics.ascent, subPaint)
         }
         if (entry is FolderEntry) {
-            val count = when {
-                entry.pdfCount == 1 -> "1 PDF"
-                entry.pdfCount > 1 -> "${entry.pdfCount} PDFs"
-                entry.folderCount == 1 -> "1 folder"
-                entry.folderCount > 1 -> "${entry.folderCount} folders"
-                else -> "No PDFs"
-            }
-            canvas.drawText(count, width / 2f, textTop + 2 * nameLine + countGap - countPaint.fontMetrics.ascent, countPaint)
+            canvas.drawText(folderCountText(entry), width / 2f, textTop + 2 * nameLine + countGap - countPaint.fontMetrics.ascent, countPaint)
         }
     }
 

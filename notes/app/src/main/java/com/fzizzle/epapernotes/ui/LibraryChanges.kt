@@ -53,7 +53,7 @@ class LibraryChanges(
     fun showMenu(root: File, here: File, tile: View, entry: Entry, openFolder: (File) -> Unit = {}) {
         if (busy) return
         // The tile stays grey while its menu is open, so it's clear which one the menu is for.
-        val marked = tile as? TileView
+        val marked = tile as? LibraryItemView
         marked?.marked = true
         PopupMenu(activity, tile).apply {
             setOnDismissListener { marked?.marked = false }

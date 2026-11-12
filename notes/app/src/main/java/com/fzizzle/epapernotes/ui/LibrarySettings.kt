@@ -55,6 +55,11 @@ class LibraryPrefs(context: Context) {
         get() = prefs.getBoolean(THUMBNAILS, true)
         set(value) = prefs.edit().putBoolean(THUMBNAILS, value).apply()
 
+    /** The library as a compact list, not tiles. */
+    var listView: Boolean
+        get() = prefs.getBoolean(LIST_VIEW, false)
+        set(value) = prefs.edit().putBoolean(LIST_VIEW, value).apply()
+
     /** A folder of up to three PDFs is shown as its PDFs (FolderListing). On unless turned off. */
     var openOutSmallFolders: Boolean
         get() = prefs.getBoolean(OPEN_OUT, true)
@@ -70,6 +75,7 @@ class LibraryPrefs(context: Context) {
         const val LAST_OPENED = "last-opened"
         const val THUMBNAILS = "show-thumbnails"
         const val OPEN_OUT = "open-out-small-folders"
+        const val LIST_VIEW = "list-view"
         const val CONTINUE_PICTURE = "continue-picture-of"
     }
 }
