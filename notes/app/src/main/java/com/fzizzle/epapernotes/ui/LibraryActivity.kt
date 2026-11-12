@@ -33,6 +33,8 @@ import com.fzizzle.epapernotes.library.FolderWatch
 import com.fzizzle.epapernotes.library.HookPath
 import com.fzizzle.epapernotes.library.PdfEntry
 import com.fzizzle.epapernotes.library.ThumbnailCache
+import com.fzizzle.epapernotes.library.TileMarks
+import com.fzizzle.epapernotes.library.progressOf
 import com.fzizzle.epapernotes.library.Volumes
 import com.fzizzle.epapernotes.ui.StripButton.Glyph
 import java.io.File
@@ -66,6 +68,16 @@ class LibraryActivity : Activity() {
     private lateinit var adapter: LibraryAdapter
     private lateinit var emptyNote: TextView
 
+    private lateinit var lastPages: LastPageStore
+    /** How far the owner is into each PDF on show that they've opened (progressOf), read with the listing. */
+    private var progress: Map<File, Float> = emptyMap()
+
+    /** A tile's marks, from memory only: its progress from the listing, its writing mark from the thumbnail's facts. */
+    private fun marksFor(entry: Entry): TileMarks {
+        val pdf = entry as? PdfEntry ?: return TileMarks.NONE
+        return TileMarks(progress = progress[pdf.file], hasInk = thumbnails?.factsFor(pdf)?.hasInk == true)
+    }
+
     private var root: File? = null
     /** The folder asked for; [shownFolder] is the one on screen, once it's been read. */
     private var folder: File? = null
@@ -88,7 +100,8 @@ class LibraryActivity : Activity() {
         super.onCreate(savedInstanceState)
         prefs = LibraryPrefs(this)
         thumbnailCache = ThumbnailCache(File(cacheDir, "thumbnails"))
-        adapter = LibraryAdapter { thumbnails?.bitmapFor(it) }
+        lastPages = LastPageStore(this)
+        adapter = LibraryAdapter({ thumbnails?.bitmapFor(it) }, ::marksFor)
         changes = LibraryChanges(this, disk, prefs) { done -> list(then = done) }
         library = buildLibrary()
     }
@@ -287,17 +300,23 @@ class LibraryActivity : Activity() {
                 val removed = SafeSave.cleanStale(shown)
                 if (removed > 0) Log.i(TAG, "removed $removed stale temporary file(s) in ${shown.path}")
             }
+            // Read here, with the listing, not as tiles are drawn.
+            val progress = HashMap<File, Float>()
+            for (pdf in entries.filterIsInstance<PdfEntry>()) {
+                val path = pdf.file.path
+                progressOf(lastPages.has(path), lastPages.get(path), lastPages.pageCount(path))?.let { progress[pdf.file] = it }
+            }
             val rootMissing = !root.isDirectory
             val resume = if (shown == root) last?.takeIf { it.isFile } else null
             Log.i(TAG, "library listed ${shown.path} n=${entries.size} ms=${SystemClock.uptimeMillis() - start}")
             main.post {
-                if (ask == listed && !isDestroyed) showListing(shown, entries, resume, rootMissing, redrawTiles)
+                if (ask == listed && !isDestroyed) showListing(shown, entries, progress, resume, rootMissing, redrawTiles)
                 then()
             }
         }
     }
 
-    private fun showListing(shown: File, entries: List<Entry>, resume: File?, rootMissing: Boolean, redrawTiles: Boolean) {
+    private fun showListing(shown: File, entries: List<Entry>, progress: Map<File, Float>, resume: File?, rootMissing: Boolean, redrawTiles: Boolean) {
         folder = shown
         // Another folder than was asked for (that one went away), or this one was deleted and
         // perhaps recreated by a sync app since it was watched: watched afresh.
@@ -319,7 +338,9 @@ class LibraryActivity : Activity() {
         val continueText = resume?.let { "▶  Continue: ${it.nameWithoutExtension}" }.orEmpty()
         if (continueRow.text.toString() != continueText) continueRow.text = continueText
         continueRow.visibility = if (resume != null) View.VISIBLE else View.GONE
-        val changed = redrawTiles || entries != adapter.entries || adapter.thumbnails != (thumbnails != null)
+        // A document just left may only have moved to another page: the file is the same, its bar isn't.
+        val changed = redrawTiles || entries != adapter.entries || adapter.thumbnails != (thumbnails != null) || progress != this.progress
+        this.progress = progress
         if (changed) adapter.show(entries, thumbnails = thumbnails != null, dropPictures = redrawTiles)
         val emptyText = when {
             !rootMissing -> "No folders or PDFs here."
@@ -412,7 +433,10 @@ class LibraryActivity : Activity() {
         for (i in 0 until grid.childCount) {
             val tile = grid.getChildAt(i) as? TileView ?: continue
             val entry = tile.entry as? PdfEntry ?: continue
-            if (pendingThumbnails.containsKey(entry)) tile.showBitmap(pendingThumbnails[entry])
+            if (pendingThumbnails.containsKey(entry)) {
+                tile.showBitmap(pendingThumbnails[entry])
+                tile.showMarks(marksFor(entry)) // its facts came with it
+            }
         }
         Log.i(TAG, "thumbnails shown n=${pendingThumbnails.size}")
         pendingThumbnails.clear()

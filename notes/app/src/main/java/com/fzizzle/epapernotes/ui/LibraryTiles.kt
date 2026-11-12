@@ -27,6 +27,7 @@ import com.fzizzle.epapernotes.library.Breadcrumb
 import com.fzizzle.epapernotes.library.Entry
 import com.fzizzle.epapernotes.library.FolderEntry
 import com.fzizzle.epapernotes.library.PdfEntry
+import com.fzizzle.epapernotes.library.TileMarks
 import com.fzizzle.epapernotes.library.TileNames
 import java.io.File
 
@@ -52,7 +53,11 @@ internal object LibraryLook {
  * The grid's tiles, reused as it scrolls. [bitmapFor] only looks in memory (ThumbnailLoader),
  * so binding a tile never touches the disk. With [thumbnails] off, PDF tiles are drawn pages.
  */
-class LibraryAdapter(private val bitmapFor: (PdfEntry) -> Bitmap?) : BaseAdapter() {
+class LibraryAdapter(
+    private val bitmapFor: (PdfEntry) -> Bitmap?,
+    /** A tile's progress bar, writing mark and colour (TileMarks), asked each time a tile is bound: memory only. */
+    private val marksFor: (Entry) -> TileMarks = { TileMarks.NONE },
+) : BaseAdapter() {
     var entries: List<Entry> = emptyList()
         private set
     var thumbnails = true
@@ -82,7 +87,7 @@ class LibraryAdapter(private val bitmapFor: (PdfEntry) -> Bitmap?) : BaseAdapter
         }
         val entry = entries[position]
         val label = (entry as? PdfEntry)?.let { pdfLabels[it] } ?: entry.name
-        tile.show(entry, label, if (thumbnails && entry is PdfEntry) bitmapFor(entry) else null, thumbnails, pictures)
+        tile.show(entry, label, if (thumbnails && entry is PdfEntry) bitmapFor(entry) else null, thumbnails, pictures, marksFor(entry))
         return tile
     }
 }
@@ -102,6 +107,9 @@ class TileView(context: Context) : View(context) {
     private var bitmap: Bitmap? = null
     private var thumbnails = true
     private var pictures = 0 // the adapter's count when this tile was bound
+    private var marks = TileMarks.NONE
+    private val barHeight = LibraryLook.dp(context, 3).toFloat()
+    private val inkMark = LibraryLook.dp(context, 12).toFloat()
 
     private val pad = LibraryLook.dp(context, 8)
     private val namePaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -122,8 +130,8 @@ class TileView(context: Context) : View(context) {
     private val page = RectF()
     private val path = Path()
 
-    fun show(entry: Entry, label: String, bitmap: Bitmap?, thumbnails: Boolean, pictures: Int) {
-        if (entry == this.entry && label == this.label && bitmap === this.bitmap && thumbnails == this.thumbnails && pictures == this.pictures) return
+    fun show(entry: Entry, label: String, bitmap: Bitmap?, thumbnails: Boolean, pictures: Int, marks: TileMarks = TileMarks.NONE) {
+        if (entry == this.entry && label == this.label && bitmap === this.bitmap && thumbnails == this.thumbnails && pictures == this.pictures && marks == this.marks) return
         val sameLabel = label == this.label
         if (!sameLabel) nameLayout = null
         // A reused tile turning from a folder into a PDF, or back, changes height.
@@ -135,13 +143,21 @@ class TileView(context: Context) : View(context) {
         val newBitmap = bitmap ?: this.bitmap.takeIf { stillThisFile }
         // Everything onDraw uses. A file just written is a new entry (new size and date) that
         // looks the same until its new thumbnail comes: no need to draw it twice.
-        val looksTheSame = sameLabel && looksLike(entry, this.entry) && newBitmap === this.bitmap && thumbnails == this.thumbnails
+        val looksTheSame = sameLabel && looksLike(entry, this.entry) && newBitmap === this.bitmap && thumbnails == this.thumbnails && marks == this.marks
         this.entry = entry
         this.label = label
         this.bitmap = newBitmap
         this.thumbnails = thumbnails
         this.pictures = pictures
+        this.marks = marks
         if (!looksTheSame) invalidate()
+    }
+
+    /** The marks changed for the entry on this tile: say, its thumbnail came, and with it whether it has writing. */
+    fun showMarks(marks: TileMarks) {
+        if (marks == this.marks) return
+        this.marks = marks
+        invalidate()
     }
 
     /** Whether two entries draw the same tile, pictures and labels aside: a PDF shows only its label, a folder its label and counts. */
@@ -196,7 +212,10 @@ class TileView(context: Context) : View(context) {
         box.set(pad.toFloat(), pad.toFloat(), (width - pad).toFloat(), boxBottom.toFloat())
         when (entry) {
             is FolderEntry -> drawFolder(canvas)
-            is PdfEntry -> drawPage(canvas)
+            is PdfEntry -> {
+                drawPage(canvas)
+                drawMarks(canvas)
+            }
         }
         val textTop = box.bottom + pad / 2
         val layout = nameLayout ?: StaticLayout.Builder
@@ -280,6 +299,29 @@ class TileView(context: Context) : View(context) {
         line.strokeWidth = 2f
         line.color = LibraryLook.GRAPHITE
         canvas.drawPath(path, line)
+    }
+
+    /**
+     * On a PDF's picture ([page], as [drawPage] left it): a black corner when the PDF holds the
+     * owner's writing, and under it a thin bar, black as far as the owner has got.
+     */
+    private fun drawMarks(canvas: Canvas) {
+        line.style = Paint.Style.FILL
+        if (marks.hasInk) {
+            path.reset()
+            path.moveTo(page.right - inkMark, page.top)
+            path.lineTo(page.right, page.top)
+            path.lineTo(page.right, page.top + inkMark)
+            path.close()
+            line.color = Color.BLACK
+            canvas.drawPath(path, line)
+        }
+        val progress = marks.progress ?: return
+        val top = page.bottom + 1f
+        line.color = LibraryLook.RULE
+        canvas.drawRect(page.left, top, page.right, top + barHeight, line)
+        line.color = Color.BLACK
+        canvas.drawRect(page.left, top, page.left + page.width() * progress, top + barHeight, line)
     }
 
     /** Sets [page] to a [w]×[h] shape scaled to fit in [box], centred. */
