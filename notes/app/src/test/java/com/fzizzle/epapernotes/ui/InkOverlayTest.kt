@@ -113,4 +113,26 @@ class InkOverlayTest {
         ink.add(0, stroke(999))
         assertEquals(listOf(stroke(999)), ink.newerThan(0, fresh))
     }
+
+    /**
+     * A page added or removed renumbers the pages after it, and every stroke has just been
+     * saved: the overlay forgets everything, so nothing is drawn on top of the wrong page.
+     */
+    @Test fun clearForgetsEveryPage() {
+        val ink = InkOverlay()
+        ink.add(0, stroke(1))
+        ink.changed(0)
+        ink.add(3, stroke(2))
+        ink.clear()
+        assertEquals(0, ink.version(0))
+        assertEquals(0, ink.version(3))
+        assertEquals(emptyList<Stroke>(), ink.newerThan(0, 0))
+        assertEquals(emptyList<Stroke>(), ink.newerThan(3, 0))
+        assertEquals(0, ink.count(3))
+        assertFalse(ink.isStale(0, 0))
+        // Writing goes on as on a fresh overlay.
+        ink.add(3, stroke(4))
+        assertEquals(1, ink.version(3))
+        assertEquals(listOf(stroke(4)), ink.newerThan(3, 0))
+    }
 }

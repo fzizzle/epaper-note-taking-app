@@ -18,14 +18,15 @@ import android.view.View
  * button while it's pressed, is drawn inverted (black tile, white mark), which reads at a
  * glance on e-ink. The eraser, lasso and snip show what they leave or take: a tilted block, a
  * dashed loop, a dashed rectangle. Paste is inverted too while it's armed. The library's top bar
- * reuses the strip with refresh (a circling arrow) and new folder (a folder with a plus).
+ * reuses the strip with refresh (a circling arrow) and new folder (a folder with a plus). On
+ * the last page › becomes a page with a plus: add a page after it.
  *
  * On the writing strip's island ([onIsland] set) there are no frames: the outlined capsule groups
  * the buttons, and the selected one sits in a black circle with a white mark.
  */
 class StripButton(context: Context, glyph: Glyph, description: String) : View(context) {
 
-    enum class Glyph { BACK, PREVIOUS, NEXT, PEN, HIGHLIGHTER, ERASER, LASSO, SNIP, UNDO, REDO, PASTE, MENU, REFRESH, NEW_FOLDER, LIST, TILES, FIT }
+    enum class Glyph { BACK, PREVIOUS, NEXT, PEN, HIGHLIGHTER, ERASER, LASSO, SNIP, UNDO, REDO, PASTE, MENU, REFRESH, NEW_FOLDER, LIST, TILES, FIT, ADD_PAGE }
 
     /** The mark drawn. A button that switches between two things shows the other one's mark. */
     var glyph: Glyph = glyph
@@ -318,6 +319,14 @@ class StripButton(context: Context, glyph: Glyph, description: String) : View(co
                 canvas.drawRect(cx + g, cy - a - g, cx + a + g, cy - g, ink)
                 canvas.drawRect(cx - a - g, cy + g, cx - g, cy + a + g, ink)
                 canvas.drawRect(cx + g, cy + g, cx + a + g, cy + a + g, ink)
+            }
+            Glyph.ADD_PAGE -> {
+                // A page standing upright, with a plus inside: a new page after this one.
+                ink.style = Paint.Style.STROKE
+                ink.strokeWidth = s * 0.05f
+                canvas.drawRect(cx - s * 0.2f, cy - s * 0.28f, cx + s * 0.2f, cy + s * 0.28f, ink)
+                canvas.drawLine(cx - s * 0.1f, cy, cx + s * 0.1f, cy, ink)
+                canvas.drawLine(cx, cy - s * 0.1f, cx, cy + s * 0.1f, ink)
             }
             Glyph.NEW_FOLDER -> {
                 // A folder: its body and the tab on top, with a plus inside.

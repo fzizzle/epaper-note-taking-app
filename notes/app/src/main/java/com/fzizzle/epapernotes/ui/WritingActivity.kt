@@ -227,6 +227,28 @@ class WritingActivity : Activity() {
     private var dialogOpen = false
 
     /**
+     * True from asking the session to add or remove a page until the pages are laid out again
+     * under their new numbers ([pagesRenumbered]), or the session says it didn't happen. The
+     * journal, the undo list and every request to the session go by page number, and the
+     * session can't tell an old number from a new one: an erase sent meanwhile would land on
+     * the neighbouring page. So nothing that names a page is sent while this is set: no ink,
+     * erase, lasso, paste, move, undo, rotation, page turn or second page change. Fast-ink
+     * stays paused throughout ([fastInkWanted]). Set and cleared on the UI thread; Onyx's
+     * thread reads it.
+     */
+    @Volatile private var pageChangeUnderWay = false
+
+    /**
+     * Goes up by one each time the pages are renumbered. Answers from the worker that were
+     * asked for under older numbers (a page's printed area, its writing, a layout) are
+     * thrown away when they come. Set on the UI thread; Onyx's thread reads it.
+     */
+    @Volatile private var numbering = 0
+
+    /** Whether the page on show is one the app added (session.isAddedPage): only then does ⋯ offer to remove it. UI thread. */
+    private var shownPageAdded = false
+
+    /**
      * True while the screen, not Onyx, follows a pen stroke (fast-ink off for a tool). Fast-ink
      * must not come back then, or Onyx would pick the stroke up halfway. UI thread.
      */
@@ -343,7 +365,8 @@ class WritingActivity : Activity() {
         previousButton = button(right, Glyph.PREVIOUS, "Previous page. Hold for the first page.") { turn(forward = false) }
         previousButton.setOnLongClickListener { goToEnd(first = true); true } // true: the lift doesn't also turn a page
         right.addView(indicator, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.MATCH_PARENT).apply { marginEnd = gap })
-        nextButton = button(right, Glyph.NEXT, "Next page. Hold for the last page.", gaps = 0) { turn(forward = true) }
+        // On the last page it's + instead, and adds a page after it (updateIndicator).
+        nextButton = button(right, Glyph.NEXT, NEXT_DESCRIPTION, gaps = 0) { nextOrAdd() }
         nextButton.setOnLongClickListener { goToEnd(first = false); true }
         // The arrow's tip sits closer to its tile's edge than the chevron's does (0.28 of the
         // tile against 0.40), so ← gets that much more room and the two marks sit evenly in from
@@ -492,7 +515,8 @@ class WritingActivity : Activity() {
         }
         // A palm that lands while the pen is writing must not pause fast-ink (that cuts the
         // stroke) or move the page. Fingers work again as soon as the pen lifts.
-        pages.fingersAllowed = { !pen.isWriting && !screenPenDown }
+        // Nor while pages are renumbered: a push past a zoomed page's edge turns the page.
+        pages.fingersAllowed = { !pen.isWriting && !screenPenDown && !pageChangeUnderWay }
         pages.onFingerGestureStart = {
             Log.i(TAG, "fingers down: pause fast-ink")
             fingerGesture = true
@@ -576,6 +600,7 @@ class WritingActivity : Activity() {
         // so the page is fitted to it from the first draw instead of refitting a moment later.
         val firstPage = if (trimMargins && pdfToDisplay.isEmpty()) startPage ?: lastPages.get(path) else null
         val firstInk = firstPage?.let { pages.inkVersion(it) } ?: 0
+        val askedUnder = numbering
         session.runOnDocument { pdf ->
             val file = pdf as PdfFile
             val count = file.pageCount
@@ -584,8 +609,14 @@ class WritingActivity : Activity() {
             val first = firstPage?.coerceIn(0, count - 1)
             val firstArea = first?.let { p -> read[p]?.first?.let { s -> printedAreaOf(file, p, SizePt(s.width, s.height)) } }
             runOnUiThread {
+                // Asked for before the pages were renumbered (a rotation's layout, say): the
+                // renumbering has laid out every page since, so this one has nothing to add.
+                if (askedUnder != numbering) {
+                    Log.i(TAG, "layout from before the pages were renumbered: dropped")
+                    return@runOnUiThread
+                }
                 if (onlyTurned && (pageSizes.size != count || pdfToDisplay.size != count)) {
-                    // What was kept doesn't match the file. It shouldn't happen (a document's page count never changes), but then read everything.
+                    // What was kept doesn't match the file. It shouldn't happen (the page count only changes through pagesRenumbered, which reads everything), but then read everything.
                     layOutPages(startPage, turned = null, then = then)
                     return@runOnUiThread
                 }
@@ -658,9 +689,11 @@ class WritingActivity : Activity() {
 
     /**
      * The one place that decides whether fast-ink should be on: the pages are up, no dialog
-     * covers them, and the tool draws with fast-ink ([ToolState.fastInkOn]).
+     * covers them, no page is being added or removed, and the tool draws with fast-ink
+     * ([ToolState.fastInkOn]). The page change counts on its own: the menu or question it
+     * came from clears [dialogOpen] as it closes, after the change has begun.
      */
-    private fun fastInkWanted() = documentShown && !dialogOpen && toolState.fastInkOn()
+    private fun fastInkWanted() = documentShown && !dialogOpen && !pageChangeUnderWay && toolState.fastInkOn()
 
     /**
      * Trim margins: the box to fit each page to, the whole page for those not measured yet; or
@@ -685,6 +718,16 @@ class WritingActivity : Activity() {
     private fun pageArrived(page: Int) {
         shownPageUntouched = true
         measureAround(page)
+        askWhetherAdded(page)
+    }
+
+    /** Asks whether [page], just arrived at, is one the app added, for ⋯'s Remove item. Until the answer comes, it isn't. UI thread. */
+    private fun askWhetherAdded(page: Int) {
+        shownPageAdded = false
+        val askedUnder = numbering
+        session.isAddedPage(page) { added ->
+            runOnUiThread { if (askedUnder == numbering && page == pages.viewport?.page) shownPageAdded = added }
+        }
     }
 
     /**
@@ -705,10 +748,12 @@ class WritingActivity : Activity() {
         measuring += page
         val size = pageSizes[page]
         val turnedAs = pdfToDisplay[page]
+        val askedUnder = numbering
         // Every stroke counted in inkVersion reached the PDF before this, as for a page picture.
         session.runOnDocument { pdf ->
             val box = printedAreaOf(pdf as PdfFile, page, size)
-            runOnUiThread { printedAreaFound(page, turnedAs, inkVersion, box) }
+            // Measured under older numbers: maybe another page's area. The renumbering asked again.
+            runOnUiThread { if (askedUnder == numbering) printedAreaFound(page, turnedAs, inkVersion, box) }
         }
     }
 
@@ -815,6 +860,17 @@ class WritingActivity : Activity() {
             return
         }
         Log.i(TAG, "stroke page=$page tool=$tool button=$button points=${points.size}")
+        if (pageChangeUnderWay) {
+            // Fast-ink was paused for the page change, so this stroke began before it, and Onyx
+            // handed it over late. Ink Onyx drew is kept: the session gives a stroke recorded
+            // while it changes the pages its new number. Anything else would be a request under
+            // the old numbers, sent after the page change: dropped, as if never made.
+            if (tool != Tool.PEN && tool != Tool.HIGHLIGHTER) {
+                Log.i(TAG, "stroke dropped: a page change is under way")
+                return
+            }
+            Log.i(TAG, "stroke came during a page change: recorded, the session renumbers it")
+        }
         when (tool) {
             Tool.PEN, Tool.HIGHLIGHTER -> write(page, screenToPdf, tool, points)
             Tool.ERASER -> erase(page, points.map { screenToPdf.map(Pt(it[0], it[1])) })
@@ -836,8 +892,12 @@ class WritingActivity : Activity() {
     private fun write(page: Int, screenToPdf: Affine, tool: Tool, points: List<FloatArray>) {
         val kind = if (tool == Tool.HIGHLIGHTER) StrokeKind.HIGHLIGHTER else StrokeKind.PEN
         val (_, stroke) = PenPoints.toStroke(kind, points) { x, y -> page to screenToPdf.map(Pt(x, y)) } ?: return
+        val recordedUnder = numbering
         session.addStroke(page, stroke)
         runOnUiThread {
+            // The pages were renumbered since: [page] is an old number. The stroke is in the PDF
+            // under its new one, and the page's fresh picture shows it.
+            if (recordedUnder != numbering) return@runOnUiThread
             pages.addStroke(page, stroke, redraw = !pen.drawsInk)
             // A page's first writing gives it its tick. Under fast-ink the panel takes the
             // new line at the next page turn or refresh; nothing is forced for it.
@@ -849,6 +909,10 @@ class WritingActivity : Activity() {
     private fun onEraseTrail(points: List<FloatArray>) {
         val (page, screenToPdf) = strokeMapping ?: penMapping ?: return
         if (!onyxOwnsStroke) return // fast-ink was paused and the screen had the pen; it traced this itself
+        if (pageChangeUnderWay) {
+            Log.i(TAG, "erase dropped: a page change is under way") // see onPenStroke
+            return
+        }
         Log.i(TAG, "stroke page=$page tool=${Tool.ERASER} button=${PenButton.ERASER_END} points=${points.size} (erase callback)")
         erase(page, points.map { screenToPdf.map(Pt(it[0], it[1])) })
     }
@@ -859,6 +923,11 @@ class WritingActivity : Activity() {
      * was drawn, so a miss needs no wipe.
      */
     private fun onHoverEraseTrail(points: List<FloatArray>) {
+        // Hover events come whether fast-ink is paused or not: no erase under the old numbers.
+        if (pageChangeUnderWay) {
+            Log.i(TAG, "hover erase dropped: a page change is under way")
+            return
+        }
         val (page, screenToPdf) = penMapping ?: return
         Log.i(TAG, "stroke page=$page tool=${Tool.ERASER} button=${PenButton.ERASER_END} points=${points.size} (button pressed while hovering)")
         erase(page, points.map { screenToPdf.map(Pt(it[0], it[1])) }, wipeIfMissed = false)
@@ -894,8 +963,9 @@ class WritingActivity : Activity() {
         session.select(page, onScreen.map { screenToPdf.map(it) }, tapReachPt) { items ->
             Log.i(TAG, "lasso page=$page selected=${items.size}")
             runOnUiThread {
-                // Nothing caught, or the page turned meanwhile: just wipe the grey loop.
-                if (items.isEmpty() || page != pages.viewport?.page) showWithoutFastInk() else setSelection(page, items)
+                // Nothing caught, or the page turned meanwhile: just wipe the grey loop. Nor a
+                // selection while pages are being renumbered: its items carry the old number.
+                if (items.isEmpty() || page != pages.viewport?.page || pageChangeUnderWay) showWithoutFastInk() else setSelection(page, items)
             }
         }
     }
@@ -941,7 +1011,7 @@ class WritingActivity : Activity() {
      * tap on the page, or cancels one already armed.
      */
     private fun togglePaste() {
-        if (toolState.clipboard == null) return
+        if (toolState.clipboard == null || pageChangeUnderWay) return
         toolState.pasteArmed = !toolState.pasteArmed
         Log.i(TAG, "paste armed=${toolState.pasteArmed}")
         toolStateChanged()
@@ -953,7 +1023,7 @@ class WritingActivity : Activity() {
      * stray press can't). Fast-ink is off while it shows, as for the page menu.
      */
     private fun offerPaste(x: Float, y: Float) {
-        if (toolState.clipboard == null || pen.isWriting || dialogOpen) return
+        if (toolState.clipboard == null || pen.isWriting || dialogOpen || pageChangeUnderWay) return
         val frame = pages.frame() ?: return
         val at = frame.displayToScreen.inverse().map(Pt(x, y))
         if (at.x < 0 || at.y < 0 || at.x > frame.size.w || at.y > frame.size.h) return // beside the page
@@ -1037,6 +1107,7 @@ class WritingActivity : Activity() {
         }
 
         override fun snipped(displayBox: Box) {
+            if (pageChangeUnderWay) return
             val page = pages.viewport?.page ?: return
             toolState.snipDone()
             toolChosen()
@@ -1108,6 +1179,11 @@ class WritingActivity : Activity() {
      * [expectRedraw]). Returns the change as journaled: keep the selection on its items.
      */
     private fun recordFromScreen(change: Change): Change? {
+        // Every move, paste, duplicate and delete comes through here: none under the old numbers.
+        if (pageChangeUnderWay) {
+            Log.i(TAG, "change dropped: a page change is under way")
+            return null
+        }
         val fresh = change.pages.filter { it !in redrawWhenChanged }
         change.pages.forEach { expectRedraw(it) }
         val done = session.record(change)
@@ -1162,7 +1238,9 @@ class WritingActivity : Activity() {
      */
     private val screenPen: (MotionEvent) -> Boolean = screen@{ e ->
         val m = e.actionMasked
-        if (m == MotionEvent.ACTION_DOWN) screenStroke = !pen.drawsInk
+        // While pages are renumbered the screen takes no stroke: whatever it traced (ink, an
+        // erase, a lasso, a snip, a paste, a drag) would be sent under the old numbers.
+        if (m == MotionEvent.ACTION_DOWN) screenStroke = !pen.drawsInk && !pageChangeUnderWay
         if (!screenStroke) return@screen false
         if (m == MotionEvent.ACTION_DOWN) {
             screenPenDown = true
@@ -1197,6 +1275,7 @@ class WritingActivity : Activity() {
 
     /** "Go to page": type a number, which is quicker than tapping › through a long deck. */
     private fun askForPage() {
+        if (pageChangeUnderWay) return
         val v = pages.viewport ?: return
         // Fast-ink would freeze the pad on screen, so it's off while the pad is open.
         dialogOpen = true
@@ -1224,6 +1303,7 @@ class WritingActivity : Activity() {
      * is gone to once the change has reached the PDF ([pagesChanged]), so it shows it.
      */
     private fun undoOrRedo(undo: Boolean) {
+        if (pageChangeUnderWay) return // the session empties the list once the pages are renumbered
         letGoOfAll() // the selection may be what's undone
         val change = (if (undo) session.undo() else session.redo()) ?: return
         Log.i(TAG, "${if (undo) "undo" else "redo"} pages=${change.pages}")
@@ -1235,10 +1315,15 @@ class WritingActivity : Activity() {
     /** ⋯: the page menu (spec §6.4). Fast-ink is off while it's open, as for "Go to page". */
     private fun openPageMenu() {
         if (pen.isWriting) return // pausing fast-ink now would cut the stroke
+        if (pageChangeUnderWay) return // every item here names a page, or lays the pages out again
         val menu = PopupMenu(this, menuButton)
         // Two groups with a line between: rotating changes the PDF, the rest only the screen (UI review, decision 4).
         menu.menu.add(ROTATE_GROUP, Menu.NONE, Menu.NONE, "Rotate this page").setOnMenuItemClickListener { rotate(all = false); true }
         menu.menu.add(ROTATE_GROUP, Menu.NONE, Menu.NONE, "Rotate all pages").setOnMenuItemClickListener { rotate(all = true); true }
+        menu.menu.add(ROTATE_GROUP, Menu.NONE, Menu.NONE, "Add a dotted page after this one").setOnMenuItemClickListener { addPageAfterShown(); true }
+        if (shownPageAdded) {
+            menu.menu.add(ROTATE_GROUP, Menu.NONE, Menu.NONE, "Remove this added page").setOnMenuItemClickListener { removeShownPage(); true }
+        }
         // A submenu, not a second menu: it stays one menu to Android, so the dismiss below
         // comes once, when the last of it closes, and fast-ink stays paused in between.
         val looks = menu.menu.addSubMenu(LOOK_GROUP, Menu.NONE, Menu.NONE, "Contrast: ${contrast.label()}")
@@ -1308,7 +1393,7 @@ class WritingActivity : Activity() {
      */
     private fun offerRotation(openedBefore: Boolean) {
         val screen = resources.displayMetrics
-        if (dialogOpen || isFinishing || !RotateOffer.shouldOffer(pageSizes, screen.widthPixels, screen.heightPixels, openedBefore)) return
+        if (dialogOpen || pageChangeUnderWay || isFinishing || !RotateOffer.shouldOffer(pageSizes, screen.widthPixels, screen.heightPixels, openedBefore)) return
         lastPages.set(path, pages.viewport?.page ?: 0, pageCount)
         Log.i(TAG, "offering to rotate all pages")
         val dialog = AlertDialog.Builder(this)
@@ -1329,6 +1414,7 @@ class WritingActivity : Activity() {
 
     /** Turns the page on show, or every page, 90° clockwise from where it is (spec §6.4), as one undo step. */
     private fun rotate(all: Boolean) {
+        if (pageChangeUnderWay) return
         val here = pages.viewport?.page ?: return
         letGoOfAll()
         val turning = if (all) (0 until pageCount).toList() else listOf(here)
@@ -1337,17 +1423,132 @@ class WritingActivity : Activity() {
         session.rotate(turning)
     }
 
+    /** ›, or on the last page + (updateIndicator): a page of dotted paper after it. */
+    private fun nextOrAdd() {
+        val v = pages.viewport ?: return
+        if (v.page == pageCount - 1) addPageAfterShown() else turn(forward = true)
+    }
+
+    /** ⋯ "Add a dotted page after this one", and + on the last page. */
+    private fun addPageAfterShown() {
+        val page = pages.viewport?.page ?: return
+        changePages("add a page after page ${page + 1}") { session.addPageAfter(page) }
+    }
+
+    /**
+     * ⋯ "Remove this added page". A page with writing on it is asked about first: its ink goes
+     * with it, and there's no undo. The session is asked for the page's items (strokes already
+     * in the PDF), and the page view for strokes not counted there yet.
+     */
+    private fun removeShownPage() {
+        val page = pages.viewport?.page ?: return
+        val askedUnder = numbering
+        session.items(page) { items ->
+            runOnUiThread {
+                // The page was left, or the pages changed, while the answer came: nothing is done.
+                if (askedUnder != numbering || page != pages.viewport?.page || isFinishing) return@runOnUiThread
+                if (items.isEmpty() && pages.inkVersion(page) == 0) removePage(page) else askBeforeRemoving(page)
+            }
+        }
+    }
+
+    /** "Remove this page and the writing on it?", opened and closed like the other questions. */
+    private fun askBeforeRemoving(page: Int) {
+        if (pageChangeUnderWay || dialogOpen) return
+        Log.i(TAG, "asking before removing page ${page + 1}: it has writing")
+        val dialog = AlertDialog.Builder(this)
+            .setMessage("Remove this page and the writing on it?")
+            .setPositiveButton("Remove") { _, _ -> removePage(page) }
+            .setNegativeButton("Cancel", null)
+            .create()
+        dialogOpen = true
+        pausePenAndRedraw()
+        dialog.setOnDismissListener {
+            dialogOpen = false
+            handler.removeCallbacks(resumeFastInk)
+            handler.postDelayed(resumeFastInk, SHOW_PAUSE_MS)
+        }
+        dialog.show()
+    }
+
+    private fun removePage(page: Int) {
+        // Turned away while the question was open? Then it's not the page that was asked about.
+        if (page != pages.viewport?.page) return
+        changePages("remove page ${page + 1}") { session.removeAddedPage(page) }
+    }
+
+    /**
+     * Asks the session to add or remove a page ([request]), with fast-ink paused and every
+     * request that names a page refused until the answer has been laid out ([pageChangeUnderWay]):
+     * [pagesRenumbered], or [pageNotChanged]. Not while the pen is down: pausing would cut the
+     * stroke, and the stroke would carry the old numbers.
+     */
+    private fun changePages(what: String, request: () -> Unit) {
+        if (pageChangeUnderWay || !documentShown || pen.isWriting || screenPenDown) {
+            Log.i(TAG, "$what: refused (pen down or a page change under way)")
+            return
+        }
+        Log.i(TAG, what)
+        pageChangeUnderWay = true
+        letGoOfAll() // a selection, or an armed paste, names the page by its old number
+        dialogOpen = true
+        handler.removeCallbacks(resumeFastInk)
+        pausePenAndRedraw()
+        request()
+    }
+
+    /**
+     * The session added or removed a page and saved: every page after it has a new number.
+     * Everything kept by page number is forgotten, every page is read and laid out again, and
+     * [showPage] is shown. Only then may anything name a page again. UI thread.
+     */
+    private fun pagesRenumbered(showPage: Int) {
+        Log.i(TAG, "pages renumbered: show page ${showPage + 1}")
+        numbering++ // answers on their way under the old numbers are dropped when they come
+        letGoOfAll()
+        printedAreas.clear()
+        measuring.clear()
+        measuredOnce.clear()
+        redrawWhenChanged.clear()
+        goToWhenChanged = NO_PAGE
+        writtenPages.clear()
+        shownPageAdded = false
+        // The layout below arrives at showPage itself (layOutPages calls pageArrived): set as
+        // shown now, so the viewport changing doesn't arrive at it a second time.
+        shownPage = showPage
+        pages.pagesRenumbered()
+        layOutPages(startPage = showPage) {
+            pageChangeUnderWay = false
+            dialogOpen = false
+            Log.i(TAG, "pages laid out again: ${pageCount} pages, page ${(pages.viewport?.page ?: 0) + 1} on show")
+            findWrittenPages()
+            showWithoutFastInk()
+        }
+    }
+
+    /** The page wasn't added or removed (the session has said why): the pen comes back. UI thread. */
+    private fun pageNotChanged() {
+        if (!pageChangeUnderWay) return
+        Log.i(TAG, "page not changed")
+        pageChangeUnderWay = false
+        dialogOpen = false
+        handler.removeCallbacks(resumeFastInk)
+        handler.postDelayed(resumeFastInk, SHOW_PAUSE_MS)
+    }
+
     /** UI thread: changes have reached the PDF on [changed] pages. */
     /**
      * Which pages have writing, for the progress line's ticks: one pass over the document on
      * the worker, which decodes nothing (PdfPages.hasOwnItems). After opening.
      */
     private fun findWrittenPages() {
+        val askedUnder = numbering
         session.runOnDocument { pdf ->
             val started = SystemClock.uptimeMillis()
             val found = (0 until pdf.pageCount).filter { pdf.hasOwnItems(it) }
             Log.i(TAG, "written pages n=${found.size} of ${pdf.pageCount} ms=${SystemClock.uptimeMillis() - started}")
             runOnUiThread {
+                if (askedUnder != numbering) return@runOnUiThread // the renumbering asks again
                 writtenPages += found
                 showProgressIfSafe()
             }
@@ -1356,9 +1557,11 @@ class WritingActivity : Activity() {
 
     /** [changed] pages may have gained or lost their writing (an erase can empty one): asked again, for their ticks. */
     private fun recheckWritten(changed: Set<Int>) {
+        val askedUnder = numbering
         session.runOnDocument { pdf ->
             val now = changed.filter { it in 0 until pdf.pageCount }.associateWith { pdf.hasOwnItems(it) }
             runOnUiThread {
+                if (askedUnder != numbering) return@runOnUiThread // old numbers: the renumbering asked again
                 now.forEach { (page, has) -> if (has) writtenPages += page else writtenPages -= page }
                 showProgressIfSafe()
             }
@@ -1374,12 +1577,15 @@ class WritingActivity : Activity() {
         val target = goToWhenChanged
         if (target !in changed) return
         goToWhenChanged = NO_PAGE
+        // An undo made just before a page change: no turn now, the renumbering shows its own page.
+        if (pageChangeUnderWay) return
         Log.i(TAG, "go to page ${target + 1}: the undo or redo changed it")
         pages.goTo(target)
         showWithoutFastInk()
     }
 
     private fun turn(forward: Boolean) {
+        if (pageChangeUnderWay) return
         Log.i(TAG, "turn forward=$forward")
         if (pages.turn(forward)) showTurnedPage()
     }
@@ -1407,7 +1613,7 @@ class WritingActivity : Activity() {
 
     /** Holding ‹ or ›: the first or the last page, with one refresh. Not while the pen is down: the stroke would land on the new page. */
     private fun goToEnd(first: Boolean) {
-        if (!documentShown || pen.isWriting || screenPenDown) return
+        if (!documentShown || pen.isWriting || screenPenDown || pageChangeUnderWay) return
         val target = if (first) 0 else pageCount - 1
         if (pages.viewport?.page == target) return
         Log.i(TAG, "held arrow: go to page ${target + 1}")
@@ -1650,7 +1856,12 @@ class WritingActivity : Activity() {
         if (indicator.text.toString() != shown) indicator.text = shown
         indicator.contentDescription = "Page ${v.page + 1} of $pageCount. Tap to go to a page."
         previousButton.isEnabled = v.page > 0
-        nextButton.isEnabled = v.page < pageCount - 1
+        // On the last page, + adds a page. It only changes at a page turn or a renumbering,
+        // each shown without fast-ink: a strip redraw with fast-ink on refreshes the screen.
+        val last = v.page == pageCount - 1
+        nextButton.glyph = if (last) Glyph.ADD_PAGE else Glyph.NEXT
+        nextButton.contentDescription = if (last) ADD_DESCRIPTION else NEXT_DESCRIPTION
+        nextButton.isEnabled = true
         fitButton.isEnabled = v.zoom > 1.05f
     }
 
@@ -1659,7 +1870,7 @@ class WritingActivity : Activity() {
         // or closed. Messages are still shown then: a failed save must never be silent. But
         // nothing touches the screen any more, and a question shown on a closed screen crashes.
         val needsTheScreen = event is SessionEvent.NeedsRepairDecision || event is SessionEvent.InkRedrawn ||
-            event is SessionEvent.PageChanged || event is SessionEvent.HistoryChanged
+            event is SessionEvent.PageChanged || event is SessionEvent.HistoryChanged || event is SessionEvent.PagesRenumbered
         if (needsTheScreen && (isFinishing || isDestroyed)) return
         when (event) {
             SessionEvent.Saved -> Unit // saving is silent when it works
@@ -1676,8 +1887,11 @@ class WritingActivity : Activity() {
                 undoButton.isEnabled = event.canUndo
                 redoButton.isEnabled = event.canRedo
             }
-            is SessionEvent.PagesRenumbered -> Unit // Task 5 lays the document out again here
-            is SessionEvent.PageNotChanged -> toast(event.message)
+            is SessionEvent.PagesRenumbered -> pagesRenumbered(event.showPage)
+            is SessionEvent.PageNotChanged -> {
+                toast(event.message)
+                pageNotChanged()
+            }
             is SessionEvent.EarlierWritingKept -> toast("Unsaved writing from before this file changed was kept safe.")
             is SessionEvent.SavedToCopy -> {
                 // The session writes into the copy from here on, so the copy is what "Continue"
@@ -1730,6 +1944,10 @@ class WritingActivity : Activity() {
 
     companion object {
         const val EXTRA_PATH = "path"
+
+        /** What › and, on the last page, + say they do. */
+        private const val NEXT_DESCRIPTION = "Next page. Hold for the last page."
+        private const val ADD_DESCRIPTION = "Add a dotted page after this one"
 
         /** After Copy or a snip, which otherwise only show as the Paste button appearing (owner, 2026-11-10). */
         /** The ⋯ menu's groups: what changes the PDF, then what changes only the screen. */

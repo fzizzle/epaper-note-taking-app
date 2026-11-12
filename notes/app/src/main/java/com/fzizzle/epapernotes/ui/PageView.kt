@@ -242,6 +242,7 @@ class PageView(context: Context) : View(context) {
         toDisplay = pdfToDisplay
         this.fit = fit
         fitWaiting = false
+        layoutWaiting = false
         forgetRefit()
         dropPatch()
         viewport = Viewport(pageSizes, width, height, fit).also { it.goTo(startPage) }
@@ -370,6 +371,32 @@ class PageView(context: Context) : View(context) {
         dropPatch()
     }
 
+    /**
+     * True from [pagesRenumbered] until the pages are laid out again ([setPages]): until then
+     * this view still has the old page numbers and sizes, so it asks for no picture at all. UI thread.
+     */
+    private var layoutWaiting = false
+
+    /**
+     * A page was added or removed, and the file saved with it: every page after it has a new
+     * number. Every picture kept, the sharp patch, and every stroke drawn by hand belong to the
+     * old numbers, so all of it goes; renders on their way are thrown away when they come. Safe
+     * to drop the strokes: the save just put every one of them into the PDF. Nothing is
+     * redrawn, and no picture asked for, until the screen lays the pages out again. UI thread.
+     */
+    fun pagesRenumbered() {
+        forgetRefit()
+        fitWaiting = false
+        layoutWaiting = true
+        removeCallbacks(whenPenRests)
+        bitmaps.clear()
+        dropped += inFlight.keys
+        inFlight.clear()
+        quietRenders.clear()
+        dropPatch()
+        ink.clear()
+    }
+
     private fun dropRenderings(page: Int) {
         if (page == refitPage) forgetRefit() // that picture is dropped when it comes, and fresh ones asked for
         bitmaps.invalidate(page)
@@ -421,6 +448,7 @@ class PageView(context: Context) : View(context) {
      * neither redraws the view nor pauses fast-ink.
      */
     private fun bakeIfFull() {
+        if (layoutWaiting) return
         val v = viewport ?: return
         if (pinching || fingersDown || !quietTime()) return
         val page = v.page
@@ -662,6 +690,7 @@ class PageView(context: Context) : View(context) {
      * patch drawn now is that already. UI thread.
      */
     private fun askForPatch() {
+        if (layoutWaiting) return // asked again once laid out
         val v = viewport ?: return
         // Not at normal size, nor while one is on its way: that one is for this very view, as
         // anything that changed the view dropped it.
@@ -728,6 +757,7 @@ class PageView(context: Context) : View(context) {
 
 
     private fun ensureRendered(page: Int, widthPx: Int) {
+        if (layoutWaiting) return // the old page numbers: asked again once laid out (pagesRenumbered)
         val have = bitmaps.get(page, widthPx)
         if ((have != null && !ink.isStale(page, have.version)) || inFlight.containsKey(page to widthPx)) return
         // Strokes counted now were all sent to the PDF before this request, and the worker
