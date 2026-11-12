@@ -126,7 +126,7 @@ internal class ItemAnnotations(private val doc: PDFDocument) {
         annot.setInkList(arrayOf(stroke.points.map { Point(it.x, it.y).transform(toPageSpace) }.toTypedArray()))
         annot.setColor(style.rgb)
         annot.setOpacity(style.opacity)
-        // One width for all of it, so a middling pressure's: 2 pt for the pen, as before its curve changed.
+        // One width for all of it, so a middling pressure's: about 2.4 pt for the pen.
         annot.setBorderWidth(style.widthAt(0.7f, stroke.widthScale))
         annot.getObject().put("NM", item.id)
         annot.getObject().put(StrokeCodec.KEY, StrokeCodec.encode(stroke))
