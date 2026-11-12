@@ -41,6 +41,7 @@ import com.fzizzle.epapernotes.pdf.PdfFile
 import com.fzizzle.epapernotes.tools.Clipboard
 import com.fzizzle.epapernotes.tools.PenButton
 import com.fzizzle.epapernotes.tools.Tool
+import com.fzizzle.epapernotes.tools.duplicateOf
 import com.fzizzle.epapernotes.tools.ToolState
 import com.fzizzle.epapernotes.tools.liveLine
 import com.fzizzle.epapernotes.tools.placedOn
@@ -999,6 +1000,16 @@ class WritingActivity : Activity() {
             Log.i(TAG, "copied page=$selectedPage items=${selected.size}")
             showStripChange(updateStrip()) // Paste turns black
             showCopied()
+        }
+
+        override fun duplicate() {
+            val page = selectedPage
+            val size = pageSizes[page]
+            val copies = duplicateOf(selected, pdfToDisplay[page], size.w, size.h)
+            val done = recordFromScreen(AddItems(page, copies)) as? AddItems ?: return
+            Log.i(TAG, "duplicated page=$page items=${done.items.size}")
+            // As after a paste: the copy is what's selected, ready to be dragged to its place.
+            setSelection(page, done.items, notShownYet = true)
         }
 
         override fun delete() {

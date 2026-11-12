@@ -38,6 +38,8 @@ class SelectionLayer(private val handlePx: Float, private val listener: Listener
         /** A drag or resize finished. [pdfTransform] is in the page's PDF space. */
         fun moved(pdfTransform: Affine)
         fun copy()
+        /** A copy of the selection, beside it, which becomes the selection. */
+        fun duplicate()
         fun delete()
 
         /** The pen came down outside the selection: let go of it. */
@@ -233,12 +235,13 @@ class SelectionLayer(private val handlePx: Float, private val listener: Listener
         redraw()
     }
 
-    /** Copy or Delete, if [x],[y] is on one of them. */
+    /** Copy, Duplicate or Delete, if [x],[y] is on one of them. */
     private fun pressBar(x: Float, y: Float, frame: PageFrame): Boolean {
         val b = bounds ?: return false
-        val (copy, delete) = barRects(screenBox(b, frame.pdfToScreen), frame)
+        val (copy, duplicate, delete) = barRects(screenBox(b, frame.pdfToScreen), frame)
         when {
             copy.contains(x, y) -> listener.copy()
+            duplicate.contains(x, y) -> listener.duplicate()
             delete.contains(x, y) -> listener.delete()
             else -> return false
         }
@@ -246,18 +249,20 @@ class SelectionLayer(private val handlePx: Float, private val listener: Listener
     }
 
     /**
-     * The bar's two buttons: above the box, or below it if there's no room above. Kept a grip's
+     * The bar's three buttons, Copy, Duplicate, Delete: above the box, or below it if there's no room above. Kept a grip's
      * width clear of the box so a corner drag never lands on them. Always inside the view, even
      * if that means on top of the box (a selection as tall as the page).
      */
-    private fun barRects(box: Box, frame: PageFrame): Pair<RectF, RectF> {
+    private fun barRects(box: Box, frame: PageFrame): List<RectF> {
         val h = handlePx * 1.8f
-        val w = h * 2.6f
         val gap = handlePx
+        // Each as wide as its word needs: "Duplicate" is the long one.
+        val widths = listOf(2.6f, 3.6f, 2.6f).map { it * h }
+        val whole = widths.sum() + gap
         val wanted = if (box.y0 - gap - h >= 0f) box.y0 - gap - h else box.y1 + gap
         val top = wanted.coerceIn(0f, max(0f, frame.viewHeight - h))
-        val left = box.x0.coerceIn(0f, max(0f, frame.viewWidth - 2 * w - gap / 2))
-        return RectF(left, top, left + w, top + h) to RectF(left + w + gap / 2, top, left + 2 * w + gap / 2, top + h)
+        var left = box.x0.coerceIn(0f, max(0f, frame.viewWidth - whole))
+        return widths.map { w -> RectF(left, top, left + w, top + h).also { left += w + gap / 2 } }
     }
 
     fun draw(canvas: Canvas, frame: PageFrame) {
@@ -280,9 +285,9 @@ class SelectionLayer(private val handlePx: Float, private val listener: Listener
     }
 
     private fun drawBar(canvas: Canvas, box: Box, frame: PageFrame) {
-        val (copy, delete) = barRects(box, frame)
-        label.textSize = copy.height() * 0.45f
-        for ((r, text) in listOf(copy to "Copy", delete to "Delete")) {
+        val rects = barRects(box, frame)
+        label.textSize = rects[0].height() * 0.45f
+        for ((r, text) in rects.zip(listOf("Copy", "Duplicate", "Delete"))) {
             canvas.drawRect(r, white)
             canvas.drawRect(r, outline)
             canvas.drawText(text, r.centerX(), r.centerY() - (label.ascent() + label.descent()) / 2, label)

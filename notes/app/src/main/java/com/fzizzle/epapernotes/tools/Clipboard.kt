@@ -36,6 +36,28 @@ fun Clipboard.placedOn(displayToPdf: Affine, at: Pt): List<Item> {
 }
 
 /**
+ * Duplicate: copies of [items] with fresh ids, [byPt] points right and down of the originals as
+ * the page is shown ([pdfToDisplay]; the page is [pageWidth] by [pageHeight] points as shown),
+ * so the copy is seen beside what it was made from. Less far, or not at all, in a direction
+ * where that would put it off the page.
+ */
+fun duplicateOf(items: List<Item>, pdfToDisplay: Affine, pageWidth: Float, pageHeight: Float, byPt: Float = DUPLICATE_BY_PT): List<Item> {
+    if (items.isEmpty()) return emptyList()
+    val corners = items.flatMap { listOf(Pt(it.box.x0, it.box.y0), Pt(it.box.x1, it.box.y1)) }.map { pdfToDisplay.map(it) }
+    val left = corners.minOf { it.x }
+    val right = corners.maxOf { it.x }
+    val top = corners.minOf { it.y }
+    val bottom = corners.maxOf { it.y }
+    val dx = byPt.coerceAtMost(pageWidth - right).coerceAtLeast(0f)
+    val dy = byPt.coerceAtMost(pageHeight - bottom).coerceAtLeast(0f)
+    // A paste onto the same page, centred that much to the right and down.
+    return Clipboard(items, pdfToDisplay).placedOn(pdfToDisplay.inverse(), Pt((left + right) / 2 + dx, (top + bottom) / 2 + dy))
+}
+
+/** How far a duplicate lands from its original: about 5 mm. */
+const val DUPLICATE_BY_PT = 14f
+
+/**
  * The page rotation, in clockwise quarter turns, of a PDF-to-display transform. Read it from where
  * PDF's +x axis lands on the display: the y-up/y-down flip only affects the y axis, and since
  * display y points down, the angle atan2(b, a) is already clockwise. Unrotated page: 0; MuPDF's
