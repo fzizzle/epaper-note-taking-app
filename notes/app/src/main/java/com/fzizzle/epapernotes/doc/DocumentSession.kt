@@ -355,11 +355,12 @@ class DocumentSession(
     }
 
     /** The items a lasso [loop] (PDF space) picks up on [page], given to [answer] on the worker. */
-    fun select(page: Int, loop: List<Pt>, answer: (List<Item>) -> Unit) {
+    fun select(page: Int, loop: List<Pt>, tapReachPt: Float? = null, answer: (List<Item>) -> Unit) {
         var found = emptyList<Item>()
         onWorker("select on page $page", then = { answer(found) }) { p ->
-            // A tap with the lasso picks the one item under it; a loop, everything inside.
-            found = if (TapSelect.isTap(loop)) TapSelect.pick(p.items(page), loop) else Lasso.selects(p.items(page), loop)
+            // A tap with the lasso (the screen says so by giving its reach) picks the one item
+            // under it; a loop, everything inside.
+            found = if (tapReachPt != null) TapSelect.pick(p.items(page), loop, tapReachPt) else Lasso.selects(p.items(page), loop)
         }
     }
 

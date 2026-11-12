@@ -49,4 +49,22 @@ class TapSelectTest {
         val snip = ImageItem("i", Box(50f, 50f, 150f, 150f), 0, byteArrayOf(1))
         assertEquals(listOf<Item>(snip), TapSelect.pick(listOf(snip), tapAt(100f, 100f)))
     }
+
+    /**
+     * Tap or loop is decided on the screen, where the hand made it, not on the page: zoomed in
+     * four times, a loop round a colon is 2 points across on the page but a plain loop to the eye.
+     */
+    @Test fun theSpanIsWhateverTheCallerMeasuresIn() {
+        val onScreen = listOf(Pt(500f, 500f), Pt(520f, 512f), Pt(508f, 521f)) // 20 px by 21 px
+        assertTrue(TapSelect.isTap(onScreen, span = TapSelect.TAP_SPAN_PX))
+        assertFalse(TapSelect.isTap(listOf(Pt(500f, 500f), Pt(530f, 500f)), span = TapSelect.TAP_SPAN_PX))
+    }
+
+    /** How near counts as "under the tap" is the caller's too: the same finger-width on screen at any zoom. */
+    @Test fun aWiderReachPicksAStrokeFurtherOff() {
+        val s = line("s")
+        val near = tapAt(100f, 108f) // 8 points below the line's middle
+        assertEquals(emptyList<Item>(), TapSelect.pick(listOf(s), near))
+        assertEquals(listOf<Item>(s), TapSelect.pick(listOf(s), near, reachPt = 9f))
+    }
 }

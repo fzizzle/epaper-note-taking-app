@@ -23,7 +23,8 @@ For the [writing screen design plan](../docs/superpowers/plans/2026-11-12-writin
 ## W3. Zoom through page turns
 
 1. Pinch in on the top half of a slide. Press › three times (or the volume button).
-   - **Expected:** each page shows the same part, sharp, with one refresh per turn. Write a word after a turn: it lands under the pen.
+   - **Expected:** each page shows the same part, sharp. Write a word after a turn: it lands under the pen.
+   - **Look closely:** does each turn come as one refresh, or as two (a blurry page, then the sharp one with a flash)? I couldn't count this from the tablet's log. If it's two and it bothers you, say so: the plain page-turn refresh can be used instead.
 2. Drag the zoomed page up past its bottom edge.
    - **Expected:** the next page, at its top.
 3. ⋯, "Keep zoom when turning" off. Pinch in, press ›.
@@ -58,6 +59,11 @@ For the [writing screen design plan](../docs/superpowers/plans/2026-11-12-writin
    - **Expected:** nothing is selected; the small grey dot goes.
 3. Draw a loop round a word.
    - **Expected:** as before: everything inside is selected.
+
+4. Zoom in a long way and do steps 1 to 3 again.
+   - **Expected:** the same. A tap is anything under about 2 mm on the screen, at any zoom.
+5. Highlight over a word you wrote, then tap the word.
+   - **Expected:** the highlight is selected, not the word: the tap takes what was drawn last. Tell me if you'd rather it took the pen stroke.
 
 **Tell me:** does a tap ever select when you meant to draw a small loop, or the other way round?
 

@@ -40,6 +40,7 @@ import com.fzizzle.epapernotes.ink.transformed
 import com.fzizzle.epapernotes.pdf.PdfFile
 import com.fzizzle.epapernotes.tools.Clipboard
 import com.fzizzle.epapernotes.tools.PenButton
+import com.fzizzle.epapernotes.tools.TapSelect
 import com.fzizzle.epapernotes.tools.Tool
 import com.fzizzle.epapernotes.tools.duplicateOf
 import com.fzizzle.epapernotes.tools.ToolState
@@ -767,7 +768,11 @@ class WritingActivity : Activity() {
     }
 
     /** Only a page nothing has touched since it was arrived at, with the pen up, may be refitted: it must never move under the pen. */
-    private fun mayRefitShownPage() = trimMargins && shownPageUntouched && !pen.isWriting && !screenPenDown
+    // Nor a zoomed page: a refit lays it out whole again, and a page turned to zoomed in
+    // (PageView.keepZoom) would snap back to the whole page as its measure came in. It takes
+    // its box at the next turn instead (PageView.refitLater).
+    private fun mayRefitShownPage() =
+        trimMargins && shownPageUntouched && !pen.isWriting && !screenPenDown && (pages.viewport?.zoom ?: 1f) <= 1.05f
 
     /**
      * UI thread. Fits the page on show to its new box, if it still may be: returns false, and
@@ -813,7 +818,7 @@ class WritingActivity : Activity() {
         when (tool) {
             Tool.PEN, Tool.HIGHLIGHTER -> write(page, screenToPdf, tool, points)
             Tool.ERASER -> erase(page, points.map { screenToPdf.map(Pt(it[0], it[1])) })
-            Tool.LASSO -> lasso(page, points.map { screenToPdf.map(Pt(it[0], it[1])) })
+            Tool.LASSO -> lasso(page, screenToPdf, points)
             Tool.SNIP -> Unit // fast-ink is off while snipping (ToolState.fastInkOn): the selection layer has it
         }
     }
@@ -836,7 +841,7 @@ class WritingActivity : Activity() {
             pages.addStroke(page, stroke, redraw = !pen.drawsInk)
             // A page's first writing gives it its tick. Under fast-ink the panel takes the
             // new line at the next page turn or refresh; nothing is forced for it.
-            if (writtenPages.add(page)) updateIndicator()
+            if (writtenPages.add(page)) showProgressIfSafe()
         }
     }
 
@@ -881,8 +886,12 @@ class WritingActivity : Activity() {
     }
 
     /** Any thread. The items a lasso [loop] (PDF space) picks up become the selection. */
-    private fun lasso(page: Int, loop: List<Pt>) {
-        session.select(page, loop) { items ->
+    private fun lasso(page: Int, screenToPdf: Affine, points: List<FloatArray>) {
+        val onScreen = points.map { Pt(it[0], it[1]) }
+        // Tap or loop is told on the screen, where the hand made it, and a tap reaches as far
+        // on the screen at any zoom (TapSelect): both would be wrong measured on the page.
+        val tapReachPt = if (TapSelect.isTap(onScreen, TapSelect.TAP_SPAN_PX)) TapSelect.TAP_REACH_PX * screenToPdf.uniformScale() else null
+        session.select(page, onScreen.map { screenToPdf.map(it) }, tapReachPt) { items ->
             Log.i(TAG, "lasso page=$page selected=${items.size}")
             runOnUiThread {
                 // Nothing caught, or the page turned meanwhile: just wipe the grey loop.
@@ -1053,7 +1062,7 @@ class WritingActivity : Activity() {
                 // a selection: ink like any other, recorded the way an Onyx stroke is.
                 Tool.PEN, Tool.HIGHLIGHTER -> write(page, screenToPdf, tool, points)
                 Tool.ERASER -> erase(page, pdf)
-                Tool.LASSO -> lasso(page, pdf)
+                Tool.LASSO -> lasso(page, screenToPdf, points)
                 Tool.SNIP -> Unit // the snip tool never traces: the layer has its rectangle
             }
         }
@@ -1340,7 +1349,7 @@ class WritingActivity : Activity() {
             Log.i(TAG, "written pages n=${found.size} of ${pdf.pageCount} ms=${SystemClock.uptimeMillis() - started}")
             runOnUiThread {
                 writtenPages += found
-                updateIndicator()
+                showProgressIfSafe()
             }
         }
     }
@@ -1351,7 +1360,7 @@ class WritingActivity : Activity() {
             val now = changed.filter { it in 0 until pdf.pageCount }.associateWith { pdf.hasOwnItems(it) }
             runOnUiThread {
                 now.forEach { (page, has) -> if (has) writtenPages += page else writtenPages -= page }
-                updateIndicator()
+                showProgressIfSafe()
             }
         }
     }
@@ -1431,6 +1440,7 @@ class WritingActivity : Activity() {
         Log.i(TAG, "show: pause fast-ink")
         // As pausePenAndRedraw, with the panel update chosen for a new look of the page.
         pen.pause()
+        showProgressIfSafe() // a tick held back while fast-ink was on
         pen.showPage(pages)
         // While fast-ink is paused Onyx doesn't follow the pen. With the pen or highlighter
         // chosen nothing else did either, so a stroke begun in this short pause (erase a word,
@@ -1472,6 +1482,7 @@ class WritingActivity : Activity() {
     private fun pausePenAndRedraw() {
         pen.pause()
         pages.invalidate()
+        showProgressIfSafe() // a tick held back while fast-ink was on
     }
 
     /** Choosing a tool lets go of the selection and cancels an armed paste. */
@@ -1618,10 +1629,25 @@ class WritingActivity : Activity() {
         Log.i(TAG, "leave: destroy ms=${SystemClock.uptimeMillis() - start}")
     }
 
+    /**
+     * A page gained or lost its tick on the progress line. The line is only redrawn now if
+     * the panel is showing the app's drawing anyway (fast-ink off): with fast-ink on, any
+     * redraw is a refresh of the whole screen, and a tick isn't worth one while the owner
+     * writes or erases. Otherwise it's drawn with the next page turn, zoom or show.
+     */
+    private fun showProgressIfSafe() {
+        if (pen.drawsInk) return
+        val v = pages.viewport ?: return
+        progressRule.show(v.page, pageCount, writtenPages)
+    }
+
     private fun updateIndicator() {
         val v = pages.viewport ?: return
         progressRule.show(v.page, pageCount, writtenPages)
-        indicator.text = "${v.page + 1} / $pageCount"
+        // Only when it changed: setting a text, even the same one, draws it again, and a
+        // redraw of anything while fast-ink is on is a refresh of the whole screen.
+        val shown = "${v.page + 1} / $pageCount"
+        if (indicator.text.toString() != shown) indicator.text = shown
         indicator.contentDescription = "Page ${v.page + 1} of $pageCount. Tap to go to a page."
         previousButton.isEnabled = v.page > 0
         nextButton.isEnabled = v.page < pageCount - 1

@@ -476,9 +476,12 @@ class DocumentSessionTest {
         s.addStroke(0, line)
         s.addStroke(0, dot)
         var picked: List<Item>? = null
-        s.select(0, listOf(Pt(30f, 100f), Pt(31f, 100.5f), Pt(30.5f, 99f))) { picked = it }
+        s.select(0, listOf(Pt(30f, 100f), Pt(31f, 100.5f), Pt(30.5f, 99f)), tapReachPt = 3f) { picked = it }
         assertEquals(listOf(line), picked!!.map { (it as InkItem).stroke })
-        s.select(0, listOf(Pt(300f, 300f), Pt(301f, 300f))) { picked = it }
+        s.select(0, listOf(Pt(300f, 300f), Pt(301f, 300f)), tapReachPt = 3f) { picked = it }
+        assertEquals(emptyList<Item>(), picked)
+        // The same small scribble as a loop (no reach given) holds nothing inside it.
+        s.select(0, listOf(Pt(30f, 100f), Pt(31f, 100.5f), Pt(30.5f, 99f))) { picked = it }
         assertEquals(emptyList<Item>(), picked)
     }
 

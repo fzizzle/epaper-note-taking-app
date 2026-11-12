@@ -18,13 +18,14 @@ import kotlin.math.min
 object Eraser {
     const val RADIUS_PT = 3f
 
-    fun hits(items: List<Item>, trail: List<Pt>): List<Item> {
+    /** [radiusPt]: how near the trail must come; the eraser's own unless a caller has its reasons (TapSelect). */
+    fun hits(items: List<Item>, trail: List<Pt>, radiusPt: Float = RADIUS_PT): List<Item> {
         if (trail.isEmpty()) return emptyList()
         val segments = trailSegments(trail)
-        return items.filter { hit(it, segments) }
+        return items.filter { hit(it, segments, radiusPt) }
     }
 
-    private fun hit(item: Item, trail: List<Pair<Pt, Pt>>): Boolean = when (item) {
+    private fun hit(item: Item, trail: List<Pair<Pt, Pt>>, radiusPt: Float): Boolean = when (item) {
         is ImageItem -> trail.any { (p, q) -> touchesBox(p, q, item.box) }
         is InkItem -> {
             val s = item.stroke
@@ -33,7 +34,7 @@ object Eraser {
             // Only the bits of the trail that come near the stroke at all. A page can hold
             // thousands of points and a swipe hundreds, and testing every pair took seconds on
             // the tablet (Task 7's launch check).
-            val reach = RADIUS_PT + pts.maxOf { style.widthAt(it.pressure, s.widthScale) } / 2
+            val reach = radiusPt + pts.maxOf { style.widthAt(it.pressure, s.widthScale) } / 2
             val near = Box(
                 pts.minOf { it.x } - reach, pts.minOf { it.y } - reach,
                 pts.maxOf { it.x } + reach, pts.maxOf { it.y } + reach,
@@ -46,7 +47,7 @@ object Eraser {
                 val half = max(style.widthAt(a.pressure, s.widthScale), style.widthAt(b.pressure, s.widthScale)) / 2
                 val pa = Pt(a.x, a.y)
                 val pb = Pt(b.x, b.y)
-                close.any { (p, q) -> segmentDistance(p, q, pa, pb) <= RADIUS_PT + half }
+                close.any { (p, q) -> segmentDistance(p, q, pa, pb) <= radiusPt + half }
             }
         }
     }
