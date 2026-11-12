@@ -61,6 +61,20 @@ class ThumbnailCacheTest {
         assertTrue(dir.list()!!.none { it.endsWith(".path") })
     }
 
+    /**
+     * The app started with the memory card out: none of the card's PDFs can be found, but
+     * they aren't deleted. Their thumbnails must still be there when the card is back.
+     */
+    @Test fun pruneKeepsThumbnailsWhoseStorageIsOut() {
+        val onCard = pdf("/storage/3331-3031/Workbooks/a.pdf")
+        val deleted = real("gone.pdf")
+        cache.store(onCard, byteArrayOf(1))
+        cache.store(deleted, byteArrayOf(2))
+        cache.pruneMissing(exists = { false }, storageIn = { !it.path.startsWith("/storage/3331-3031") })
+        assertTrue(cache.cached(onCard) != null)
+        assertNull(cache.cached(deleted))
+    }
+
     @Test fun pruneKeepsLiveOnes() {
         val live = real("live.pdf")
         val gone = real("gone.pdf")

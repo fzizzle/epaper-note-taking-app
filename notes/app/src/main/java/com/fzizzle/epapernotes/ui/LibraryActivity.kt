@@ -383,7 +383,11 @@ class LibraryActivity : Activity() {
         return entries.subList(first, end)
     }
 
-    private fun newThumbnails() = ThumbnailLoader(thumbnailCache) { pdf, bitmap -> thumbnailReady(pdf, bitmap) }
+    private fun newThumbnails() = ThumbnailLoader(
+        thumbnailCache,
+        // Asked afresh each time: a card can come and go while the app runs.
+        storageIn = { Volumes.holding(StorageVolumes.mounted(this), it) != null },
+    ) { pdf, bitmap -> thumbnailReady(pdf, bitmap) }
 
     /**
      * Thumbnails that have arrived and aren't on their tiles yet. They come one at a time, a

@@ -29,7 +29,12 @@ import java.io.ByteArrayOutputStream
  * is rendered or read from the cache (decision 10). [onReady] runs on the main thread, with
  * null for a tile on screen whose PDF can't be drawn: its tile drops any old picture.
  */
-class ThumbnailLoader(private val cache: ThumbnailCache, private val onReady: (PdfEntry, Bitmap?) -> Unit) {
+class ThumbnailLoader(
+    private val cache: ThumbnailCache,
+    /** Whether the storage a PDF lies on is in (ThumbnailCache.pruneMissing): asked on this loader's thread. */
+    private val storageIn: (java.io.File) -> Boolean = { true },
+    private val onReady: (PdfEntry, Bitmap?) -> Unit,
+) {
     private val memory = object : LruCache<String, Bitmap>(MEMORY_BYTES) {
         override fun sizeOf(key: String, value: Bitmap) = value.byteCount
     }
@@ -105,7 +110,7 @@ class ThumbnailLoader(private val cache: ThumbnailCache, private val onReady: (P
         Process.setThreadPriority(priority)
         // Thumbnails of PDFs that are gone; it can trip over a file that vanishes as it reads.
         try {
-            cache.pruneMissing()
+            cache.pruneMissing(storageIn = storageIn)
         } catch (e: Exception) {
             Log.w(TAG, "thumbnail prune failed", e)
         }
