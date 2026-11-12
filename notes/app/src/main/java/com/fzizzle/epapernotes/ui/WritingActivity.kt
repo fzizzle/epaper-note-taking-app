@@ -63,6 +63,10 @@ class WritingActivity : Activity() {
     private lateinit var session: DocumentSession
     private lateinit var pages: PageView
     private lateinit var indicator: TextView
+    private val progressRule by lazy { ProgressRule(this) }
+
+    /** The pages with writing on them, for [progressRule]'s ticks: read once after opening, then kept up as pages change. UI thread. */
+    private val writtenPages = HashSet<Int>()
     private lateinit var lastPages: LastPageStore
 
     private val readingPrefs by lazy { ReadingPrefs(this) }
@@ -356,7 +360,8 @@ class WritingActivity : Activity() {
             setBackgroundColor(Color.WHITE)
             addView(strip, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, stripHeight))
             // One hairline between the strip and the page.
-            addView(View(this@WritingActivity).apply { setBackgroundColor(RULE) }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 2))
+            // The line between the strip and the page, which also shows where the owner is (ProgressRule).
+            addView(progressRule, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, ProgressRule.HEIGHT_PX))
             addView(pages, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
             // The status bar is hidden (hideStatusBar), but a swipe can bring it back for a
             // moment, and other bars may stay: keep the strip clear of whatever is left.
@@ -428,6 +433,7 @@ class WritingActivity : Activity() {
             if (!fingers && documentShown) pen.setLimit(penLimit())
         }
         layOutPages(startPage = lastPages.get(path)) {
+            findWrittenPages()
             pages.post {
                 documentShown = true
                 // If the app opened this document by itself at its start (LaunchOpen): it got here.
@@ -815,7 +821,12 @@ class WritingActivity : Activity() {
         val kind = if (tool == Tool.HIGHLIGHTER) StrokeKind.HIGHLIGHTER else StrokeKind.PEN
         val (_, stroke) = PenPoints.toStroke(kind, points) { x, y -> page to screenToPdf.map(Pt(x, y)) } ?: return
         session.addStroke(page, stroke)
-        runOnUiThread { pages.addStroke(page, stroke, redraw = !pen.drawsInk) }
+        runOnUiThread {
+            pages.addStroke(page, stroke, redraw = !pen.drawsInk)
+            // A page's first writing gives it its tick. Under fast-ink the panel takes the
+            // new line at the next page turn or refresh; nothing is forced for it.
+            if (writtenPages.add(page)) updateIndicator()
+        }
     }
 
     /** Button 2's trail, from Onyx's erase callbacks, on Onyx's thread. */
@@ -1279,7 +1290,37 @@ class WritingActivity : Activity() {
     }
 
     /** UI thread: changes have reached the PDF on [changed] pages. */
+    /**
+     * Which pages have writing, for the progress line's ticks: one pass over the document on
+     * the worker, which decodes nothing (PdfPages.hasOwnItems). After opening.
+     */
+    private fun findWrittenPages() {
+        session.runOnDocument { pdf ->
+            val started = SystemClock.uptimeMillis()
+            val found = (0 until pdf.pageCount).filter { pdf.hasOwnItems(it) }
+            Log.i(TAG, "written pages n=${found.size} of ${pdf.pageCount} ms=${SystemClock.uptimeMillis() - started}")
+            runOnUiThread {
+                writtenPages += found
+                updateIndicator()
+            }
+        }
+    }
+
+    /** [changed] pages may have gained or lost their writing (an erase can empty one): asked again, for their ticks. */
+    private fun recheckWritten(changed: Set<Int>) {
+        session.runOnDocument { pdf ->
+            val now = changed.filter { it in 0 until pdf.pageCount }.associateWith { pdf.hasOwnItems(it) }
+            runOnUiThread {
+                now.forEach { (page, has) -> if (has) writtenPages += page else writtenPages -= page }
+                updateIndicator()
+            }
+        }
+    }
+
     private fun pagesChanged(changed: Set<Int>) {
+        // Not after a plain pen stroke (write() gave its page a tick already): this comes after
+        // every stroke, and asking the worker each time would be work for nothing.
+        changed.filter { it in redrawWhenChanged }.toSet().takeIf { it.isNotEmpty() }?.let(::recheckWritten)
         // Redrawn the usual way: once rendered, onPageShown shows it without fast-ink.
         changed.forEach { if (redrawWhenChanged.remove(it)) pages.pageChanged(it) }
         val target = goToWhenChanged
@@ -1502,6 +1543,7 @@ class WritingActivity : Activity() {
 
     private fun updateIndicator() {
         val v = pages.viewport ?: return
+        progressRule.show(v.page, pageCount, writtenPages)
         indicator.text = "${v.page + 1} / $pageCount"
         indicator.contentDescription = "Page ${v.page + 1} of $pageCount. Tap to go to a page."
         previousButton.isEnabled = v.page > 0
