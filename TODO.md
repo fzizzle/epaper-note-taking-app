@@ -43,7 +43,7 @@ The UI and UX review on the tablet, and its fixes: [plan](docs/superpowers/plans
 - [x] Paste stays on the island, grey until something is copied (Task 4).
 - [x] Menus outlined in black, teal gone, ⋯ split in two, the long-pressed tile marked, Go to page padded (Task 5).
 - [x] A shorter copy message after the first three, a Paste bubble like the strip, the pen mark inside its circle (Task 6).
-- [ ] Owner checklist: [notes/TESTING-ui-review.md](notes/TESTING-ui-review.md) (Task 7, hard stop).
+- [x] Owner checklist: [notes/TESTING-ui-review.md](notes/TESTING-ui-review.md): all checks pass (owner, 2026-11-12). [Results](docs/superpowers/ui-review-results.md).
 - [ ] Erase trail and erase flash: their own plan (see Known bugs above).
 
 ## Review: bugs to fix first

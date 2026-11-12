@@ -15,17 +15,17 @@ About 10 minutes. These check the changes from the UI review of 2026-11-12 ([pla
 
 ## Checks
 
-- [ ] **U1. Tile names.** In a topic folder, do the tiles read "workbook" and "answer key"? Long-press one and choose Rename: does it show the full name?
-- [ ] **U2. Folder tiles.** In a course folder, do all topics fit on one screen? Is each count clear of its name, even under two-line names?
-- [ ] **U3. File name.** Open a workbook. Is its name next to ←, readable, and clear of the tools? Tap a few tools: does it stay put?
-- [ ] **U4. Paste's place.** Snip something. Did any tool move? Did Paste turn from grey to black?
-- [ ] **U5. Long-press menu.** Long-press a tile. Does the menu have an edge, and is the tile grey? Close it with a tap outside: does the grey go?
-- [ ] **U6. ⋯ menu.** Open ⋯. Is there a line between rotating and the look settings, and are the ticks black? Does Contrast's own menu have an edge too?
-- [ ] **U7. Copy message.** Copy or snip four times. Is the message short from the fourth time? Hold a finger on the page: does the Paste bubble look like the strip's buttons?
-- [ ] **U8. Pen mark.** With the pen picked, does its mark sit inside the black circle?
-- [ ] **U9. Landscape.** Turn the tablet. Does all of the above still fit?
+- [x] **U1. Tile names.** In a topic folder, do the tiles read "workbook" and "answer key"? Long-press one and choose Rename: does it show the full name?
+- [x] **U2. Folder tiles.** In a course folder, do all topics fit on one screen? Is each count clear of its name, even under two-line names?
+- [x] **U3. File name.** Open a workbook. Is its name next to ←, readable, and clear of the tools? Tap a few tools: does it stay put?
+- [x] **U4. Paste's place.** Snip something. Did any tool move? Did Paste turn from grey to black?
+- [x] **U5. Long-press menu.** Long-press a tile. Does the menu have an edge, and is the tile grey? Close it with a tap outside: does the grey go?
+- [x] **U6. ⋯ menu.** Open ⋯. Is there a line between rotating and the look settings, and are the ticks black? Does Contrast's own menu have an edge too?
+- [x] **U7. Copy message.** Copy or snip four times. Is the message short from the fourth time? Hold a finger on the page: does the Paste bubble look like the strip's buttons?
+- [x] **U8. Pen mark.** With the pen picked, does its mark sit inside the black circle?
+- [x] **U9. Landscape.** Turn the tablet. Does all of the above still fit?
 
-When done, the results go in `docs/superpowers/ui-review-results.md`.
+Owner, 2026-11-12: all checks pass. [Results](../docs/superpowers/ui-review-results.md).
 
 ## Still open
 
