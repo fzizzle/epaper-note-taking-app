@@ -228,12 +228,19 @@ class PdfFile private constructor(private val doc: PDFDocument) : PdfPages {
      * The new page is drawn with /Rotate 0 and the size page [after] is shown at, so it looks
      * the same shape as its neighbour even when that one is turned. Its dots are its own page
      * content: a plain drawing every viewer shows, not one of the app's items.
+     *
+     * It gets a /CropBox of its own, the whole page: a CropBox set on the page tree would
+     * otherwise be inherited by the new page and cut it down to part of itself.
      */
     override fun addDottedPage(after: Int) {
         require(after in 0 until pageCount) { "no page $after" }
         val size = displaySize(after)
         val content = DottedPaper.content(size.width, size.height)
         val page = doc.addPage(Rect(0f, 0f, size.width, size.height), 0, doc.newDictionary(), content)
+        // Numbers go in with push(Float), never push(PDFObject), which fitz 1.28.5 frees too early.
+        val crop = doc.newArray()
+        listOf(0f, 0f, size.width, size.height).forEach { crop.push(it) }
+        page.put("CropBox", crop)
         page.put(ADDED_PAGE_KEY, true)
         doc.insertPage(after + 1, page)
         forgetAllPages()

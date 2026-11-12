@@ -8,6 +8,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.artifex.mupdf.fitz.PDFDocument
 import com.artifex.mupdf.fitz.Rect
 import com.fzizzle.epapernotes.doc.AddItems
+import com.fzizzle.epapernotes.ink.Box
 import com.fzizzle.epapernotes.ink.InkItem
 import com.fzizzle.epapernotes.ink.ItemIds
 import com.fzizzle.epapernotes.ink.Stroke
@@ -163,5 +164,54 @@ class PdfFileAddedPagesTest {
             pdf.removeAddedPage(2)
             assertEquals(2, pdf.pageCount)
         }
+    }
+
+    /**
+     * Adds a page after page 0 of [file] and checks it is the neighbour's size as shown, dotted
+     * all over (not only in a corner, as a page clipped by a box it inherits would be), and
+     * that a stroke on it reads back after a save.
+     */
+    private fun addsAMatchingPageAfter(file: File) {
+        val out = File(dir, "matching-${file.name}")
+        val id = PdfFile.open(file).use { pdf ->
+            pdf.addDottedPage(0)
+            assertEquals(pdf.displaySize(0), pdf.displaySize(1))
+            val bmp = pdf.render(1, 600)
+            val px = pixels(bmp)
+            fun greyIn(left: Boolean, top: Boolean): Int {
+                val xs = if (left) 0 until bmp.width / 2 else bmp.width / 2 until bmp.width
+                val ys = if (top) 0 until bmp.height / 2 else bmp.height / 2 until bmp.height
+                return ys.sumOf { y -> xs.count { x -> Color.red(px[y * bmp.width + x]) in 40..230 } }
+            }
+            for (left in listOf(true, false)) for (top in listOf(true, false)) {
+                val grey = greyIn(left, top)
+                assertTrue("grey dots in the ${if (top) "top" else "bottom"} ${if (left) "left" else "right"} quarter: $grey", grey > 100)
+            }
+            val short = Stroke(StrokeKind.PEN, (0..10).map { StrokePoint(50f + it * 4, 60f, 0.5f) })
+            pdf.add(1, short).also { pdf.saveTo(out) }
+        }
+        PdfFile.open(out).use { pdf ->
+            assertTrue(pdf.isAddedPage(1))
+            assertEquals(listOf(id), pdf.ids(1))
+        }
+    }
+
+    @Test fun anAddedPageMatchesARotationFromThePageTree() {
+        val file = TestPdfs.blank(dir, parentRotate = 90)
+        PdfFile.open(file).use { assertEquals(SizeF(792f, 612f), it.displaySize(0)) }
+        addsAMatchingPageAfter(file)
+    }
+
+    @Test fun anAddedPageMatchesAMediaBoxAwayFromTheCorner() {
+        val file = TestPdfs.blank(dir, mediaBox = Box(50f, 80f, 650f, 880f))
+        PdfFile.open(file).use { assertEquals(SizeF(600f, 800f), it.displaySize(0)) }
+        addsAMatchingPageAfter(file)
+    }
+
+    /** A CropBox on the page tree would be inherited by the new page too, and clip it, unless the page has its own. */
+    @Test fun anAddedPageIsNotClippedByACropBoxFromThePageTree() {
+        val file = TestPdfs.blank(dir, parentCropBox = Box(100f, 150f, 400f, 550f))
+        PdfFile.open(file).use { assertEquals(SizeF(300f, 400f), it.displaySize(0)) }
+        addsAMatchingPageAfter(file)
     }
 }
