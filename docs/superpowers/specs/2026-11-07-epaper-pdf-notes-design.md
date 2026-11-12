@@ -97,7 +97,7 @@ Navigation:
 
 **Highlighter.** A wide, see-through stroke that never hides the text under it, in yellow. One colour only.
 
-**Stroke eraser.** Touching any part of a stroke removes the whole stroke. This applies to pen strokes, highlighter strokes, and pasted snips.
+**Stroke eraser.** Touching any part of a stroke removes the whole stroke. This applies to pen strokes, highlighter strokes, and pasted snips. The page is drawn again, with one refresh, once the eraser rests: 0.4 s after the last erase and with button 2 let go or the pen lifted away, and 3 s after a run's first erase at the latest (owner's decision, 2026-11-12: one refresh for a run of erases, not one each).
 
 **Lasso select.** Draw a loop. Every ink stroke and pasted snip inside the loop gets selected. Printed PDF content is never selected. The selection can be:
 

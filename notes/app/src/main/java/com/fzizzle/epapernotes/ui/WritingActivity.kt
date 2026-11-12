@@ -177,11 +177,29 @@ class WritingActivity : Activity() {
      * wait, and the next lift starts it again.
      */
     @Volatile private var showPending = false
-    private val retryShow = Runnable {
-        if (!showPending || pen.isWriting) return@Runnable
-        Log.i(TAG, "show retried after idle")
-        showWithoutFastInk()
+    private val retryShow = object : Runnable {
+        override fun run() {
+            if (!showPending || pen.isWriting) return
+            // Still in a run of erases (EraseSettle): look again when its wait is up.
+            val wait = eraseSettle.waitMs(SystemClock.uptimeMillis(), eraserHeld())
+            if (wait > 0) {
+                handler.postDelayed(this, wait)
+                return
+            }
+            Log.i(TAG, "show retried after idle")
+            showWithoutFastInk()
+        }
     }
+
+    /** A run of erases is shown once, when the eraser rests. UI thread. */
+    private val eraseSettle = EraseSettle()
+
+    /** When the pen was last seen hovering or landing ([hoverButton] is from then). UI thread. */
+    private var penSeenAt = 0L
+
+    /** Button 2 is held with the pen near the screen right now: the owner is still erasing. */
+    private fun eraserHeld() =
+        hoverButton == PenButton.ERASER_END && SystemClock.uptimeMillis() - penSeenAt < PEN_GONE_MS
 
     /**
      * The selection, as the PDF has it now: always the items of the change that was journaled
@@ -438,6 +456,7 @@ class WritingActivity : Activity() {
             },
         )
         pages.onStylusHover = { button ->
+            penSeenAt = SystemClock.uptimeMillis()
             if (button != hoverButton) {
                 hoverButton = button
                 publishPenChoice()
@@ -445,6 +464,7 @@ class WritingActivity : Activity() {
         }
         pages.onHoverEraseTrail = { points -> onHoverEraseTrail(points) }
         pages.onStylusDown = { button ->
+            penSeenAt = SystemClock.uptimeMillis()
             shownPageUntouched = false
             hoverButton = button
             publishPenChoice()
@@ -513,7 +533,7 @@ class WritingActivity : Activity() {
                         heldCleanRefresh.run()
                     }
                 } else {
-                    showWithoutFastInk()
+                    showAfterErasing()
                 }
             }
         }
@@ -825,7 +845,14 @@ class WritingActivity : Activity() {
         session.erase(page, trail) { hits ->
             Log.i(TAG, "erase page=$page hits=$hits ms=${SystemClock.uptimeMillis() - started}")
             // Posted before the PageChanged that follows a hit, so it's marked in time.
-            runOnUiThread { if (hits > 0) expectRedraw(page) else if (wipeIfMissed) showWithoutFastInk() }
+            runOnUiThread {
+                if (hits > 0) {
+                    eraseSettle.erased(SystemClock.uptimeMillis())
+                    expectRedraw(page)
+                } else if (wipeIfMissed) {
+                    showWithoutFastInk()
+                }
+            }
         }
     }
 
@@ -1279,6 +1306,7 @@ class WritingActivity : Activity() {
             return
         }
         showPending = false
+        eraseSettle.shown()
         handler.removeCallbacks(retryShow)
         Log.i(TAG, "show: pause fast-ink")
         // As pausePenAndRedraw, with the panel update chosen for a new look of the page.
@@ -1292,6 +1320,20 @@ class WritingActivity : Activity() {
         screenHasPen = true
         handler.removeCallbacks(resumeFastInk)
         handler.postDelayed(resumeFastInk, SHOW_PAUSE_MS)
+    }
+
+    /**
+     * Shows a page picture that has just arrived, unless a run of erases is still going
+     * ([EraseSettle]): then once the eraser rests. Each show pauses fast-ink and flashes, and
+     * five erases in six seconds were five flashes. The wait goes through [retryShow], so a
+     * stroke begun meanwhile puts it off until the pen has lifted and rested, as for any show.
+     */
+    private fun showAfterErasing() {
+        val wait = eraseSettle.waitMs(SystemClock.uptimeMillis(), eraserHeld())
+        if (wait <= 0) return showWithoutFastInk()
+        showPending = true
+        handler.removeCallbacks(retryShow)
+        handler.postDelayed(retryShow, wait)
     }
 
     /** Any thread. Starts (or restarts) the wait before a skipped show runs. */
@@ -1527,6 +1569,9 @@ class WritingActivity : Activity() {
 
         /** How long the pen must rest before a show skipped while writing is tried again. */
         const val SHOW_RETRY_IDLE_MS = 500L
+
+        /** No hover or touch from the pen for this long: it has left the screen's range (hover events come many times a second). */
+        const val PEN_GONE_MS = 300L
 
         /** How wide a page is drawn to find its printed area (Trim margins): small, so it's quick. */
         private const val MEASURE_WIDTH_PX = 200
