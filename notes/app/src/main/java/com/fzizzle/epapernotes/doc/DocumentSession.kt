@@ -771,7 +771,9 @@ class DocumentSession(
                 redoable.clear()
             }
             try {
-                if (keepOldJournal) setAside()
+                // A copy: if the rewrite below fails, later strokes must still go into a whole
+                // journal, with its header, not into a new file the next opening can't read.
+                if (keepOldJournal) setAside(copy = true)
                 journal.rewrite(base, remaining)
                 journalBroken = false // whole again, with everything unsaved in it
             } catch (e: IOException) {
@@ -809,10 +811,11 @@ class DocumentSession(
     /**
      * Called with [lock] held. Keeps the current journal file aside, untouched. If moving it
      * fails, it's copied instead: the fresh journal that follows must never be what's left.
+     * With [copy], it's always copied, so the journal stays where it is too.
      */
-    private fun setAside() {
+    private fun setAside(copy: Boolean = false) {
         val kept = File(journalDir, journal.file.name + ".kept-" + System.currentTimeMillis())
-        if (!journal.file.renameTo(kept)) journal.file.copyTo(kept, overwrite = false)
+        if (copy || !journal.file.renameTo(kept)) journal.file.copyTo(kept, overwrite = false)
         events(SessionEvent.EarlierWritingKept(kept))
     }
 

@@ -1198,6 +1198,25 @@ class DocumentSessionTest {
 
     private fun journalOf(file: File) = ChangeJournal(file).read()!!.changes
 
+    /**
+     * Review r1: the old journal is kept aside, then the new one can't be written (a nearly
+     * full tablet). The old one must still be where the next strokes go, with its header, so a
+     * kill afterwards keeps them too, instead of a headerless file that the next opening drops.
+     */
+    @Test fun strokesAfterAKeptJournalAndAFailedRewriteSurviveAKill() {
+        fake.addedPages += 1
+        val s = session()
+        fake.duringSave = { fake.duringSave = null; s.addStroke(1, dot) }
+        val blocker = File(journals, ChangeJournal.forDocument(journals, pdf).file.name + ".new").apply { mkdirs() } // the rewrite can't write its new file
+        s.removeAddedPage(1)
+        assertEquals(1, events.count { it is SessionEvent.EarlierWritingKept })
+        s.addStroke(2, line) // after the removal, before any other save
+        blocker.delete() // room again; then the app is killed
+        reopenAfterKill()
+        val keptStrokes = journals.listFiles()!!.filter { ".kept-" in it.name }.flatMap { journalOf(it) }
+        assertTrue(keptStrokes.any { it is AddItems && (it.items.single() as InkItem).stroke == line })
+    }
+
     @Test fun isAddedPageAnswersOnTheWorker() {
         val s = session()
         s.addPageAfter(1)
