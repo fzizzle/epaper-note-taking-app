@@ -64,7 +64,7 @@ It should be lightweight and fast, and it should do a small set of core things v
 - A **breadcrumb** at the top shows the path. Tap a segment to go up.
 - A **refresh** button and a **new folder** button sit at the top.
 - The grid **updates automatically** when files change on disk (added, removed, renamed, moved, or modified by a laptop, a sync app, or USB), and refresh forces a rescan.
-- **Long-press a tile** for a small menu: rename, move, delete. Delete asks for confirmation, because it deletes the real file.
+- **Long-press a tile** for a small menu: rename, move, delete. Delete asks for confirmation, because it deletes the real file. A PDF's menu also has **Fresh attempt** (owner's decision, 2026-11-12): a copy beside it named `<name> (attempt 2).pdf` (then 3, 4, …) without the owner's ink and pasted snips, to try a workbook again. Dotted pages the owner added stay, empty; marks made in other apps stay; the original isn't touched; a name already taken is never written over.
 - Thumbnails are cached in the app's own cache storage and regenerated only when a file changes, so the grid stays fast.
 - Tapping a PDF opens it **at the page where it was last left**. That position is remembered in the app's private storage, never in the owner's folders.
 - "Bulk import" is just copying many PDFs into a folder. There is no import feature.
@@ -89,7 +89,7 @@ Layout: the PDF pages fill the screen. A **thin top strip** (a little under 5% o
 
 How the strip is laid out (owner's decision, 2026-11-10): ← sits at the left edge, followed by the open file's name in grey, cut from the front when it's too long so its end shows; it never moves the island (owner, UI review decision 2, 2026-11-12). The tools, undo and redo sit together on a capsule (the "island") centred on the screen. ⋯ and the page indicator sit at the right edge. The island picks out the chosen tool. Tapping a tool shows it at once, with one quick flash, because fast-ink is on. Holding a pen button doesn't change the island: that would flash the screen at every press (owner's choice). The status bar is hidden on the writing screen, so the strip sits at the very top with even space around it. The island is white with a black outline (owner's choice, 2026-11-10).
 
-The page menu holds **rotate this page**, **rotate all pages**, and the reading settings below.
+The page menu holds **rotate this page**, **rotate all pages**, **add a dotted page after this one** (and **remove this added page**, on a page the app added; section 6.5), and the reading settings below. On the last page, › becomes **+**, which adds a dotted page after it.
 
 Added on 2026-11-12 (owner's decisions; [writing screen design plan](../plans/2026-11-12-writing-screen-design.md)):
 
@@ -142,6 +142,16 @@ Typical use is once per document: a deck of landscape slides gets rotated so it 
 - The rotation is saved into the PDF (the page's rotation property), so it looks the same in other viewers.
 - Ink already on a page turns with the page.
 - The first time a file is opened, if most of its pages are sideways and the tablet is held upright, the app offers "Rotate all pages?" once (owner, 2026-11-12). Whatever the answer, it isn't asked for that file again.
+
+### 6.5 Added pages
+
+Owner's decisions, 2026-11-12 ([pages plan](../plans/2026-11-12-pages.md)). For working that doesn't fit on a slide.
+
+- **Add a dotted page after this one**, from ⋯ on any page, or **+** in place of › on the last page. The new page is an ordinary page of the PDF, drawn with plain PDF drawing, so every other viewer shows it. It is the same size and way up as the page it follows: dots 5 mm apart, about 0.4 mm across, mid grey.
+- **It can't be undone with Undo, and it empties the undo list.** Every later page's number changes, and the undo list is kept by page number. Instead, ⋯ shows **Remove this added page** on a page the app added, never on the PDF's own pages. It asks first if the page has writing on it.
+- **It saves the file at once.** Everything written so far goes into the PDF first, then the page is added and the file saved the usual safe way. If the file can't be saved into right now (changed elsewhere, or a damaged file waiting for the owner's answer), the page isn't added and a message says why.
+- While the page is being added or removed, the pen and every action that names a page wait: about a tenth of a second for a small file.
+- This is not blank notebooks (section 3): pages are added to an existing PDF.
 
 ## 7. Storage and saving: never lose writing
 
@@ -216,5 +226,6 @@ The owner can overturn any of these:
 - Copy and delete live in a small action bar next to the selection, and Paste sits on the island, greyed out until there's something to paste (owner, 2026-11-12). You place a paste with a pen tap.
 - After a crash, strokes that never reached the PDF are replayed into a "my edits" copy if the file changed on disk in the meantime.
 - On the writing screen (2026-11-12): the progress line's size (a 4 px line, 3 px ticks); 14 points for how far a duplicate lands; 6 points as the most a lasso stroke may span and still be a tap; 1.2 wide to 1 tall as "sideways"; the refresh of a zoomed page turn waits for the sharp picture, so it comes as one.
+- For added pages and fresh attempts (2026-11-12): the dot spacing, size and grey; an added page is marked with a private key on the page so only those can be removed; the `(attempt N)` naming; a fresh attempt keeps added pages and other apps' marks.
 - In the library (2026-11-12): three PDFs as the most a folder may hold and still be opened out; the eight course colours and how a course gets one; the look of the progress bar, the writing mark and the list rows; the Continue picture's size (96 dp tall); a file's writing is looked for in its first 300 pages.
 - ~~Portrait orientation is locked.~~ Replaced on 2026-11-09: the screen follows the tablet, because Android 16 overrides the lock (section 6.2).
