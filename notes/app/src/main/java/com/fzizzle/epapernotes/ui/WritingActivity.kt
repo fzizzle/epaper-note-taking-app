@@ -338,9 +338,11 @@ class WritingActivity : Activity() {
         // changes with a zoom, which refreshes the screen anyway.
         fitButton = button(right, Glyph.FIT, "Fit the whole page") { fitPage() }.apply { isEnabled = false }
         menuButton = button(right, Glyph.MENU, "Page menu", gaps = 2) { openPageMenu() }
-        previousButton = button(right, Glyph.PREVIOUS, "Previous page") { turn(forward = false) }
+        previousButton = button(right, Glyph.PREVIOUS, "Previous page. Hold for the first page.") { turn(forward = false) }
+        previousButton.setOnLongClickListener { goToEnd(first = true); true } // true: the lift doesn't also turn a page
         right.addView(indicator, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.MATCH_PARENT).apply { marginEnd = gap })
-        nextButton = button(right, Glyph.NEXT, "Next page", gaps = 0) { turn(forward = true) }
+        nextButton = button(right, Glyph.NEXT, "Next page. Hold for the last page.", gaps = 0) { turn(forward = true) }
+        nextButton.setOnLongClickListener { goToEnd(first = false); true }
         // The arrow's tip sits closer to its tile's edge than the chevron's does (0.28 of the
         // tile against 0.40), so ← gets that much more room and the two marks sit evenly in from
         // the screen's edges.
@@ -1351,6 +1353,16 @@ class WritingActivity : Activity() {
         handler.removeCallbacks(heldCleanRefresh)
         cleanRefreshHeld = true
         handler.postDelayed(heldCleanRefresh, PATCH_WAIT_MS)
+    }
+
+    /** Holding ‹ or ›: the first or the last page, with one refresh. Not while the pen is down: the stroke would land on the new page. */
+    private fun goToEnd(first: Boolean) {
+        if (!documentShown || pen.isWriting || screenPenDown) return
+        val target = if (first) 0 else pageCount - 1
+        if (pages.viewport?.page == target) return
+        Log.i(TAG, "held arrow: go to page ${target + 1}")
+        pages.goTo(target)
+        showWithoutFastInk()
     }
 
     /** The Fit button: the whole page again, with one refresh. */
