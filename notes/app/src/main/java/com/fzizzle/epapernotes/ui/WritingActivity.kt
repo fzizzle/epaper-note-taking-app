@@ -1457,7 +1457,7 @@ class WritingActivity : Activity() {
         // in view after this (the tablet going to sleep, another window on top), so draw them.
         pages.invalidate()
         val penOff = SystemClock.uptimeMillis()
-        pages.viewport?.let { lastPages.set(path, it.page) }
+        pages.viewport?.let { lastPages.set(path, it.page, pageCount) }
         // Going to the background or leaving: save now, not in a few seconds (spec §7.2).
         session.saveNow()
         val end = SystemClock.uptimeMillis()
@@ -1511,7 +1511,7 @@ class WritingActivity : Activity() {
                 // and the remembered page must follow, not the damaged original.
                 path = event.copy.path
                 fileName.text = event.copy.nameWithoutExtension
-                pages.viewport?.let { lastPages.set(path, it.page) }
+                pages.viewport?.let { lastPages.set(path, it.page, pageCount) }
                 LibraryPrefs(this).lastOpened = event.copy
                 toast("Saved to ${event.copy.name}.")
             }

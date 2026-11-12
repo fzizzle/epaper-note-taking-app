@@ -29,6 +29,9 @@ interface PdfPages : Closeable {
      */
     fun redrawFaultyInk(page: Int, limit: Int): InkRedraw
 
+    /** Whether [page] holds any of the app's own items, without decoding them: cheap enough to ask of every page. */
+    fun hasOwnItems(page: Int): Boolean
+
     /** The page's rotation: 0, 90, 180 or 270. */
     fun rotation(page: Int): Int
 

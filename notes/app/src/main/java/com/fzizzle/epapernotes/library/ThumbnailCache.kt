@@ -55,6 +55,25 @@ class ThumbnailCache(private val dir: File, private val clock: () -> Long = Syst
         }
     }
 
+    /** Where [pdf]'s facts are kept: beside its thumbnail, under the same name, so a changed file has none. */
+    private fun factsFileFor(pdf: PdfEntry): File = File(dir, "${hashOf(pdf)}-${pdf.size}-${pdf.modified}.facts")
+
+    /**
+     * Keeps [facts] for this version of [pdf]. Call it after [store], which sweeps everything
+     * kept for the file's older versions (and would sweep this too).
+     */
+    fun storeFacts(pdf: PdfEntry, facts: PdfFacts) {
+        dir.mkdirs()
+        publish(factsFileFor(pdf), facts.encode().toByteArray())
+    }
+
+    /** The facts kept for this version of [pdf], or null: none yet, or unreadable. */
+    fun facts(pdf: PdfEntry): PdfFacts? = try {
+        factsFileFor(pdf).takeIf { it.isFile }?.readText()?.let(PdfFacts::decode)
+    } catch (e: java.io.IOException) {
+        null // swept between the look and the read
+    }
+
     private fun publish(target: File, bytes: ByteArray): Boolean {
         val tmp = File.createTempFile(".thumb", ".tmp", dir)
         try {
@@ -90,7 +109,7 @@ class ThumbnailCache(private val dir: File, private val clock: () -> Long = Syst
         }
         for (f in files) {
             val name = f.name
-            if (name.endsWith(".png") && name.substringBefore('-') !in live) f.delete()
+            if ((name.endsWith(".png") || name.endsWith(".facts")) && name.substringBefore('-') !in live) f.delete()
             else if (name.endsWith(".tmp") && now - f.lastModified() > HOUR_MS) f.delete()
         }
         stamp.writeText(now.toString())

@@ -9,6 +9,7 @@ import android.os.SystemClock
 import android.util.Log
 import android.util.LruCache
 import com.fzizzle.epapernotes.library.PdfEntry
+import com.fzizzle.epapernotes.library.PdfFacts
 import com.fzizzle.epapernotes.library.THUMB_MAX_HEIGHT_PX
 import com.fzizzle.epapernotes.library.ThumbnailCache
 import com.fzizzle.epapernotes.library.thumbWidthPx
@@ -38,6 +39,8 @@ class ThumbnailLoader(
     private val memory = object : LruCache<String, Bitmap>(MEMORY_BYTES) {
         override fun sizeOf(key: String, value: Bitmap) = value.byteCount
     }
+    /** Each PDF's facts, for every thumbnail that went into [memory]. Kept for the loader's life: a few bytes each. */
+    private val factsInMemory = java.util.concurrent.ConcurrentHashMap<String, PdfFacts>()
     private val main = Handler(Looper.getMainLooper())
     private val lock = Object()
 
@@ -62,6 +65,9 @@ class ThumbnailLoader(
 
     /** Main thread. Memory only: never the disk. */
     fun bitmapFor(pdf: PdfEntry): Bitmap? = memory.get(key(pdf))
+
+    /** Main thread. What's known of [pdf] (PdfFacts), from memory only; it comes with the thumbnail ([onReady]). */
+    fun factsFor(pdf: PdfEntry): PdfFacts? = factsInMemory[key(pdf)]
 
     /** Main thread: the folder on show, and the PDFs whose tiles are on screen now. */
     fun show(folder: List<PdfEntry>, onScreen: List<PdfEntry>) = synchronized(lock) {
@@ -165,7 +171,10 @@ class ThumbnailLoader(
 
     private fun load(pdf: PdfEntry, intoMemory: Boolean) {
         val key = key(pdf)
-        val cached = cache.cached(pdf)
+        // A thumbnail cached before facts were kept has none beside it: counted as not cached,
+        // so the PDF is looked at again, once.
+        val cachedFacts = cache.facts(pdf)
+        val cached = if (cachedFacts != null) cache.cached(pdf) else null
         if (cached != null && !intoMemory) return finished(key, ok = true)
         // A cached file can vanish before it's read, or be damaged: then it's rendered again.
         // One cached before thumbnails had a height limit is far too tall: also rendered again.
@@ -184,6 +193,8 @@ class ThumbnailLoader(
         }
         finished(key, ok = true)
         if (bitmap == null) return
+        // A rendering put its facts in already; one read from the cache brings the cached ones.
+        if (decoded != null && cachedFacts != null) factsInMemory[key] = cachedFacts
         memory.put(key, bitmap)
         tell(pdf, bitmap)
     }
@@ -204,11 +215,20 @@ class ThumbnailLoader(
      */
     private fun render(pdf: PdfEntry, forScreen: Boolean): Bitmap? {
         val start = SystemClock.uptimeMillis()
+        var facts: PdfFacts? = null
         val full = PdfFile.open(pdf.file).use {
             val size = it.displaySize(0)
             // Narrower than usual for a very tall page, so no thumbnail is huge (THUMB_MAX_HEIGHT_PX).
-            it.render(0, thumbWidthPx(size.width, size.height), smoothInk = true)
+            val picture = it.render(0, thumbWidthPx(size.width, size.height), smoothInk = true)
+            // While the file is open: its page count, and whether any page has the owner's
+            // writing. The look stops at the first page that has, and at INK_PAGES_LOOKED_AT.
+            val factsStart = SystemClock.uptimeMillis()
+            val pages = it.pageCount
+            facts = PdfFacts(pages, (0 until minOf(pages, INK_PAGES_LOOKED_AT)).any { p -> it.hasOwnItems(p) })
+            Log.i(TAG, "facts ${pdf.name} pages=$pages ms=${SystemClock.uptimeMillis() - factsStart}")
+            picture
         }
+        facts?.let { factsInMemory[key(pdf)] = it }
         try {
             try {
                 // Stored without a see-through channel (the page is solid anyway): Android reads
@@ -216,6 +236,7 @@ class ThumbnailLoader(
                 full.setHasAlpha(false)
                 val png = ByteArrayOutputStream().also { full.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
                 cache.store(pdf, png)
+                facts?.let { cache.storeFacts(pdf, it) } // after the thumbnail: storing that sweeps the file's older versions
             } catch (e: Exception) {
                 Log.w(TAG, "thumbnail ${pdf.name} not cached: ${e.message}")
             }
@@ -231,6 +252,8 @@ class ThumbnailLoader(
     private companion object {
         const val TAG = "Notes"
         const val MEMORY_BYTES = 40 * 1024 * 1024
+        /** How many pages are looked at for the owner's writing: past this a file just counts as having none. */
+        const val INK_PAGES_LOOKED_AT = 300
         /** 16-bit colour: half the memory, and at thumbnail size on e-ink it looks the same. */
         val SMALL = BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.RGB_565 }
     }
