@@ -1173,39 +1173,23 @@ class WritingActivity : Activity() {
     /** "Go to page": type a number, which is quicker than tapping › through a long deck. */
     private fun askForPage() {
         val v = pages.viewport ?: return
-        val field = EditText(this).apply {
-            inputType = InputType.TYPE_CLASS_NUMBER
-            hint = "1 to $pageCount"
-            textSize = 22f
-            setSelectAllOnFocus(true)
-            setText((v.page + 1).toString())
-        }
-        // Padded as the library's name fields are, so the number isn't against the edge.
-        val pad = LibraryLook.dp(this, 20)
-        val dialog = AlertDialog.Builder(this)
-            .setTitle("Go to page")
-            .setView(FrameLayout(this).apply { setPadding(pad, pad / 2, pad, 0); addView(field) })
-            .setPositiveButton("Go") { _, _ ->
-                val wanted = field.text.toString().toIntOrNull() ?: return@setPositiveButton
-                Log.i(TAG, "go to page $wanted")
-                pages.goTo(wanted.coerceIn(1, pageCount) - 1)
-                showWithoutFastInk()
-            }
-            .setNegativeButton("Cancel", null)
-            .create()
-        // Fast-ink would freeze the dialog on screen, so it's off while the dialog is open.
+        // Fast-ink would freeze the pad on screen, so it's off while the pad is open.
         dialogOpen = true
         pausePenAndRedraw()
-        dialog.setOnDismissListener {
-            dialogOpen = false
-            // After the usual pause, not at once: the screen must first draw the page without
-            // the dialog, or fast-ink would freeze bits of it (or the old page) on the panel.
-            handler.removeCallbacks(resumeFastInk)
-            handler.postDelayed(resumeFastInk, SHOW_PAUSE_MS)
+        showPagePad(
+            this, current = v.page, pageCount = pageCount,
+            onDismiss = {
+                dialogOpen = false
+                // After the usual pause, not at once: the screen must first draw the page without
+                // the pad, or fast-ink would freeze bits of it (or the old page) on the panel.
+                handler.removeCallbacks(resumeFastInk)
+                handler.postDelayed(resumeFastInk, SHOW_PAUSE_MS)
+            },
+        ) { page ->
+            Log.i(TAG, "go to page ${page + 1}")
+            pages.goTo(page)
+            showWithoutFastInk()
         }
-        dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
-        dialog.show()
-        field.requestFocus()
     }
 
     /**
