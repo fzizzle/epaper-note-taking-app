@@ -1426,6 +1426,7 @@ class WritingActivity : Activity() {
         super.onDestroy()
         val start = SystemClock.uptimeMillis()
         handler.removeCallbacksAndMessages(null)
+        if (::pages.isInitialized) pages.release()
         // onPause has done this already; once more in case anything turned the pen on since.
         if (::pen.isInitialized) pen.off()
         if (::session.isInitialized) session.close()

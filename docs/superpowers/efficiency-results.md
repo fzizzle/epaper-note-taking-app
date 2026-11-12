@@ -35,3 +35,4 @@ Notes:
 | Task | What | Before | After | Kept? |
 |---|---|---|---|---|
 | 2. A neighbour page drawn once with Trim margins | page pictures made for ten page turns on a workbook | 23 | 13: one per page, each at its final width, still made ahead of the turn | yes |
+| 3. Page pictures freed on leaving | memory back in the library, six seconds after ten page turns | 274 MB total, 145 MB native | 200 MB total, 65 MB native. The 55 MB of native memory left over launch is under the plan's 100 MB limit, so MuPDF's own store was left alone | yes |
