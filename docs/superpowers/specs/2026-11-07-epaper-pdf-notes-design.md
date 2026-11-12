@@ -132,7 +132,7 @@ Typical use is once per document: a deck of landscape slides gets rotated so it 
 
 ### 7.2 Autosave
 
-- No save button. Ink is written into the PDF automatically a short moment after the pen stops, when leaving the document, and when the app is backgrounded.
+- No save button. Ink is written into the PDF automatically about ten seconds after the pen stops (owner's decision, 2026-11-12; three seconds at first, which rewrote the whole file at every pause to think), when leaving the document, and when the app is backgrounded. Until then it's safe in the journal (section 7.3).
 - Saving never blocks or stutters the pen. It runs in the background.
 
 ### 7.3 Crash safety

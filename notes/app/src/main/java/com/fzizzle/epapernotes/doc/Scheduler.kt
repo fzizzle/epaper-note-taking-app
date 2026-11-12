@@ -30,7 +30,11 @@ class WorkerScheduler(
     name: String = "document",
     private val onError: (Throwable) -> Unit = { System.err.println("worker task failed: $it") },
 ) : Scheduler {
-    private val executor = ScheduledThreadPoolExecutor(1) { r -> Thread(r, name) }
+    private val executor = ScheduledThreadPoolExecutor(1) { r -> Thread(r, name) }.apply {
+        // Every stroke replaces the autosave's timer. Without this each replaced timer stayed
+        // queued until its time came, waking the thread for nothing.
+        removeOnCancelPolicy = true
+    }
     private val pending = mutableMapOf<String, ScheduledFuture<*>>()
 
     // Work posted after the document has closed (a late pen callback, say) is dropped rather

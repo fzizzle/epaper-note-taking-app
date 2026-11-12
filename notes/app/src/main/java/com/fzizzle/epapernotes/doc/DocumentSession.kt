@@ -673,7 +673,14 @@ class DocumentSession(
     }
 
     companion object {
-        const val AUTOSAVE_DELAY_MS = 3000L
+        /**
+         * How long after the last change the PDF is saved. Ten seconds, not three (owner,
+         * 2026-11-12): every save writes the whole file again, 14 MB for a lecture deck, and
+         * at three seconds each pause to think was a save. Nothing waits on it for safety: a
+         * change is in the journal from the moment it's recorded, and leaving the document or
+         * the app saves at once ([saveNow]).
+         */
+        const val AUTOSAVE_DELAY_MS = 10_000L
         const val HISTORY_LIMIT = 200
         const val RETRY_DELAY_MS = 30_000L
 
