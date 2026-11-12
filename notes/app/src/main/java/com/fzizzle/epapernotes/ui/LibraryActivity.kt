@@ -571,7 +571,8 @@ class LibraryActivity : Activity() {
         if (started) watch.watchChildren(watchedChildren())
         val loader = thumbnails ?: return
         // The list view shows no pictures, so none are fetched for it.
-        if (prefs.listView) return loader.show(emptyList(), emptyList())
+        // But the rows' writing marks and page counts come from the PDFs' facts all the same.
+        if (prefs.listView) return loader.showFacts(onScreen().filterIsInstance<PdfEntry>())
         loader.show(adapter.entries.filterIsInstance<PdfEntry>(), onScreen().filterIsInstance<PdfEntry>())
     }
 
@@ -593,7 +594,16 @@ class LibraryActivity : Activity() {
         thumbnailCache,
         // Asked afresh each time: a card can come and go while the app runs.
         storageIn = { Volumes.holding(StorageVolumes.mounted(this), it) != null },
+        onFacts = { factsReady() },
     ) { pdf, bitmap -> thumbnailReady(pdf, bitmap) }
+
+    /** Facts arrived for list rows, one PDF at a time: the rows are bound again together, as thumbnails are shown together. A row only redraws if what it shows changed. */
+    private val showArrivedFacts = Runnable { adapter.notifyDataSetChanged() }
+
+    private fun factsReady() {
+        main.removeCallbacks(showArrivedFacts)
+        main.postDelayed(showArrivedFacts, TILE_BATCH_MS)
+    }
 
     /**
      * Thumbnails that have arrived and aren't on their tiles yet. They come one at a time, a

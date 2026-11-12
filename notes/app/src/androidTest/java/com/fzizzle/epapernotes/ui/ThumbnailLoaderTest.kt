@@ -140,6 +140,26 @@ class ThumbnailLoaderTest {
         }
     }
 
+    /**
+     * The list view shows no pictures, but still the writing mark and the page count: the
+     * loader finds a PDF's facts without drawing it, and says when it has them.
+     */
+    @Test fun factsComeWithoutAPictureForTheList() {
+        val page = entry(TestPdfs.blank(dir, pages = 3))
+        val told = LinkedBlockingQueue<PdfEntry>()
+        val forList = ThumbnailLoader(cache, onFacts = { told += it }) { pdf, bmp -> answers += pdf to bmp }
+        try {
+            forList.showFacts(listOf(page))
+            assertEquals(page, told.poll(10, TimeUnit.SECONDS))
+            assertEquals(PdfFacts(3, false), forList.factsFor(page))
+            assertEquals(PdfFacts(3, false), cache.facts(page))
+            assertEquals(null, cache.cached(page)) // nothing was drawn
+            assertEquals(null, answers.poll(300, TimeUnit.MILLISECONDS))
+        } finally {
+            forList.stop()
+        }
+    }
+
     @Test fun ordinaryPageKeepsTheUsualWidth() {
         val page = entry(TestPdfs.blank(dir, pages = 1))
         loader.show(listOf(page), onScreen = listOf(page))

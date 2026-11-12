@@ -57,6 +57,11 @@ The first time you open each folder, its pictures are drawn again once (they now
 1. Make a new folder and go into it.
    - **Expected:** "Nothing here yet", and where to copy PDFs to. Delete the folder afterwards if you like.
 
+## L7b. A file copied in from the laptop
+
+1. With a course on screen, copy a PDF from the laptop into one of its topic folders that holds two PDFs.
+   - **Expected:** a third tile appears under that topic's name by itself, with its picture, within a few seconds.
+
 ## L8. Start in the last document
 
 1. Settings (⋯), "Start in the last document" on. Close the app (swipe it away) and open it.

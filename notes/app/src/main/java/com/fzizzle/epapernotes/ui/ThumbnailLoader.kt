@@ -34,6 +34,8 @@ class ThumbnailLoader(
     private val cache: ThumbnailCache,
     /** Whether the storage a PDF lies on is in (ThumbnailCache.pruneMissing): asked on this loader's thread. */
     private val storageIn: (java.io.File) -> Boolean = { true },
+    /** A PDF's facts were found for [showFacts], with no picture: main thread. */
+    private val onFacts: (PdfEntry) -> Unit = {},
     private val onReady: (PdfEntry, Bitmap?) -> Unit,
 ) {
     private val memory = object : LruCache<String, Bitmap>(MEMORY_BYTES) {
@@ -47,6 +49,8 @@ class ThumbnailLoader(
     // All guarded by lock.
     private var folder: List<PdfEntry> = emptyList()
     private var onScreen: List<PdfEntry> = emptyList()
+    /** The PDFs whose facts are wanted without their pictures ([showFacts]). */
+    private var factsWanted: List<PdfEntry> = emptyList()
     /**
      * Nothing more to do in the background: in the disk cache, as far as this session knows,
      * or not renderable, or left by a refresh until its tile comes on screen ([redraw]).
@@ -73,6 +77,19 @@ class ThumbnailLoader(
     fun show(folder: List<PdfEntry>, onScreen: List<PdfEntry>) = synchronized(lock) {
         this.folder = folder
         this.onScreen = onScreen
+        this.factsWanted = emptyList()
+        lock.notifyAll()
+    }
+
+    /**
+     * Main thread, for the list view, which shows no pictures: finds the facts of [pdfs] (the
+     * rows on screen) from the cache, or from the PDF itself without drawing it, and tells
+     * [onFacts] for each. No pictures are made meanwhile.
+     */
+    fun showFacts(pdfs: List<PdfEntry>) = synchronized(lock) {
+        folder = emptyList()
+        onScreen = emptyList()
+        factsWanted = pdfs
         lock.notifyAll()
     }
 
@@ -110,6 +127,8 @@ class ThumbnailLoader(
     private class Show(val pdf: PdfEntry) : Job
     /** For the rest of the folder: into the disk cache only. */
     private class Store(val pdf: PdfEntry) : Job
+    /** For a list row: its facts only, no picture. */
+    private class Facts(val pdf: PdfEntry) : Job
 
     private fun run() {
         var priority = Process.THREAD_PRIORITY_BACKGROUND
@@ -133,7 +152,7 @@ class ThumbnailLoader(
             // A tile on screen is waiting for a Show: that runs at normal priority. At background
             // priority the tablet keeps the thread to its slow cores, and a folder's tiles filled
             // in one by one. The rest of the folder (Store) and the tidying stay in the background.
-            val wanted = if (job is Show) Process.THREAD_PRIORITY_DEFAULT else Process.THREAD_PRIORITY_BACKGROUND
+            val wanted = if (job is Show || job is Facts) Process.THREAD_PRIORITY_DEFAULT else Process.THREAD_PRIORITY_BACKGROUND
             if (wanted != priority) {
                 priority = wanted
                 Process.setThreadPriority(priority)
@@ -153,6 +172,7 @@ class ThumbnailLoader(
                         synchronized(lock) { done += key(pdf); failed -= key(pdf) }
                     }
                 }
+                is Facts -> loadFacts(job.pdf)
                 is Show -> load(job.pdf, intoMemory = true)
                 is Store -> load(job.pdf, intoMemory = false)
             }
@@ -165,6 +185,7 @@ class ThumbnailLoader(
             return Drop(drops.toList(), dropsForLater.toList()).also { drops.clear(); dropsForLater.clear() }
         }
         onScreen.firstOrNull { memory.get(key(it)) == null && key(it) !in failed }?.let { return Show(it) }
+        factsWanted.firstOrNull { factsInMemory[key(it)] == null && key(it) !in failed }?.let { return Facts(it) }
         folder.firstOrNull { key(it) !in done }?.let { return Store(it) }
         return null
     }
@@ -199,6 +220,38 @@ class ThumbnailLoader(
         tell(pdf, bitmap)
     }
 
+    /** A list row's facts: from the cache, else from the PDF, opened but not drawn. Kept in the cache for next time. */
+    private fun loadFacts(pdf: PdfEntry) {
+        val key = key(pdf)
+        val facts = cache.facts(pdf) ?: try {
+            PdfFile.open(pdf.file).use { factsOf(it, pdf) }.also { cache.storeFacts(pdf, it) }
+        } catch (e: Throwable) {
+            Log.w(TAG, "facts ${pdf.name} failed: ${e.message}")
+            synchronized(lock) { failed += key } // not asked again this session
+            return
+        }
+        factsInMemory[key] = facts
+        main.post { if (!synchronized(lock) { stopped }) onFacts(pdf) }
+    }
+
+    /**
+     * The page count, and whether any page has the owner's writing: the look stops at the
+     * first page that has, and at [INK_PAGES_LOOKED_AT]. A page that can't be read (a damaged
+     * file) counts as having none: it must not cost the PDF its thumbnail.
+     */
+    private fun factsOf(file: PdfFile, pdf: PdfEntry): PdfFacts {
+        val start = SystemClock.uptimeMillis()
+        val pages = file.pageCount
+        val hasInk = try {
+            (0 until minOf(pages, INK_PAGES_LOOKED_AT)).any { file.hasOwnItems(it) }
+        } catch (e: RuntimeException) {
+            Log.w(TAG, "looking for writing in ${pdf.name} failed: ${e.message}")
+            false
+        }
+        Log.i(TAG, "facts ${pdf.name} pages=$pages ms=${SystemClock.uptimeMillis() - start}")
+        return PdfFacts(pages, hasInk)
+    }
+
     private fun tell(pdf: PdfEntry, bitmap: Bitmap?) {
         main.post { if (!synchronized(lock) { stopped }) onReady(pdf, bitmap) }
     }
@@ -220,12 +273,7 @@ class ThumbnailLoader(
             val size = it.displaySize(0)
             // Narrower than usual for a very tall page, so no thumbnail is huge (THUMB_MAX_HEIGHT_PX).
             val picture = it.render(0, thumbWidthPx(size.width, size.height), smoothInk = true)
-            // While the file is open: its page count, and whether any page has the owner's
-            // writing. The look stops at the first page that has, and at INK_PAGES_LOOKED_AT.
-            val factsStart = SystemClock.uptimeMillis()
-            val pages = it.pageCount
-            facts = PdfFacts(pages, (0 until minOf(pages, INK_PAGES_LOOKED_AT)).any { p -> it.hasOwnItems(p) })
-            Log.i(TAG, "facts ${pdf.name} pages=$pages ms=${SystemClock.uptimeMillis() - factsStart}")
+            facts = factsOf(it, pdf) // while the file is open
             picture
         }
         facts?.let { factsInMemory[key(pdf)] = it }

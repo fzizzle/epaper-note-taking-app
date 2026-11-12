@@ -105,9 +105,14 @@ class FolderWatch(private val onChange: () -> Unit) {
             FileObserver.MOVED_TO or FileObserver.CLOSE_WRITE or FileObserver.DELETE_SELF or
             FileObserver.MOVE_SELF
 
-        /** A subfolder's tile shows only how many PDFs and folders it holds, so only these change it. */
+        /**
+         * A subfolder's tile shows how many PDFs and folders it holds. A small one is shown
+         * opened out, as its PDFs themselves, so a file that has just been written through
+         * counts too (CLOSE_WRITE): one copied straight in is only whole then, and one written
+         * over in place gives no other sign.
+         */
         const val CHILD_MASK = FileObserver.CREATE or FileObserver.DELETE or FileObserver.MOVED_FROM or
-            FileObserver.MOVED_TO
+            FileObserver.MOVED_TO or FileObserver.CLOSE_WRITE
 
         /** Folders with tiles on screen are watched, so this is plenty; it keeps well inside the system's limit. */
         const val MAX_CHILDREN = 64
