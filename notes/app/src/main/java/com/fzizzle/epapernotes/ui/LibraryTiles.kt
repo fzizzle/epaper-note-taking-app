@@ -27,6 +27,7 @@ import com.fzizzle.epapernotes.library.Breadcrumb
 import com.fzizzle.epapernotes.library.Entry
 import com.fzizzle.epapernotes.library.FolderEntry
 import com.fzizzle.epapernotes.library.PdfEntry
+import com.fzizzle.epapernotes.library.TileNames
 import java.io.File
 
 /** The library's look, shared by its screen, tiles and windows: black on white, light grey hairlines. */
@@ -58,10 +59,14 @@ class LibraryAdapter(private val bitmapFor: (PdfEntry) -> Bitmap?) : BaseAdapter
         private set
     /** Goes up on each refresh: tiles bound before it don't keep their old pictures. */
     private var pictures = 0
+    /** The PDFs' tile names, without the part they all share (TileNames). */
+    private var pdfLabels: Map<PdfEntry, String> = emptyMap()
 
     /** [dropPictures]: refresh, so tiles waiting for a new thumbnail show the grey page meanwhile. */
     fun show(entries: List<Entry>, thumbnails: Boolean, dropPictures: Boolean = false) {
         this.entries = entries
+        val pdfs = entries.filterIsInstance<PdfEntry>()
+        pdfLabels = pdfs.zip(TileNames.labels(pdfs.map { it.name })).toMap()
         this.thumbnails = thumbnails
         if (dropPictures) pictures++
         notifyDataSetChanged()
@@ -76,7 +81,8 @@ class LibraryAdapter(private val bitmapFor: (PdfEntry) -> Bitmap?) : BaseAdapter
             layoutParams = AbsListView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
         val entry = entries[position]
-        tile.show(entry, if (thumbnails && entry is PdfEntry) bitmapFor(entry) else null, thumbnails, pictures)
+        val label = (entry as? PdfEntry)?.let { pdfLabels[it] } ?: entry.name
+        tile.show(entry, label, if (thumbnails && entry is PdfEntry) bitmapFor(entry) else null, thumbnails, pictures)
         return tile
     }
 }
@@ -90,6 +96,8 @@ class LibraryAdapter(private val bitmapFor: (PdfEntry) -> Bitmap?) : BaseAdapter
 class TileView(context: Context) : View(context) {
     var entry: Entry? = null
         private set
+    /** The name drawn: for a PDF, perhaps shorter than its file name (TileNames). */
+    private var label = ""
     private var bitmap: Bitmap? = null
     private var thumbnails = true
     private var pictures = 0 // the adapter's count when this tile was bound
@@ -113,9 +121,10 @@ class TileView(context: Context) : View(context) {
     private val page = RectF()
     private val path = Path()
 
-    fun show(entry: Entry, bitmap: Bitmap?, thumbnails: Boolean, pictures: Int) {
-        if (entry == this.entry && bitmap === this.bitmap && thumbnails == this.thumbnails && pictures == this.pictures) return
-        if (entry.name != this.entry?.name) nameLayout = null
+    fun show(entry: Entry, label: String, bitmap: Bitmap?, thumbnails: Boolean, pictures: Int) {
+        if (entry == this.entry && label == this.label && bitmap === this.bitmap && thumbnails == this.thumbnails && pictures == this.pictures) return
+        val sameLabel = label == this.label
+        if (!sameLabel) nameLayout = null
         // A file just written (say, the document just left) keeps its old picture until the
         // new one is drawn, rather than flashing grey for a moment on e-ink. Not after a
         // refresh: that's asked for when a picture looks wrong.
@@ -123,18 +132,19 @@ class TileView(context: Context) : View(context) {
         val newBitmap = bitmap ?: this.bitmap.takeIf { stillThisFile }
         // Everything onDraw uses. A file just written is a new entry (new size and date) that
         // looks the same until its new thumbnail comes: no need to draw it twice.
-        val looksTheSame = looksLike(entry, this.entry) && newBitmap === this.bitmap && thumbnails == this.thumbnails
+        val looksTheSame = sameLabel && looksLike(entry, this.entry) && newBitmap === this.bitmap && thumbnails == this.thumbnails
         this.entry = entry
+        this.label = label
         this.bitmap = newBitmap
         this.thumbnails = thumbnails
         this.pictures = pictures
         if (!looksTheSame) invalidate()
     }
 
-    /** Whether two entries draw the same tile, pictures aside: a PDF shows only its name, a folder its name and counts. */
+    /** Whether two entries draw the same tile, pictures and labels aside: a PDF shows only its label, a folder its label and counts. */
     private fun looksLike(a: Entry, b: Entry?): Boolean = when (a) {
-        is PdfEntry -> b is PdfEntry && a.name == b.name
-        is FolderEntry -> b is FolderEntry && a.name == b.name && a.pdfCount == b.pdfCount && a.folderCount == b.folderCount
+        is PdfEntry -> b is PdfEntry
+        is FolderEntry -> b is FolderEntry && a.pdfCount == b.pdfCount && a.folderCount == b.folderCount
     }
 
     /** A thumbnail arrived for the PDF on this tile, or null: it can't be drawn, so the grey page. */
@@ -171,7 +181,7 @@ class TileView(context: Context) : View(context) {
         }
         val textTop = box.bottom + pad / 2
         val layout = nameLayout ?: StaticLayout.Builder
-            .obtain(entry.name, 0, entry.name.length, namePaint, (width - 2 * pad).coerceAtLeast(1))
+            .obtain(label, 0, label.length, namePaint, (width - 2 * pad).coerceAtLeast(1))
             .setAlignment(Layout.Alignment.ALIGN_CENTER)
             .setMaxLines(2)
             .setEllipsize(TextUtils.TruncateAt.END)
