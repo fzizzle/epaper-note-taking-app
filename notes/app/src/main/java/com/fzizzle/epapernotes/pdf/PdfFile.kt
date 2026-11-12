@@ -144,15 +144,32 @@ class PdfFile private constructor(private val doc: PDFDocument) : PdfPages {
      * of the same width would put its edge, so the ink keeps its width.
      */
     private fun drawSolid(bmp: Bitmap, box: RectI, ink: List<PDFAnnotation>, ctm: Matrix) {
-        val area = ink[0].bounds.transform(ctm)
-        for (i in 1 until ink.size) area.union(ink[i].bounds.transform(ctm))
-        val r = RectI(area)
-        val x0 = maxOf(r.x0, box.x0)
-        val y0 = maxOf(r.y0, box.y0)
-        val w = minOf(r.x1, box.x1) - x0
-        val h = minOf(r.y1, box.y1) - y0
-        if (w <= 0 || h <= 0) return
-        val layer = Pixmap(ColorSpace.DeviceRGB, x0, y0, w, h, true)
+        // Where each stroke is, in the picture's pixels, so a band only draws the strokes that reach into it.
+        val bounds = ink.map { RectI(it.bounds.transform(ctm)) }
+        val x0 = maxOf(bounds.minOf { it.x0 }, box.x0)
+        val x1 = minOf(bounds.maxOf { it.x1 }, box.x1)
+        val top = maxOf(bounds.minOf { it.y0 }, box.y0)
+        val bottom = minOf(bounds.maxOf { it.y1 }, box.y1)
+        val w = x1 - x0
+        if (w <= 0 || bottom <= top) return
+        // A band of rows at a time, not the ink's whole area at once: that is usually the whole
+        // page, and it took three buffers of that size (MuPDF's picture, its bytes, the pixels):
+        // about 60 MB for a fitted page, 130 MB for the widest. One pixel buffer serves every band.
+        val px = IntArray(w * minOf(SOLID_BAND_ROWS, bottom - top))
+        var y0 = top
+        while (y0 < bottom) {
+            val h = minOf(SOLID_BAND_ROWS, bottom - y0)
+            val inBand = ink.filterIndexed { i, _ -> bounds[i].y0 < y0 + h && bounds[i].y1 > y0 }
+            if (inBand.isNotEmpty()) drawSolidBand(bmp, box, inBand, ctm, x0, y0, w, h, px)
+            y0 += h
+        }
+    }
+
+    /** [drawSolid] for the rows [y0] until [y0] + [h] of the ink's area; [px] has room for them. */
+    private fun drawSolidBand(bmp: Bitmap, box: RectI, ink: List<PDFAnnotation>, ctm: Matrix, x0: Int, y0: Int, w: Int, h: Int, px: IntArray) {
+        // Drawn with a few rows to spare above and below (SOLID_BAND_MARGIN); only the band's own rows are used.
+        val m = SOLID_BAND_MARGIN
+        val layer = Pixmap(ColorSpace.DeviceRGB, x0, y0 - m, w, h + 2 * m, true)
         try {
             layer.clear() // transparent
             val dev = DrawDevice(layer)
@@ -164,10 +181,9 @@ class PdfFile private constructor(private val doc: PDFDocument) : PdfPages {
             }
             val s = layer.samples // r, g, b, alpha per pixel, colour multiplied by alpha
             val stride = layer.stride
-            val px = IntArray(w * h)
             bmp.getPixels(px, 0, w, x0 - box.x0, y0 - box.y0, w, h)
             for (y in 0 until h) {
-                var o = y * stride
+                var o = (y + m) * stride
                 var i = y * w
                 for (x in 0 until w) {
                     val a = s[o + 3].toInt() and 0xff
@@ -443,6 +459,16 @@ class PdfFile private constructor(private val doc: PDFDocument) : PdfPages {
     companion object {
         /** Half covered, out of 255: from here a pixel of solid ink is painted in full ([drawSolid]). */
         private const val HALF = 128
+
+        /** How many rows of the picture the solid-ink step handles at a time ([drawSolid]). */
+        private const val SOLID_BAND_ROWS = 256
+
+        /**
+         * Rows drawn above and below a band and thrown away. MuPDF smooths the rows at the edge of
+         * what it's asked to draw a little differently from the same rows inside a bigger
+         * picture, so without them a stroke's edge was a pixel off where two bands met.
+         */
+        private const val SOLID_BAND_MARGIN = 2
 
         /** What an edit tells [onPage]: whether MuPDF may update the loaded page afterwards. */
         private const val UPDATE_PAGE = true

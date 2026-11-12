@@ -104,6 +104,34 @@ class PdfFileStrokesTest {
     }
 
     /**
+     * The solid-ink step goes down the page a band of rows at a time. A stroke running through
+     * several bands must come out whole: as wide in every row, with no gap, doubled row or
+     * grey pixel where one band meets the next. The log line's checksum is for comparing a
+     * build with another by hand: the same page must give the same number.
+     */
+    @Test fun aStrokeAcrossTwoBandsIsWhole() {
+        val down = Stroke(StrokeKind.PEN, (0..120).map { StrokePoint(300f, 80f + it * 5.25f, 0.5f) }) // 10% to 90% of the height
+        PdfFile.open(TestPdfs.blank(dir)).use { pdf ->
+            pdf.add(0, down)
+            val bmp = pdf.render(0, 1700)
+            val scale = 1700f / 612f
+            val x0 = (300 * scale).toInt() - 20
+            val rows = ((80 * scale).toInt() + 15)..((710 * scale).toInt() - 15)
+            val row = IntArray(40)
+            val widths = rows.map { y ->
+                bmp.getPixels(row, 0, 40, x0, y, 40, 1)
+                assertTrue("row $y has a grey pixel", row.all { it == Color.BLACK || it == Color.WHITE })
+                row.count { it == Color.BLACK }
+            }
+            assertTrue("the stroke is there: ${widths.min()}", widths.min() >= 2)
+            assertTrue("as wide in every row: ${widths.min()}..${widths.max()}", widths.max() - widths.min() <= 1)
+            assertTrue("it runs through several bands", rows.last - rows.first > 3 * 256)
+            val all = IntArray(bmp.width * bmp.height).also { bmp.getPixels(it, 0, bmp.width, 0, 0, bmp.width, bmp.height) }
+            android.util.Log.i("Notes", "solid ink checksum=${all.contentHashCode()} darks=${darks(bmp)}")
+        }
+    }
+
+    /**
      * The sharp patch of a zoomed page (PageView) is a region drawn like the page's picture:
      * ink solid, and in the same place as in the whole page at that scale. Snips keep the
      * smoothed ink (smoothInk's default).

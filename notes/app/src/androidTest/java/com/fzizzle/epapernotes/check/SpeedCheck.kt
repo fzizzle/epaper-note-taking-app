@@ -153,6 +153,12 @@ class SpeedCheck {
             PdfFile.open(blank).use { pdf ->
                 val size = pdf.displaySize(0)
                 repeat(INKED_STROKES) { n -> pdf.apply(AddItems(0, listOf(InkItem(ItemIds.next(), spreadStroke(n, size.width, size.height))))) }
+                // The same page must give the same number on any build: a way to see that a
+                // change to how ink is drawn changed no pixel.
+                val picture = pdf.render(0, FITTED_WIDTH_PX)
+                val pixels = IntArray(picture.width * picture.height).also { picture.getPixels(it, 0, picture.width, 0, 0, picture.width, picture.height) }
+                picture.recycle()
+                log("checksum at width $FITTED_WIDTH_PX: ${pixels.contentHashCode()}")
                 for (width in listOf(FITTED_WIDTH_PX, WIDEST_WIDTH_PX)) {
                     val times = (1..5).map { timed { pdf.render(0, width).recycle() }.second }
                     log("render $INKED_STROKES strokes at width $width: median ${median(times)} ms, all $times")
