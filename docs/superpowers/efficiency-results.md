@@ -41,3 +41,10 @@ Notes:
 | 6. Solid ink a band at a time | a page with 300 pen strokes, width 1742 / 2790 | 53 ms / 116 ms, through three page-sized buffers (about 60 MB / 130 MB at once) | 51 ms / 109 ms, through a 256-row band (about 6 MB / 9 MB). Every pixel the same: the page's checksum is unchanged | yes: no slower, and the memory is the gain |
 | 7. Thumbnails read at normal priority and shown in groups | a folder of 36 PDFs after a fresh start: passes over the tiles to put pictures on them (`thumbnails shown` lines) | 5–6 passes, the last about 190 ms after the folder shows (measured with the grouping set to 0 ms, the priority change already in) | 1 pass, about 200 ms after the folder shows | yes. The priority change wasn't timed apart from the grouping |
 | 8. Thumbnails survive a start with the card out | laptop test `pruneKeepsThumbnailsWhoseStorageIsOut` | every thumbnail of the card's PDFs deleted by the daily tidy-up | kept | yes |
+| 9. Small ones: thumbnails cached without a see-through channel | tablet test `aCachedThumbnailIsReadAt16Bit` | a thumbnail read from the cache was 32-bit (the test failed before the fix) | 16-bit: half the memory for each tile's picture. Thumbnails cached earlier stay 32-bit until their file changes or Refresh | yes |
+| 9. Small ones: a subfolder read once, the stale-file check by name first | listing the library folder (7 folders) / a course folder (9 folders), SD card | 47–53 ms / 24–38 ms | 38–49 ms / 18–25 ms | yes |
+| 9. Small ones: scroll callbacks that change nothing are skipped | not measured: it only saves work on the screen's thread during a scroll | | | yes |
+
+## Tests
+
+Laptop tests and tablet tests are run once more at the end (see the last section).
