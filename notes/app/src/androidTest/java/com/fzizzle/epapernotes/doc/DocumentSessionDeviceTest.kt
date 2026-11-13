@@ -3,6 +3,7 @@ package com.fzizzle.epapernotes.doc
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.fzizzle.epapernotes.geometry.Pt
+import com.fzizzle.epapernotes.ink.InkItem
 import com.fzizzle.epapernotes.ink.Stroke
 import com.fzizzle.epapernotes.ink.StrokeKind
 import com.fzizzle.epapernotes.ink.StrokePoint
@@ -117,5 +118,65 @@ class DocumentSessionDeviceTest {
         assertTrue(run.events.none { it == SessionEvent.Saved })
         run.scheduler.killNow()
         run.opened?.close()
+    }
+
+    /** As a laptop or a sync app would: the file gets a new version, with a stroke of theirs. */
+    private fun changeElsewhere(pdf: File) {
+        val theirs = Stroke(StrokeKind.PEN, (0..40).map { StrokePoint(100f + it * 5, 500f, 0.6f) })
+        val next = File(dir, "theirs.tmp")
+        PdfFile.open(pdf).use {
+            it.apply(AddItems(0, listOf(InkItem("theirs", theirs))))
+            it.saveTo(next)
+        }
+        next.copyTo(pdf, overwrite = true)
+        next.delete()
+    }
+
+    private fun copyMade(run: Run) = run.events.filterIsInstance<SessionEvent.SavedToCopy>().singleOrNull()
+
+    /** Spec §7.4 with the real PDF code: the changed file is left as it is, and the copy is the old version with the writing. */
+    @Test fun aFileChangedWhileOpenIsKeptAndTheWritingGoesIntoACopy() {
+        val pdf = TestPdfs.blank(dir)
+        val run = Run(pdf, journals).apply { session.start() }
+        run.session.addStroke(0, line)
+        changeElsewhere(pdf)
+        val theirVersion = pdf.readBytes()
+        run.session.saveNow()
+        run.waitFor { copyMade(run) != null }
+        val made = copyMade(run)!!
+        assertEquals(CopyReason.CHANGED_WHILE_OPEN, made.why)
+        // More writing follows into the copy.
+        run.session.addStroke(1, line)
+        run.session.saveNow()
+        run.waitFor { run.events.contains(SessionEvent.Saved) }
+        run.session.close()
+        Thread.sleep(200)
+        assertArrayEquals(theirVersion, pdf.readBytes())
+        assertEquals(2, strokesIn(made.copy)) // the two written here; "theirs" is in the other file
+        assertEquals(1, strokesIn(pdf))
+    }
+
+    /** Spec §7.4 with the real PDF code: killed with unsaved writing, and the file changed before the next opening. */
+    @Test fun writingFromBeforeAKillIsRescuedIntoACopyOfTheChangedFile() {
+        val pdf = TestPdfs.blank(dir)
+        val first = Run(pdf, journals).apply { session.start() }
+        first.session.addStroke(0, line)
+        first.scheduler.killNow()
+        Thread.sleep(200)
+        first.opened?.close()
+        changeElsewhere(pdf)
+        val theirVersion = pdf.readBytes()
+
+        val second = Run(pdf, journals).apply { session.start() }
+        // The killed session never closed, so the new one first waits out its turn (15 s).
+        second.waitFor(timeoutMs = 25_000) { copyMade(second) != null }
+        val made = copyMade(second)!!
+        assertEquals(CopyReason.RESCUED, made.why)
+        assertEquals(0, made.notPlaced)
+        second.session.close()
+        Thread.sleep(200)
+        assertArrayEquals(theirVersion, pdf.readBytes())
+        assertEquals(2, strokesIn(made.copy)) // theirs, and the rescued one
+        assertTrue(second.events.none { it is SessionEvent.EarlierWritingKept })
     }
 }

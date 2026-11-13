@@ -17,8 +17,15 @@ import java.util.Base64
 /**
  * What a journal holds: the version of the PDF it was started on, and the changes since.
  * [pendingSave] is the last save the journal saw begin and never saw end, if any.
+ * [renumbering]: a page was being added or removed when the journal was last written, so if the
+ * file is no longer [base], these changes may have page numbers the file doesn't go by.
  */
-data class JournalContents(val base: FileIdentity, val changes: List<Change>, val pendingSave: PendingSave? = null)
+data class JournalContents(
+    val base: FileIdentity,
+    val changes: List<Change>,
+    val pendingSave: PendingSave? = null,
+    val renumbering: Boolean = false,
+)
 
 /**
  * A save that was about to swap a new PDF in: [result] is what that PDF looks like, and it
@@ -41,11 +48,18 @@ data class PendingSave(val result: FileIdentity, val count: Int)
  *     saving <size> <modified> <sha256> <count>
  *                                          a save is about to swap in a PDF that looks like
  *                                          this and holds the first <count> changes above
+ *     renumbering                          a page is about to be added or removed, and the file
+ *                                          saved with every later page renumbered
  *
  * The `saving` line is for a kill between the PDF being swapped in and the journal being
  * rewritten: without it the journal's base no longer matches the file, and writing that is
  * safely in the PDF would look like writing for a file that has changed. A build from before
  * this line existed just drops it, as it does any line it doesn't know.
+ *
+ * The `renumbering` line is for the same kill, in a save that adds or removes a page: the
+ * changes above it have the old page numbers and any after it the new ones, so if the file is
+ * no longer the journal's base, they can't be put onto it or onto a copy of it. A journal
+ * rewritten after the save has no such line.
  *
  * A snip's picture is written once per journal file, the first time a change mentions it, in
  * the same write as that change and just before it. Every later mention (the snip moved,
@@ -198,6 +212,14 @@ class ChangeJournal(val file: File) {
         write("$SAVING ${result.encode()} $count\n")
     }
 
+    /**
+     * Notes that a page is about to be added or removed and the file saved with new page
+     * numbers. Returns only once it's on the storage chip.
+     */
+    fun markRenumbering() {
+        write("$RENUMBERING\n")
+    }
+
     /** Returns null when there's no journal, or its first line isn't a valid header. */
     fun read(): JournalContents? {
         if (!file.exists()) return null
@@ -211,6 +233,7 @@ class ChangeJournal(val file: File) {
         val changes = ArrayList<Change>()
         val pictures = HashMap<String, ByteArray>()
         var pendingSave: PendingSave? = null
+        var renumbering = false
         for (line in complete.drop(1)) {
             if (!plan2 && line.startsWith("$PICTURE ")) {
                 // Not a change: kept for the change lines after it that name it.
@@ -222,9 +245,13 @@ class ChangeJournal(val file: File) {
                 parseSaving(line)?.let { pendingSave = it }
                 continue
             }
+            if (line == RENUMBERING) {
+                renumbering = true
+                continue
+            }
             (if (plan2) parseOldAdd(line) else ChangeCodec.decode(line) { pictures[it] })?.let { changes += it }
         }
-        return JournalContents(base, changes, pendingSave)
+        return JournalContents(base, changes, pendingSave, renumbering)
     }
 
     fun clear() {
@@ -267,6 +294,7 @@ class ChangeJournal(val file: File) {
         private const val HEADER = "pnj2"
         private const val OLD_HEADER = "pnj1"
         private const val SAVING = "saving"
+        private const val RENUMBERING = "renumbering"
         private const val PICTURE = "img"
 
         private fun sha256(bytes: ByteArray): String =

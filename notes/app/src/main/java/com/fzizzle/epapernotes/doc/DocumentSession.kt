@@ -110,7 +110,6 @@ class DocumentSession(
     private var known: FileIdentity? = null // the file as it was when opened or last saved
     private var repairDecided = false
     private var waitingForRepairDecision = false
-    private var stoppedBecauseChanged = false
 
     /** Opens the document, on the worker. Call once, before anything else. */
     fun start() {
@@ -148,6 +147,9 @@ class DocumentSession(
 
         val identityNs = System.nanoTime() - started
         val replay: List<Change>
+        // Writing from an earlier session, drawn on a version of the file that has changed
+        // since. It goes into a copy once the PDF is open ([rescueIntoCopy]).
+        var earlier: List<Change>? = null
         synchronized(lock) {
             val old = journal.read()
             val pending = old?.pendingSave
@@ -169,24 +171,33 @@ class DocumentSession(
                     rest
                 }
                 else -> {
-                    if (old != null && old.changes.isNotEmpty()) {
-                        // Writing from an earlier session, drawn on a version of the file that
-                        // has changed since. Never replay it onto the new version, and never
-                        // throw it away (spec §7.4): set it aside for plan 5 to make a copy.
-                        setAside()
+                    when {
+                        old == null || old.changes.isEmpty() -> journal.start(identity)
+                        // The app was killed while a page was added or removed: some of these
+                        // changes may have page numbers the file doesn't go by. They're never
+                        // put onto it or a copy of it, and never thrown away: set aside.
+                        old.renumbering -> {
+                            setAside()
+                            journal.start(identity)
+                        }
+                        // Never put onto the new version, and never thrown away (spec §7.4).
+                        // The journal stays as it is until the copy is safely saved.
+                        else -> earlier = old.changes
                     }
-                    journal.start(identity)
                     emptyList()
                 }
             }
             unsaved.addAll(replay)
         }
-        journalReady.countDown()
+        val toRescue = earlier
+        // With writing to rescue, the journal isn't ready for new strokes until that's done.
+        if (toRescue == null) journalReady.countDown()
 
         val journalNs = System.nanoTime() - started - identityNs
         val opened = try {
             open(file)
         } catch (e: Exception) {
+            journalReady.countDown()
             events(SessionEvent.OpenFailed(e.message ?: "The file couldn't be opened."))
             return
         }
@@ -197,14 +208,57 @@ class DocumentSession(
         )
         pages = opened
         known = identity
+        if (toRescue != null) {
+            try {
+                rescueIntoCopy(opened, toRescue)
+            } finally {
+                journalReady.countDown()
+            }
+        }
+        // Null only if the rescue had to open the file again and couldn't; the owner was told.
+        val p = pages ?: return
         // The replayed changes, and any the pen has added since the journal opened.
         applyPending()
-        checkRepair(opened)
+        checkRepair(p)
         scheduler.postDelayed(REDRAW_INK, REDRAW_INK_DELAY_MS) { redrawFaultyInkFrom(0) }
         if (replay.isNotEmpty() && !applyFailed) {
             events(SessionEvent.Replayed(replay.size))
             scheduleAutosave()
         }
+    }
+
+    /**
+     * Worker thread only, while opening. The journal holds [earlier] writing that never reached
+     * the PDF, and the file has changed since (spec §7.4). The version it was written on is
+     * gone, so it's put onto the file as it is now, in memory only, and saved beside it as a
+     * "(my edits …)" copy (owner's decision, 2026-11-13). The file itself is never written
+     * into. The session then continues in the copy.
+     *
+     * A change on a page the file no longer has can't be placed: the journal is kept aside
+     * for it, and the owner is told how many. If anything fails, the journal is set aside
+     * whole and the file is opened plain, as before this existed.
+     */
+    private fun rescueIntoCopy(opened: PdfPages, earlier: List<Change>) {
+        val placeable = earlier.filter { change -> change.pages.all { it in 0 until opened.pageCount } }
+        val copy = try {
+            placeable.forEach(opened::apply)
+            CopyNames.myEdits(file, clock()).also { target -> SafeSave.createNew(target) { opened.saveTo(it) } }
+        } catch (e: Throwable) { // out of memory too
+            System.err.println("DocumentSession: earlier writing couldn't be put into a copy: $e")
+            synchronized(lock) {
+                setAside()
+                journal.start(known!!)
+            }
+            // The open PDF may hold part of the writing: start again from the file.
+            openAgainFromTheFile()
+            return
+        }
+        val notPlaced = earlier.size - placeable.size
+        if (notPlaced > 0) synchronized(lock) { setAside(copy = true) }
+        switchTo(copy)
+        // The copy is what's written into from here on, so a repaired original needs no answer.
+        repairDecided = true
+        events(SessionEvent.SavedToCopy(copy, CopyReason.RESCUED, notPlaced))
     }
 
     /**
@@ -535,7 +589,7 @@ class DocumentSession(
     private fun whyPagesCantChange(p: PdfPages, what: String): String? = when {
         applyFailed -> "A change couldn't be written into this file, so the page wasn't $what."
         checkRepair(p) -> "Answer the question about the damaged file first."
-        stoppedBecauseChanged || !fileUnchanged() -> "This file was changed elsewhere, so the page wasn't $what."
+!fileUnchanged() -> "This file was changed elsewhere, so the page wasn't $what. Try again."
         else -> null
     }
 
@@ -714,10 +768,12 @@ class DocumentSession(
      *
      * [newPageNumber] is given when the open PDF has just had a page added or removed (see
      * [changePages]): it's saved even with nothing journaled, and the journal moves to the new
-     * page numbers with the file. That save leaves no note before the swap ([markSaving]): the
+     * page numbers with the file. That save leaves no [markSaving] note before the swap: the
      * note would let the next opening replay the changes after it onto the new file, and they
-     * have the old numbers. Without it, a kill between the swap and [restartJournal] keeps the
-     * journal aside instead, as for any changed file, and nothing is lost or misplaced.
+     * have the old numbers. It leaves a "renumbering" note instead, so after a kill between the
+     * swap and [restartJournal] the next opening keeps the journal aside, and neither replays
+     * it nor rescues it into a copy: nothing is lost or misplaced. If that note can't be
+     * written, the save fails and the page isn't changed.
      *
      * [fileJustChecked]: the caller has just found the file unchanged ([fileUnchanged]) in this
      * same worker task, so the save doesn't read the whole file again to check.
@@ -726,7 +782,7 @@ class DocumentSession(
         val p = pages ?: return false
         val inThisSave = applied
         if (inThisSave == 0 && !inkRedrawn && newPageNumber == null) return false
-        if (applyFailed || stoppedBecauseChanged || checkRepair(p)) return false
+        if (applyFailed || checkRepair(p)) return false
 
         var swapped = false
         try {
@@ -744,7 +800,8 @@ class DocumentSession(
             SafeSave.replace(file, beforeSwap = { temp ->
                 val result = identityOf(temp)
                 next = result
-                if (newPageNumber == null) markSaving(result, inThisSave)
+                // A page change leaves a different note: see [save]'s comment.
+                if (newPageNumber == null) markSaving(result, inThisSave) else synchronized(lock) { journal.markRenumbering() }
             }) {
                 val writeStarted = System.nanoTime()
                 p.saveTo(it)
@@ -775,15 +832,90 @@ class DocumentSession(
     /**
      * Worker thread only. Whether the file is still as it was when opened or last saved.
      * Contents only: a sync app that just reset the file's date changed nothing. If a laptop or
-     * sync app changed, moved or deleted it, writing over it would lose their change, so saving
-     * into it stops. The changes stay in the journal (plan 5 adds the copy).
+     * sync app changed, moved or deleted it, writing over it would lose their change, so it's
+     * never saved into: [fileChanged] sorts it out, and this returns false.
      */
     private fun fileUnchanged(): Boolean {
         val now = try { identityOf(file) } catch (e: Exception) { null }
-        if (now?.sameContentAs(known) == true) return true
-        stoppedBecauseChanged = true
-        events(SessionEvent.ChangedOnDisk)
+        if (now?.sameContentAs(known) == true) {
+            known = now // its date may have changed: the next quick look ([checkFile]) goes by it
+            return true
+        }
+        fileChanged(now)
         return false
+    }
+
+    /**
+     * The writing screen is back in front: a sync app may have changed the file meanwhile.
+     * Usually nothing has, so the file's size and date are looked at first, and the whole file
+     * is read only if they differ.
+     */
+    fun checkFile() {
+        scheduler.post {
+            val was = known ?: return@post
+            if (pages == null || applyFailed || waitingForRepairDecision) return@post
+            if (file.length() == was.size && file.lastModified() == was.modifiedMs) return@post
+            fileUnchanged()
+        }
+    }
+
+    /**
+     * Worker thread only. Something else changed the file while it was open (spec §7.4); [now]
+     * is what it looks like, or null if it can't be read (moved or deleted).
+     *
+     * With no writing the new version lacks, the new version is opened in the old one's place.
+     * Ink redrawn from an earlier version ([redrawFaultyInkFrom]) isn't writing: it's done
+     * again on the new version.
+     *
+     * With unsaved writing, both are kept: the file stays as it is, and the open PDF, which is
+     * the old version with the writing, is saved beside it as a "(my edits …)" copy. The
+     * session continues in the copy, undo list and all. If the copy can't be saved, the owner
+     * is told and it's tried again, like any save.
+     */
+    private fun fileChanged(now: FileIdentity?) {
+        if (applyFailed) return // told already; the journal has everything for the next opening
+        var journalFailed = false
+        val reload = synchronized(lock) {
+            if (unsaved.isNotEmpty()) return@synchronized false
+            if (now == null) return // gone, and nothing to save: nothing to do until there's writing
+            try {
+                journal.rewrite(now, emptyList())
+                journalBroken = false
+            } catch (e: IOException) {
+                System.err.println("DocumentSession: the journal couldn't be rewritten: $e")
+                journalFailed = !journalBroken
+                journalBroken = true
+            }
+            undoable.clear()
+            redoable.clear()
+            true
+        }
+        if (reload) {
+            if (journalFailed) events(SessionEvent.JournalFailed)
+            known = now
+            inkRedrawn = false
+            scheduler.cancel(REDRAW_INK)
+            openAgainFromTheFile()
+            if (pages == null) return
+            scheduler.postDelayed(REDRAW_INK, REDRAW_INK_DELAY_MS) { redrawFaultyInkFrom(0) }
+            events(SessionEvent.HistoryChanged(canUndo = false, canRedo = false))
+            events(SessionEvent.Reloaded)
+            return
+        }
+        applyPending()
+        val p = pages ?: return
+        if (applyFailed) return
+        try {
+            val copy = CopyNames.myEdits(file, clock())
+            SafeSave.createNew(copy) { p.saveTo(it) }
+            switchTo(copy)
+            inkRedrawn = false
+            repairDecided = true // the copy is the app's own file
+            events(SessionEvent.SavedToCopy(copy, CopyReason.CHANGED_WHILE_OPEN))
+        } catch (e: Throwable) {
+            events(SessionEvent.SaveFailed("This file was changed elsewhere, and a copy with your writing couldn't be saved"))
+            scheduler.postDelayed(AUTOSAVE, RETRY_DELAY_MS) { save() }
+        }
     }
 
     /**
