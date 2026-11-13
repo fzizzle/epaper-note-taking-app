@@ -515,6 +515,7 @@ class LibraryActivity : Activity() {
         this.pageTexts = pageTexts
         if (changed || adapter.listView != prefs.listView) {
             adapter.show(entries, thumbnails = thumbnails != null, dropPictures = redrawTiles, listView = prefs.listView)
+            PanelRefresh.gentle(grid)
         }
         // Back from a document (decision 7): its tile is brought into view if it isn't, and
         // marked until the next touch, so the eye finds its place again.
@@ -645,6 +646,7 @@ class LibraryActivity : Activity() {
             }
         }
         Log.i(TAG, "thumbnails shown n=${pendingThumbnails.size}")
+        if (pendingThumbnails.isNotEmpty()) PanelRefresh.gentle(grid)
         if (pendingThumbnails.isNotEmpty() && visitStartedAt != 0L) visitGoes++
         pendingThumbnails.clear()
         logFolderReadyIfSo()
