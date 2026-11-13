@@ -112,7 +112,18 @@ class LibraryActivity : Activity() {
     private fun markCameBackFrom(file: File?) {
         if (adapter.markedFile == file) return
         adapter.markedFile = file
-        for (i in 0 until grid.childCount) (grid.getChildAt(i) as? LibraryItemView)?.let { it.marked = file != null && it.entry?.file == file }
+        showMarks()
+    }
+
+    /** Marks [file]'s tile or row while its long-press menu is open, or with null takes that mark off. */
+    private fun markMenuFor(file: File?) {
+        if (adapter.menuFile == file) return
+        adapter.menuFile = file
+        showMarks()
+    }
+
+    private fun showMarks() {
+        for (i in 0 until grid.childCount) (grid.getChildAt(i) as? LibraryItemView)?.let { it.marked = adapter.isMarked(it.entry?.file) }
     }
 
     /** A tile's marks, from memory only: its progress from the listing, its writing mark from the thumbnail's facts. */
@@ -348,7 +359,7 @@ class LibraryActivity : Activity() {
             adapter = this@LibraryActivity.adapter
             setOnItemClickListener { _, _, position, _ -> tapped(this@LibraryActivity.adapter.entries[position]) }
             setOnItemLongClickListener { _, view, position, _ ->
-                root?.let { changes.showMenu(it, shownFolder ?: it, view, this@LibraryActivity.adapter.entries[position], openFolder = ::goTo) }
+                root?.let { changes.showMenu(it, shownFolder ?: it, view, this@LibraryActivity.adapter.entries[position], mark = ::markMenuFor, openFolder = ::goTo) }
                 true
             }
             // The mark on the document just come back from goes at the next touch. Not taken: the touch does what it would.

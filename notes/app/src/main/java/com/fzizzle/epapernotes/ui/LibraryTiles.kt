@@ -76,6 +76,15 @@ class LibraryAdapter(
     /** The file whose tile or row is marked: the document just come back from. Null for none. */
     var markedFile: java.io.File? = null
 
+    /**
+     * The file whose long-press menu is open. Kept here, by file, and not only on the tile's
+     * view: a folder refresh under the open menu hands the views out again, and the mark went
+     * to whichever file got that view.
+     */
+    var menuFile: java.io.File? = null
+
+    fun isMarked(file: java.io.File?) = file != null && (file == markedFile || file == menuFile)
+
     var entries: List<Entry> = emptyList()
         private set
     var thumbnails = true
@@ -111,12 +120,12 @@ class LibraryAdapter(
             val row = convertView as? RowView ?: RowView(parent.context).apply { layoutParams = params }
             // On one line: the small folder a PDF is shown in place of, then its own short name.
             row.show(entry, if (heading != null) "$heading — $label" else label, detailFor(entry), marksFor(entry))
-            row.marked = entry.file == markedFile
+            row.marked = isMarked(entry.file)
             return row
         }
         val tile = convertView as? TileView ?: TileView(parent.context).apply { layoutParams = params }
         tile.show(entry, label, if (thumbnails && entry is PdfEntry) bitmapFor(entry) else null, thumbnails, pictures, marksFor(entry), heading)
-        tile.marked = entry.file == markedFile
+        tile.marked = isMarked(entry.file)
         return tile
     }
 }
