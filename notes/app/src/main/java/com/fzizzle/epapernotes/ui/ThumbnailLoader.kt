@@ -70,6 +70,13 @@ class ThumbnailLoader(
     /** Main thread. Memory only: never the disk. */
     fun bitmapFor(pdf: PdfEntry): Bitmap? = memory.get(key(pdf))
 
+    /** Whether [pdf]'s thumbnail couldn't be made this session (its tile stays the grey page). */
+    fun failedFor(pdf: PdfEntry): Boolean = synchronized(lock) { key(pdf) in failed }
+
+    /** How many thumbnails this loader has drawn from a PDF (not read from the cache): for the log and for tests. */
+    @Volatile internal var draws = 0
+        private set
+
     /** Main thread. What's known of [pdf] (PdfFacts), from memory only; it comes with the thumbnail ([onReady]). */
     fun factsFor(pdf: PdfEntry): PdfFacts? = factsInMemory[key(pdf)]
 
@@ -268,6 +275,7 @@ class ThumbnailLoader(
      */
     private fun render(pdf: PdfEntry, forScreen: Boolean): Bitmap? {
         val start = SystemClock.uptimeMillis()
+        draws++
         var facts: PdfFacts? = null
         val full = PdfFile.open(pdf.file).use {
             val size = it.displaySize(0)
@@ -277,18 +285,20 @@ class ThumbnailLoader(
             picture
         }
         facts?.let { factsInMemory[key(pdf)] = it }
+        var storeStart = 0L
         try {
             try {
                 // Stored without a see-through channel (the page is solid anyway): Android reads
                 // a PNG that has one at 32-bit whatever is asked, twice the memory of 16-bit.
                 full.setHasAlpha(false)
                 val png = ByteArrayOutputStream().also { full.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
+                storeStart = SystemClock.uptimeMillis()
                 cache.store(pdf, png)
                 facts?.let { cache.storeFacts(pdf, it) } // after the thumbnail: storing that sweeps the file's older versions
             } catch (e: Exception) {
                 Log.w(TAG, "thumbnail ${pdf.name} not cached: ${e.message}")
             }
-            Log.i(TAG, "thumbnail ${pdf.name} ms=${SystemClock.uptimeMillis() - start}")
+            Log.i(TAG, "thumbnail ${pdf.name} ms=${SystemClock.uptimeMillis() - start} store=${if (storeStart > 0) SystemClock.uptimeMillis() - storeStart else -1}")
             return if (forScreen) full.copy(Bitmap.Config.RGB_565, false) else null
         } finally {
             full.recycle()

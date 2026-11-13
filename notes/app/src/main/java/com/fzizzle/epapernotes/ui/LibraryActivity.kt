@@ -399,6 +399,8 @@ class LibraryActivity : Activity() {
     private fun list(redrawTiles: Boolean = false, afterSaveOf: File? = null, cameBackFrom: File? = null, then: () -> Unit = {}) {
         val root = root ?: return then()
         val wanted = folder ?: root
+        // A visit (another folder, or back from a document), not a re-read after a change on disk: timed for the log.
+        if (wanted != shownFolder || cameBackFrom != null) startVisit()
         val ask = ++listed
         val last = prefs.lastOpened
         // Watched before it's read (review 2.10): a file landing while it's read still re-lists.
@@ -490,6 +492,7 @@ class LibraryActivity : Activity() {
         }
         continueRow.visibility = if (resume != null) View.VISIBLE else View.GONE
         // A document just left may only have moved to another page: the file is the same, its bar isn't.
+        if (visitStartedAt != 0L) visitGoes++ // this listing draws the grid
         val changed = redrawTiles || entries != adapter.entries || adapter.thumbnails != (thumbnails != null) || progress != this.progress || coloursChanged
         this.progress = progress
         this.pageTexts = pageTexts
@@ -520,6 +523,8 @@ class LibraryActivity : Activity() {
         emptyNote.visibility = if (entries.isEmpty()) View.VISIBLE else View.GONE
         tilesOnScreenChanged()
         logShown(waitForDraw = changed)
+        // The grid lays its tiles out on the next frame: look then.
+        grid.post { logFolderReadyIfSo() }
     }
 
     /** "library shown": from onResume to the grid on screen (Task 6 times leaving a document by it). */
@@ -621,7 +626,36 @@ class LibraryActivity : Activity() {
             }
         }
         Log.i(TAG, "thumbnails shown n=${pendingThumbnails.size}")
+        if (pendingThumbnails.isNotEmpty() && visitStartedAt != 0L) visitGoes++
         pendingThumbnails.clear()
+        logFolderReadyIfSo()
+    }
+
+    // A folder visit, for the "folder ready" log line: when it was asked for, how many times
+    // the grid has been drawn with pictures since, and the loader's draw count then.
+    private var visitStartedAt = 0L
+    private var visitGoes = 0
+    private var visitDrawsAtStart = 0
+
+    private fun startVisit() {
+        visitStartedAt = SystemClock.uptimeMillis()
+        visitGoes = 0
+        visitDrawsAtStart = thumbnails?.draws ?: 0
+    }
+
+    /**
+     * Once every PDF tile on screen has its picture (or can't have one), logs how long the
+     * visit took, how many times the grid was drawn on the way, and how many thumbnails had to
+     * be drawn from their PDFs rather than read from the cache. Once per visit.
+     */
+    private fun logFolderReadyIfSo() {
+        if (visitStartedAt == 0L) return
+        val loader = thumbnails
+        val pdfs = onScreen().filterIsInstance<PdfEntry>()
+        if (loader != null && pdfs.any { loader.bitmapFor(it) == null && !loader.failedFor(it) }) return
+        val drawn = (loader?.draws ?: 0) - visitDrawsAtStart
+        Log.i(TAG, "folder ready ms=${SystemClock.uptimeMillis() - visitStartedAt} goes=$visitGoes drawn=$drawn cached=${(pdfs.size - drawn).coerceAtLeast(0)}")
+        visitStartedAt = 0L
     }
 
     private fun thumbnailReady(pdf: PdfEntry, bitmap: Bitmap?) {
