@@ -50,9 +50,10 @@ class ThumbnailCache(private val dir: File, private val clock: () -> Long = Syst
         val hash = hashOf(pdf)
         if (!publish(target, png)) return
         publish(File(dir, "$hash.path"), pathOf(pdf).toByteArray())
-        dir.listFiles()?.forEach {
-            if (it != target && it.name.startsWith("$hash-")) it.delete()
-        }
+        // This file's older versions only. Names, not File objects: the cache folder holds
+        // hundreds of files, and this runs for every thumbnail made.
+        dir.list { _, name -> name.startsWith("$hash-") && name != target.name && name != factsFileFor(pdf).name }
+            ?.forEach { File(dir, it).delete() }
     }
 
     /** Where [pdf]'s facts are kept: beside its thumbnail, under the same name, so a changed file has none. */

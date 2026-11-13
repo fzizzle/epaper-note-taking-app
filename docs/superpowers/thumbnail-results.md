@@ -14,3 +14,10 @@ Measured with the `folder ready` log line: from the moment a folder is asked for
 | After the app is restarted (thumbnails on disk only) | 193 ms, 2 goes (grey pages, then pictures) | |
 
 A thumbnail drawn from its PDF took 24 ms on average in the app, of which storing it in the cache (the PNG written, the old versions swept from a folder of about 500 files) took 5.7 ms.
+
+## After, task by task
+
+| Task | Measure | Before | After | Kept? |
+|---|---|---|---|---|
+| 2. A cached thumbnail isn't drawn again for its facts | tablet test `aCachedThumbnailWithoutFactsIsNotDrawnAgain`: draws for a cached thumbnail with no facts file | 1 (failed first) | 0; facts read from the PDF in about 1 ms | yes |
+| 2. Storing sweeps old versions by name | time to store one thumbnail, cold ML visit, two runs | 5.7 ms | 4.3 to 4.6 ms (a thumbnail in all: 24 → 23 ms) | yes: over 10% of its own measure |

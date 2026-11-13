@@ -75,6 +75,18 @@ class ThumbnailCacheTest {
         assertNull(cache.cached(deleted))
     }
 
+    @Test fun storeSweepsOnlyThisFilesOlderVersions() {
+        val old = pdf("/s/a.pdf", 10, 5)
+        val others = listOf(pdf("/s/b.pdf"), pdf("/s/c.pdf", 3, 3))
+        others.forEach { cache.store(it, byteArrayOf(9)); cache.storeFacts(it, PdfFacts(2, false)) }
+        cache.store(old, byteArrayOf(1))
+        cache.storeFacts(old, PdfFacts(4, true))
+        cache.store(pdf("/s/a.pdf", 12, 7), byteArrayOf(2))
+        assertNull(cache.cached(old))
+        assertNull(cache.facts(old))
+        others.forEach { assertTrue(cache.cached(it) != null); assertEquals(PdfFacts(2, false), cache.facts(it)) }
+    }
+
     @Test fun factsAreStoredBesideTheThumbnail() {
         val a = pdf("/s/a.pdf", 10, 5)
         assertNull(cache.facts(a))

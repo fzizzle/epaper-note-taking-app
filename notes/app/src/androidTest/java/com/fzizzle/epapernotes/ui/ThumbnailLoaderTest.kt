@@ -160,6 +160,22 @@ class ThumbnailLoaderTest {
         }
     }
 
+    /**
+     * A thumbnail cached before facts were kept beside it: it is shown from the cache, and its
+     * page count and writing mark are worked out from the PDF without drawing the page again.
+     */
+    @Test fun aCachedThumbnailWithoutFactsIsNotDrawnAgain() {
+        val page = entry(TestPdfs.blank(dir, pages = 3))
+        val picture = Bitmap.createBitmap(240, 310, Bitmap.Config.ARGB_8888).apply { eraseColor(android.graphics.Color.WHITE); setHasAlpha(false) }
+        cache.store(page, java.io.ByteArrayOutputStream().also { picture.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray())
+        assertEquals(null, cache.facts(page))
+        loader.show(listOf(page), onScreen = listOf(page))
+        assertNotNull(next().second)
+        assertEquals(0, loader.draws)
+        assertEquals(PdfFacts(3, false), loader.factsFor(page))
+        assertEquals(PdfFacts(3, false), cache.facts(page))
+    }
+
     @Test fun ordinaryPageKeepsTheUsualWidth() {
         val page = entry(TestPdfs.blank(dir, pages = 1))
         loader.show(listOf(page), onScreen = listOf(page))

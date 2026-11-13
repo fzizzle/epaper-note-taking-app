@@ -199,14 +199,21 @@ class ThumbnailLoader(
 
     private fun load(pdf: PdfEntry, intoMemory: Boolean) {
         val key = key(pdf)
-        // A thumbnail cached before facts were kept has none beside it: counted as not cached,
-        // so the PDF is looked at again, once.
-        val cachedFacts = cache.facts(pdf)
-        val cached = if (cachedFacts != null) cache.cached(pdf) else null
-        if (cached != null && !intoMemory) return finished(key, ok = true)
+        // A thumbnail cached before facts were kept has none beside it: its facts are worked
+        // out from the PDF, which is opened but not drawn again (about 1 ms against 25).
+        var cachedFacts = cache.facts(pdf)
+        val cached = cache.cached(pdf)
+        if (cached != null && cachedFacts == null) {
+            cachedFacts = try {
+                PdfFile.open(pdf.file).use { factsOf(it, pdf) }.also { cache.storeFacts(pdf, it) }
+            } catch (e: Throwable) {
+                null // drawn afresh below, which says why if the PDF can't be read
+            }
+        }
+        if (cached != null && cachedFacts != null && !intoMemory) return finished(key, ok = true)
         // A cached file can vanish before it's read, or be damaged: then it's rendered again.
         // One cached before thumbnails had a height limit is far too tall: also rendered again.
-        val decoded = cached?.let { BitmapFactory.decodeFile(it.path, SMALL) }?.takeIf { it.height <= THUMB_MAX_HEIGHT_PX }
+        val decoded = cached?.takeIf { cachedFacts != null }?.let { BitmapFactory.decodeFile(it.path, SMALL) }?.takeIf { it.height <= THUMB_MAX_HEIGHT_PX }
         val bitmap = decoded ?: try {
             render(pdf, forScreen = intoMemory)
         } catch (e: Throwable) {
