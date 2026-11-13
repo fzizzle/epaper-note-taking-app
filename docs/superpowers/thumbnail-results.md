@@ -32,7 +32,15 @@ A thumbnail drawn from its PDF took 24 ms on average in the app, of which storin
 
 ## Tests
 
-514 laptop tests and 122 tablet tests pass (2026-11-13).
+514 laptop tests and 124 tablet tests pass (2026-11-13), after the final review's fixes.
+
+With everything in, the scratch library opened 4 seconds after the app started (drawing ahead done by then): ML first visit 172 ms, 1 go; CTM first visit 202 ms, 1 go; second visits 51 to 63 ms; back from a document 154 ms; after a restart 152 ms, 1 go.
+
+## Found by the final review, and fixed
+
+- **A tile could keep its old picture after Refresh.** Reading thumbnails ahead from the cache could race Refresh's drop and put an old picture back in memory, after its file was gone, so it was never made again. Now a thumbnail being dropped is never read ahead, and one read while a drop began or ended isn't kept; and nothing is read ahead after Refresh at all. Test `warmDoesNotBringBackAThumbnailARefreshDropped` (failed first).
+- **A stray thumbnail cost a whole-screen refresh.** One that arrived for a folder already left refreshed the grid with nothing changed. Now only a change to a tile on screen refreshes it.
+- Three tests proved less than their names; they now pause a pass under way, keep the thumbnails made before the card goes out, and allow at most one picture drawn ahead before a tile on screen. A new test covers when a folder counts as still waiting.
 
 ## In short
 

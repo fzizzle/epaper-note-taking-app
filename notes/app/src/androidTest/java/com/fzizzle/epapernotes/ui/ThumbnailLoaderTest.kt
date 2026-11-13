@@ -198,6 +198,27 @@ class ThumbnailLoaderTest {
         assertEquals(0, loader.draws)
     }
 
+    /** Refresh drops a folder's thumbnails: one read ahead from the cache meanwhile must not bring an old picture back. */
+    @Test fun warmDoesNotBringBackAThumbnailARefreshDropped() {
+        val a = cachedEntry("a.pdf")
+        loader.pause() // the drop is still waiting for the loader's thread
+        loader.redraw(onScreen = listOf(a), rest = emptyList())
+        assertEquals(0, loader.warm(listOf(a), budgetMs = 1000))
+        assertEquals(null, loader.bitmapFor(a))
+    }
+
+    /** "Is a tile on screen still waiting?" decides when missing thumbnails come on together. */
+    @Test fun waitingOnScreenUntilEveryTileHasAPictureOrFailed() {
+        loader.pause()
+        val good = entry(TestPdfs.blank(dir, pages = 1))
+        val bad = entry(TestPdfs.garbage(dir))
+        loader.show(listOf(good, bad), onScreen = listOf(good, bad))
+        assertTrue(loader.waitingOnScreen())
+        loader.resume()
+        next(); next()
+        assertEquals(false, loader.waitingOnScreen())
+    }
+
     @Test fun warmStopsAtItsBudget() {
         loader.pause()
         val a = cachedEntry("a.pdf")
@@ -233,14 +254,18 @@ class ThumbnailLoaderTest {
         assertTrue(com.fzizzle.epapernotes.library.LibraryWalk.pdfsUnder(lib).all { cache.facts(it) != null })
     }
 
+    /** Paused partway through, as when a document is opened: no more drawn until resumed. */
     @Test fun drawingAheadStopsWhenPaused() {
-        val lib = library(8)
-        loader.pause()
+        val lib = library(20)
         loader.drawAhead(com.fzizzle.epapernotes.library.LibraryWalk.pdfsUnder(lib))
+        waitUntil("a couple drawn") { loader.draws >= 2 }
+        loader.pause()
+        val atPause = loader.draws
         Thread.sleep(800)
-        assertEquals(0, loader.draws)
+        assertTrue("drew ${loader.draws - atPause} after the pause", loader.draws <= atPause + 1) // the one under way may finish
+        assertTrue(cachedUnder(lib) < 20)
         loader.resume()
-        waitUntil("drawn after resuming") { cachedUnder(lib) == 8 }
+        waitUntil("drawn after resuming") { cachedUnder(lib) == 20 }
     }
 
     @Test fun aBrokenPdfIsSkippedNotRetried() {
@@ -257,19 +282,22 @@ class ThumbnailLoaderTest {
         loader.drawAhead(com.fzizzle.epapernotes.library.LibraryWalk.pdfsUnder(lib))
         loader.show(listOf(wanted), onScreen = listOf(wanted))
         assertEquals(wanted, next().first)
-        assertTrue("drawn ahead before the tile on screen: ${loader.draws - 1}", loader.draws - 1 < 20)
+        assertTrue("drawn ahead before the tile on screen: ${loader.draws - 1}", loader.draws - 1 <= 1) // at most the one under way
     }
 
+    /** The card taken out partway through: the pass ends, and the thumbnails already made are all kept. */
     @Test fun drawingAheadStopsWhenTheCardGoesOut() {
-        val lib = library(10)
-        loader.pause()
+        val lib = library(20)
         loader.drawAhead(com.fzizzle.epapernotes.library.LibraryWalk.pdfsUnder(lib))
-        val before = cache.cached(entry(File(lib, "A/p0.pdf")))
+        waitUntil("a few drawn") { loader.draws >= 3 }
+        loader.pause()
+        val pictures = File(dir, "cache").listFiles { f -> f.name.endsWith(".png") }.orEmpty().map { it.name }.toSet()
+        assertTrue(pictures.size >= 3)
         lib.deleteRecursively() // as when the card is taken out
         loader.resume()
-        Thread.sleep(1000)
-        assertEquals(null, before)
-        assertEquals(0, loader.draws)
+        Thread.sleep(1500)
+        val after = File(dir, "cache").listFiles { f -> f.name.endsWith(".png") }.orEmpty().map { it.name }.toSet()
+        assertTrue("deleted: ${pictures - after}", after.containsAll(pictures))
         // Still alive: a tile on screen is served.
         val page = entry(TestPdfs.blank(dir, pages = 1))
         loader.show(listOf(page), onScreen = listOf(page))

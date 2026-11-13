@@ -67,6 +67,15 @@ class ThumbnailLoader(
     private val done = HashSet<String>()
     private val failed = HashSet<String>()
     private val drops = ArrayList<PdfEntry>()
+
+    /**
+     * The thumbnails a Refresh is dropping, from [redraw] until their Drop job is done, and a
+     * count that goes up at both ends: [warm], reading on another thread, puts a picture into
+     * memory only if no drop began or ended while it read it, so it can't bring back one a
+     * Refresh threw away.
+     */
+    private val dropping = HashSet<String>()
+    private var dropGeneration = 0
     private val dropsForLater = ArrayList<PdfEntry>()
     private var paused = false
     private var stopped = false
@@ -93,11 +102,17 @@ class ThumbnailLoader(
             if (SystemClock.uptimeMillis() >= until) break
             val key = key(pdf)
             if (memory.get(key) != null) continue
+            // A Refresh may be dropping this one: never read it then, and never put back a
+            // picture read before a drop finished (see dropGeneration).
+            val generation = synchronized(lock) { if (key in dropping) null else dropGeneration } ?: continue
             val facts = cache.facts(pdf) ?: continue
             val bitmap = cache.cached(pdf)?.let { BitmapFactory.decodeFile(it.path, SMALL) }?.takeIf { it.height <= OLD_MAX_HEIGHT_PX } ?: continue
-            factsInMemory[key] = facts
-            memory.put(key, bitmap)
-            read++
+            synchronized(lock) {
+                if (dropGeneration != generation) return@synchronized
+                factsInMemory[key] = facts
+                memory.put(key, bitmap)
+                read++
+            }
         }
         return read
     }
@@ -143,6 +158,8 @@ class ThumbnailLoader(
      */
     fun redraw(onScreen: List<PdfEntry>, rest: List<PdfEntry>) = synchronized(lock) {
         (onScreen + rest).forEach { memory.remove(key(it)) }
+        (onScreen + rest).forEach { dropping += key(it) }
+        dropGeneration++
         drops += onScreen
         dropsForLater += rest
         lock.notifyAll()
@@ -232,6 +249,10 @@ class ThumbnailLoader(
                         cache.fileFor(pdf).delete()
                         memory.remove(key(pdf))
                         synchronized(lock) { done += key(pdf); failed -= key(pdf) }
+                    }
+                    synchronized(lock) {
+                        (job.now + job.later).forEach { dropping -= key(it) }
+                        dropGeneration++
                     }
                 }
                 is Facts -> loadFacts(job.pdf)

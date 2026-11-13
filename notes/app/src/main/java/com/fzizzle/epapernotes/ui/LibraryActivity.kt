@@ -452,7 +452,8 @@ class LibraryActivity : Activity() {
             // The thumbnails of the tiles about to be shown, from the cache (a couple of
             // milliseconds each), so the folder is drawn once, with its pictures, rather than
             // grey and then again. Not in the list view, which shows none.
-            if (loader != null && !prefs.listView) {
+            // Not after Refresh: its point is that every picture is made again.
+            if (loader != null && !prefs.listView && !redrawTiles) {
                 val from = cameBackFrom?.let { f -> entries.indexOfFirst { it.file == f } }?.takeIf { it >= 0 }?.let { (it - FIRST_SCREEN_TILES / 2).coerceAtLeast(0) }
                     ?: firstShown.coerceIn(0, entries.size)
                 val upcoming = entries.drop(from).take(FIRST_SCREEN_TILES).filterIsInstance<PdfEntry>()
@@ -637,17 +638,23 @@ class LibraryActivity : Activity() {
      */
     private val pendingThumbnails = HashMap<PdfEntry, Bitmap?>()
     private val showPendingThumbnails = Runnable {
+        var onTiles = 0
         for (i in 0 until grid.childCount) {
             val tile = grid.getChildAt(i) as? TileView ?: continue
             val entry = tile.entry as? PdfEntry ?: continue
             if (pendingThumbnails.containsKey(entry)) {
                 tile.showBitmap(pendingThumbnails[entry])
                 tile.showMarks(marksFor(entry)) // its facts came with it
+                onTiles++
             }
         }
-        Log.i(TAG, "thumbnails shown n=${pendingThumbnails.size}")
-        if (pendingThumbnails.isNotEmpty()) PanelRefresh.gentle(grid)
-        if (pendingThumbnails.isNotEmpty() && visitStartedAt != 0L) visitGoes++
+        Log.i(TAG, "thumbnails shown n=$onTiles of ${pendingThumbnails.size}")
+        // Only when a tile on screen changed: a picture that came for a folder since left (or
+        // for a tile scrolled away) is kept in memory, and costs no refresh of the panel.
+        if (onTiles > 0) {
+            PanelRefresh.gentle(grid)
+            if (visitStartedAt != 0L) visitGoes++
+        }
         pendingThumbnails.clear()
         logFolderReadyIfSo()
     }
