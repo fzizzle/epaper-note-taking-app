@@ -46,6 +46,21 @@ The UI and UX review on the tablet, and its fixes: [plan](docs/superpowers/plans
 - [x] Owner checklist: [notes/TESTING-ui-review.md](notes/TESTING-ui-review.md): all checks pass (owner, 2026-11-12). [Results](docs/superpowers/ui-review-results.md).
 - [ ] Erase trail and erase flash: their own plan (see Known bugs above).
 
+## Dotted pages and fresh attempts (2026-11-12)
+
+[Plan](docs/superpowers/plans/2026-11-12-pages.md). Built on the branch `pages`, each task by its own agent with a review after it.
+
+- [x] Owner approved decisions 1–5 (2026-11-12).
+- [x] MuPDF's page calls are safe to build on (Task 1): 200 rounds of adding and removing, three runs on the tablet, no crash.
+- [x] Dotted paper as plain PDF drawing (Task 2).
+- [x] A dotted page can be added after any page, and an added page removed (Task 3).
+- [x] Adding or removing a page saves first, then renumbers (Task 4). A stroke that arrives late keeps its page.
+- [x] The writing screen: ⋯ "Add a dotted page after this one", "Remove this added page", + on the last page (Task 5). Tried on the tablet over adb; writing on a new page needs the pen.
+- [x] Fresh attempt in the library (Task 6).
+- [ ] The dots' strength: 0.5 grey for now. **Owner picks** on the tablet (checklist P2).
+- [ ] **Owner checklist:** [notes/TESTING-pages.md](notes/TESTING-pages.md) (Task 7, hard stop).
+- For plan 5 (conflict copies): a journal set aside by a page change holds old page numbers against a file that no longer exists, and its first changes are already in the new file. It must never be replayed onto the current file.
+
 ## Writing screen design (2026-11-12)
 
 [Plan](docs/superpowers/plans/2026-11-12-writing-screen-design.md). Built on the branch `writing-screen-design`.

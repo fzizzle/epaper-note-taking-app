@@ -11,7 +11,9 @@ import com.fzizzle.epapernotes.ink.Stroke
 import com.fzizzle.epapernotes.ink.StrokeKind
 import com.fzizzle.epapernotes.ink.StrokePoint
 import com.fzizzle.epapernotes.storage.FileIdentity
+import com.fzizzle.epapernotes.storage.SafeSave
 import java.io.File
+import java.io.IOException
 import java.nio.file.Files
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -408,5 +410,121 @@ class FileOpsTest {
         File(root, ".other.pdf.pnotes-rename").writeText("stranded")
         assertEquals(FileOps.Result.Done, ops.rename(a, "Week 1"))
         assertEquals(setOf("Week 1.pdf", "other.pdf"), root.list()!!.toSet())
+    }
+
+    @Test fun aFreshAttemptIsWrittenBesideTheOriginal() {
+        val a = pdf("Physics/BSA Beams — workbook.pdf")
+        val before = a.readBytes()
+        val calls = mutableListOf<Pair<String, String>>()
+
+        val result = ops.freshAttempt(a) { from, to -> calls += from.name to to.name; to.writeText("clean") }
+
+        val made = File(root, "Physics/BSA Beams — workbook (attempt 2).pdf")
+        assertEquals(FileOps.Result.Made(made), result)
+        assertEquals(listOf("BSA Beams — workbook.pdf" to "BSA Beams — workbook (attempt 2).pdf"), calls)
+        assertTrue(before.contentEquals(a.readBytes()))
+        assertEquals("clean", made.readText())
+    }
+
+    /** As [renameWaitsForTheOpenSession]: the copy is made from the file as its last save left it. */
+    @Test fun aFreshAttemptWaitsForTheLastSave() {
+        val a = pdf("Lecture.pdf")
+        val session = DocumentSession(a, journals, open = { FakePdfPages() }, scheduler = FakeScheduler(), events = {})
+        session.start()
+        session.addStroke(0, dot)
+
+        val closer = Thread {
+            Thread.sleep(300)
+            session.close()
+        }
+        closer.start()
+
+        var copiedFrom: String? = null
+        val result = ops.freshAttempt(a) { from, to -> copiedFrom = from.readText(); to.writeText("clean") }
+        closer.join()
+
+        assertEquals(FileOps.Result.Made(File(root, "Lecture (attempt 2).pdf")), result)
+        // The fake writes how many items it held: the stroke was saved before the copy was made.
+        assertEquals("items=1", copiedFrom)
+    }
+
+    @Test fun aFolderHasNoFreshAttempt() {
+        val folder = File(root, "Physics").apply { mkdir() }
+        pdf("Physics/One.pdf")
+        var called = false
+
+        assertTrue(ops.freshAttempt(folder) { _, _ -> called = true } is FileOps.Result.Refused)
+
+        assertFalse(called)
+        assertEquals(listOf("One.pdf"), folder.list()!!.toList())
+    }
+
+    @Test fun onlyAPdfInTheLibraryHasAFreshAttempt() {
+        val notes = File(root, "notes.txt").apply { writeText("x") }
+        val outside = tmp.newFile("elsewhere.pdf")
+        var called = false
+        assertTrue(ops.freshAttempt(notes) { _, _ -> called = true } is FileOps.Result.Refused)
+        assertTrue(ops.freshAttempt(outside) { _, _ -> called = true } is FileOps.Result.Refused)
+        assertFalse(called)
+        assertEquals(setOf("notes.txt"), root.list()!!.toSet())
+    }
+
+    /** A memory card ignores case, so a name taken in another case is skipped too. */
+    @Test fun aFreshAttemptSkipsANameTakenInAnotherCase() {
+        val a = pdf("W.pdf")
+        pdf("w (ATTEMPT 2).pdf")
+        assertEquals(FileOps.Result.Made(File(root, "W (attempt 3).pdf")), ops.freshAttempt(a) { _, to -> to.writeText("clean") })
+    }
+
+    /**
+     * writeClean leaves a whole file or nothing (SafeSave), so after a failed write anything at
+     * the new name is someone else's: a sync app's, say. It stays.
+     */
+    @Test fun aFileThatAppearsDuringAFailedWriteSurvives() {
+        val a = pdf("Lecture.pdf")
+
+        val result = ops.freshAttempt(a) { _, to -> to.writeText("synced"); throw IOException("storage full") }
+
+        assertEquals(FileOps.Result.Refused("A fresh attempt of 'Lecture.pdf' couldn't be made: storage full"), result)
+        assertEquals("synced", File(root, "Lecture (attempt 2).pdf").readText())
+    }
+
+    /** With the app's way of writing (SafeSave.createNew), a file arriving at the name mid-write isn't overwritten. */
+    @Test fun aFileThatAppearsDuringTheWriteIsNotOverwritten() {
+        val a = pdf("Lecture.pdf")
+        val made = File(root, "Lecture (attempt 2).pdf")
+
+        val result = ops.freshAttempt(a) { _, to -> SafeSave.createNew(to) { t -> made.writeText("synced"); t.writeText("clean") } }
+
+        assertTrue(result is FileOps.Result.Refused)
+        assertEquals("synced", made.readText())
+        assertEquals(setOf("Lecture.pdf", made.name), root.list()!!.toSet())
+    }
+
+    /**
+     * A journal left under the new name by an earlier file of that name is set aside, as a
+     * rename does, so its writing is never put onto the clean copy.
+     */
+    @Test fun aJournalAlreadyAtTheNewNameIsSetAside() {
+        val a = pdf("Lecture.pdf")
+        val made = File(root, "Lecture (attempt 2).pdf")
+        val stale = journalOf(made).apply { writeText("stale writing\n") }
+
+        assertEquals(FileOps.Result.Made(made), ops.freshAttempt(a) { _, to -> to.writeText("clean") })
+
+        assertFalse(stale.exists())
+        val setAside = journals.listFiles()!!.filter { it.name.startsWith(stale.name + ".kept-") }
+        assertEquals(listOf("stale writing\n"), setAside.map { it.readText() })
+    }
+
+    /** A page remembered for an earlier file of the same name mustn't open the new copy part-way through. */
+    @Test fun aFreshAttemptStartsAtNoRememberedPage() {
+        val a = pdf("Lecture.pdf")
+        pages.map[a.path] = 4
+        pages.map[File(root, "Lecture (attempt 2).pdf").path] = 9
+
+        ops.freshAttempt(a) { _, to -> to.writeText("clean") }
+
+        assertEquals(mapOf(a.path to 4), pages.map)
     }
 }

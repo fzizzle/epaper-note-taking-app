@@ -42,6 +42,15 @@ sealed interface SessionEvent {
     /** Strokes on [page] that an earlier version saved with a faulty drawing were drawn again: show it again. */
     data class InkRedrawn(val page: Int) : SessionEvent
 
+    /**
+     * A page was added or removed, and the file saved with it. Every page after it has a new
+     * number, and the undo list is empty: lay all the pages out again and show [showPage].
+     */
+    data class PagesRenumbered(val showPage: Int) : SessionEvent
+
+    /** A page wasn't added or removed, and nothing changed. [message] says why, for the owner. */
+    data class PageNotChanged(val message: String) : SessionEvent
+
     /** For the undo and redo buttons. */
     data class HistoryChanged(val canUndo: Boolean, val canRedo: Boolean) : SessionEvent
 

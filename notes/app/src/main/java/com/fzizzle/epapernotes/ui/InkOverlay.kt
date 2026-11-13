@@ -54,6 +54,12 @@ class InkOverlay {
         p.strokes.removeAll { it.first < p.changedAt }
     }
 
+    /**
+     * Forgets every page: a page was added or removed, so the pages after it have new
+     * numbers, and every stroke held here has just been saved into the PDF.
+     */
+    fun clear() = pages.clear()
+
     /** The page's version now: what a rendering asked for now will contain. */
     fun version(page: Int): Int = pages[page]?.version ?: 0
 

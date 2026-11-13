@@ -16,15 +16,18 @@ import com.fzizzle.epapernotes.library.Entry
 import com.fzizzle.epapernotes.library.FileOps
 import com.fzizzle.epapernotes.library.FolderEntry
 import com.fzizzle.epapernotes.library.PdfEntry
+import com.fzizzle.epapernotes.pdf.PdfFile
+import com.fzizzle.epapernotes.storage.SafeSave
 import java.io.File
 import java.nio.file.Files
 import java.util.concurrent.Executor
 
 /**
  * The library's changes to the owner's real files: New folder, and the long-press menu's
- * Rename, Move and Delete (decision 5). Each asks first, then runs FileOps on [disk], since it
- * can wait for a document to finish saving (decision 6). A refusal is shown as a toast, and
- * either way [afterwards] re-reads the folder.
+ * Rename, Move, Fresh attempt and Delete (decision 5). Each asks first (except Fresh attempt,
+ * which only adds a file), then runs FileOps on [disk], since it can wait for a document to
+ * finish saving (decision 6). A refusal is shown as a toast, and either way [afterwards]
+ * re-reads the folder.
  */
 class LibraryChanges(
     private val activity: Activity,
@@ -59,6 +62,7 @@ class LibraryChanges(
             setOnDismissListener { marked?.marked = false }
             menu.add("Rename").setOnMenuItemClickListener { askForName(root, entry); true }
             menu.add("Move").setOnMenuItemClickListener { askWhereTo(root, here, entry); true }
+            if (entry is PdfEntry) menu.add("Fresh attempt").setOnMenuItemClickListener { makeFreshAttempt(root, entry.file); true }
             menu.add("Delete").setOnMenuItemClickListener { askToDelete(root, entry); true }
             // A PDF shown in place of its small folder (FolderListing): the folder has no tile
             // of its own, so it's reached from here.
@@ -88,6 +92,19 @@ class LibraryChanges(
             leaveOut = entry.file.takeIf { entry is FolderEntry },
         ) { into -> change(root, { it.move(entry.file, into) }) { lastOpenedMoved(entry.file, File(into, entry.file.name)) } }
             .show(here)
+    }
+
+    /**
+     * A copy beside the PDF without the owner's ink, to do the workbook again. Nothing is asked:
+     * the original is left as it was, and the copy can be deleted like any other file.
+     */
+    private fun makeFreshAttempt(root: File, pdf: File) {
+        change(root, { ops ->
+            ops.freshAttempt(pdf) { from, to ->
+                // createNew: a whole file or nothing, and never over one that arrives meanwhile.
+                PdfFile.open(from).use { it.removeOwnItems(); SafeSave.createNew(to) { t -> it.saveTo(t) } }
+            }
+        })
     }
 
     /** It deletes the real files (spec §6.1), so it says what goes, including files the library doesn't show. */
@@ -149,6 +166,10 @@ class LibraryChanges(
                 }
                 when (result) {
                     FileOps.Result.Done -> onDone()
+                    is FileOps.Result.Made -> {
+                        Toast.makeText(activity, "Made '${result.file.nameWithoutExtension}'.", Toast.LENGTH_LONG).show()
+                        onDone()
+                    }
                     is FileOps.Result.Refused -> Toast.makeText(activity, result.reason, Toast.LENGTH_LONG).show()
                 }
                 afterwards { running-- }

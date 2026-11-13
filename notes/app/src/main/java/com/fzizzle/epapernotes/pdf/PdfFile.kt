@@ -11,6 +11,7 @@ import com.artifex.mupdf.fitz.PDFAnnotation
 import com.artifex.mupdf.fitz.PDFObject
 import com.artifex.mupdf.fitz.PDFPage
 import com.artifex.mupdf.fitz.Pixmap
+import com.artifex.mupdf.fitz.Rect
 import com.artifex.mupdf.fitz.RectI
 import com.artifex.mupdf.fitz.android.AndroidDrawDevice
 import com.fzizzle.epapernotes.doc.AddItems
@@ -224,6 +225,38 @@ class PdfFile private constructor(private val doc: PDFDocument) : PdfPages {
     }
 
     /**
+     * The new page is drawn with /Rotate 0 and the size page [after] is shown at, so it looks
+     * the same shape as its neighbour even when that one is turned. Its dots are its own page
+     * content: a plain drawing every viewer shows, not one of the app's items.
+     *
+     * It gets a /CropBox of its own, the whole page: a CropBox set on the page tree would
+     * otherwise be inherited by the new page and cut it down to part of itself.
+     */
+    override fun addDottedPage(after: Int) {
+        require(after in 0 until pageCount) { "no page $after" }
+        val size = displaySize(after)
+        val content = DottedPaper.content(size.width, size.height)
+        val page = doc.addPage(Rect(0f, 0f, size.width, size.height), 0, doc.newDictionary(), content)
+        // Numbers go in with push(Float), never push(PDFObject), which fitz 1.28.5 frees too early.
+        val crop = doc.newArray()
+        listOf(0f, 0f, size.width, size.height).forEach { crop.push(it) }
+        page.put("CropBox", crop)
+        page.put(ADDED_PAGE_KEY, true)
+        doc.insertPage(after + 1, page)
+        forgetAllPages()
+    }
+
+    /** A page without the key, which is every page that came with the PDF, answers false. */
+    override fun isAddedPage(page: Int): Boolean = doc.findPage(page).get(ADDED_PAGE_KEY).asBoolean()
+
+    override fun removeAddedPage(page: Int) {
+        require(pageCount > 1) { "page $page is the only page" }
+        require(isAddedPage(page)) { "page $page wasn't added by the app" }
+        doc.deletePage(page)
+        forgetAllPages()
+    }
+
+    /**
      * The ids of the app's items on each page that has been edited, so adding a stroke doesn't
      * walk through every stroke already there to check for its id (on a page of 1,500 strokes
      * that walk took ten times as long as the adding). Read from the PDF the first time a page
@@ -266,6 +299,12 @@ class PdfFile private constructor(private val doc: PDFDocument) : PdfPages {
     private fun forgetPage(page: Int) {
         idsByPage.remove(page)
         itemsByPage.remove(page)
+    }
+
+    /** A page was added or removed, so every later page has a new number: read them all from the PDF again. */
+    private fun forgetAllPages() {
+        idsByPage.clear()
+        itemsByPage.clear()
     }
 
     /**
@@ -332,6 +371,37 @@ class PdfFile private constructor(private val doc: PDFDocument) : PdfPages {
             change.pages.forEach { forgetPage(it) }
             throw e
         }
+    }
+
+    /**
+     * Takes every one of the app's annotations (strokes and snips) off every page, for a fresh
+     * attempt, and returns how many went. Other apps' annotations stay, and so do pages: a
+     * dotted page the owner added stays, empty.
+     *
+     * It goes by what marks an annotation as the app's, not by [items]: a stroke whose data no
+     * longer decodes isn't among the items, yet it is still the owner's ink. And nothing is
+     * decoded, so a page of snips doesn't have each picture made into a PNG just to remove it.
+     */
+    fun removeOwnItems(): Int {
+        var removed = 0
+        for (page in 0 until pageCount) {
+            // Asking for the ids alone is quick; most pages of a workbook have no writing.
+            if (!hasOwnItems(page)) continue
+            try {
+                onPage(page) { p ->
+                    p.annotations.orEmpty().filter { annotations.isOurs(it.getObject()) }.forEach {
+                        annotations.forget(it.getObject())
+                        p.deleteAnnotation(it)
+                        removed++
+                    }
+                    UPDATE_PAGE
+                }
+            } finally {
+                // Nothing of the app's is left on it (or, after a failure, it's read again).
+                forgetPage(page)
+            }
+        }
+        return removed
     }
 
     /**
@@ -478,6 +548,9 @@ class PdfFile private constructor(private val doc: PDFDocument) : PdfPages {
 
         /** How many pages' decoded items are remembered at once (see [itemsByPage]). */
         private const val ITEM_PAGES_KEPT = 4
+
+        /** The private key, in a page's dictionary, that marks a page the app added ([addDottedPage]). */
+        private const val ADDED_PAGE_KEY = "PNotesAdded"
 
         fun open(file: File): PdfFile {
             val opened = try {

@@ -2,6 +2,7 @@ package com.fzizzle.epapernotes.library
 
 import com.fzizzle.epapernotes.doc.ChangeJournal
 import com.fzizzle.epapernotes.doc.DocumentSession
+import com.fzizzle.epapernotes.storage.CopyNames
 import java.io.File
 import java.nio.file.Files
 
@@ -13,7 +14,8 @@ interface PageMemory {
 }
 
 /**
- * The library's long-press actions on the owner's real files: new folder, rename, move, delete.
+ * The library's long-press actions on the owner's real files: new folder, rename, move, delete,
+ * and a fresh attempt, which only adds a file and never changes the one it's made from.
  *
  * The app's own data follows each PDF (context decision 6): its journal, which may hold writing
  * not yet in the PDF, and its remembered page. Both are keyed by the PDF's path, so a rename
@@ -45,6 +47,8 @@ class FileOps(
 
     sealed interface Result {
         data object Done : Result
+        /** A new file was made: [file], for the toast to name. */
+        data class Made(val file: File) : Result
         /** [reason] is plain words, for a toast. */
         data class Refused(val reason: String) : Result
     }
@@ -103,6 +107,42 @@ class FileOps(
             lastPages.remove(pdf.path)
         }
         return if (allGone) Result.Done else Result.Refused("Some of '${from.name}' couldn't be deleted.")
+    }
+
+    /**
+     * A copy of the PDF [target] beside it, without the owner's ink, to try a workbook again
+     * ("W (attempt 2).pdf"). [writeClean] writes it from the original to the new name: it is
+     * passed in because taking the ink off needs MuPDF, which this file stays free of. The
+     * original is only read.
+     *
+     * [writeClean] must leave either a whole file at the new name or nothing, and never write
+     * over a file that arrives there meanwhile (SafeSave.createNew does both). So after a failed
+     * write, anything at that name is someone else's, and it is left alone.
+     */
+    fun freshAttempt(target: File, writeClean: (from: File, to: File) -> Unit): Result {
+        val from = target.normal()
+        targetProblem(from)?.let { return Result.Refused(it) }
+        if (!from.isFile || !from.extension.equals("pdf", ignoreCase = true)) return Result.Refused("Only a PDF can have a fresh attempt.")
+        // The copy is made from the file as its last save left it, with all the writing so far.
+        waitForSessions(listOf(from))?.let { return Result.Refused(it) }
+        // Ignoring case, as isTaken does. A folder that can't be read has no free name to find.
+        val there = from.parentFile!!.list() ?: return Result.Refused("'${from.parentFile!!.name}' can't be read just now.")
+        val to = CopyNames.attempt(from) { f -> there.any { it.equals(f.name, ignoreCase = true) } }
+        try {
+            writeClean(from, to)
+        } catch (e: Exception) {
+            log("fresh attempt of ${from.name} failed: $e")
+            return Result.Refused("A fresh attempt of '${from.name}' couldn't be made: ${e.message}")
+        }
+        // What the app kept under this name belongs to an earlier file of that name. Its page is
+        // dropped, so the copy opens at its start. Its journal is set aside, as a rename does,
+        // so that writing is never put onto the clean copy, and never lost either.
+        lastPages.remove(to.path)
+        val journal = ChangeJournal.journalFileFor(journalDir, to)
+        for (old in liveJournalFilesOf(to)) {
+            if (!old.renameTo(keptName(journal))) log("couldn't set aside ${old.name}")
+        }
+        return Result.Made(to)
     }
 
     /** How many PDFs are in [folder] and all its subfolders, for the delete question. */
