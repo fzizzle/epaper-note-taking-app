@@ -52,14 +52,17 @@ class LibraryChanges(
         askForText("New folder", "", "Make") { name -> change(root, { it.newFolder(here, name) }) }
     }
 
-    /** The long-press menu on [tile]. [here] is the folder on show, where Move's chooser starts. */
-    fun showMenu(root: File, here: File, tile: View, entry: Entry, openFolder: (File) -> Unit = {}) {
+    /**
+     * The long-press menu on [tile]. [here] is the folder on show, where Move's chooser starts.
+     * [mark] marks a file's tile, or none for null.
+     */
+    fun showMenu(root: File, here: File, tile: View, entry: Entry, mark: (File?) -> Unit = {}, openFolder: (File) -> Unit = {}) {
         if (busy) return
         // The tile stays grey while its menu is open, so it's clear which one the menu is for.
-        val marked = tile as? LibraryItemView
-        marked?.marked = true
+        // By file, not by view: a folder refresh meanwhile can give the view to another file.
+        mark(entry.file)
         PopupMenu(activity, tile).apply {
-            setOnDismissListener { marked?.marked = false }
+            setOnDismissListener { mark(null) }
             menu.add("Rename").setOnMenuItemClickListener { askForName(root, entry); true }
             menu.add("Move").setOnMenuItemClickListener { askWhereTo(root, here, entry); true }
             if (entry is PdfEntry) menu.add("Fresh attempt").setOnMenuItemClickListener { makeFreshAttempt(root, entry.file); true }

@@ -211,7 +211,7 @@ class FileOps(
 
     /**
      * What a delete removes: the journal and a rewrite's leftover `.new`. Journals set aside as
-     * `.kept-` hold earlier writing that plan 5 will rescue, and the delete question doesn't
+     * `.kept-` hold earlier writing that couldn't be put into a file or a copy, and the delete question doesn't
      * mention them, so they stay.
      */
     private fun liveJournalFilesOf(pdf: File): List<File> {
@@ -219,7 +219,7 @@ class FileOps(
         return journalFilesOf(pdf).filterNot { it.name.startsWith(kept) }
     }
 
-    /** A name as DocumentSession sets journals aside, which plan 5 will turn into copies. */
+    /** A name as DocumentSession sets journals aside. */
     private fun keptName(journal: File): File {
         var time = System.currentTimeMillis()
         while (true) {

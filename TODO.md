@@ -45,6 +45,7 @@ The UI and UX review on the tablet, and its fixes: [plan](docs/superpowers/plans
 - [x] A shorter copy message after the first three, a Paste bubble like the strip, the pen mark inside its circle (Task 6).
 - [x] Owner checklist: [notes/TESTING-ui-review.md](notes/TESTING-ui-review.md): all checks pass (owner, 2026-11-12). [Results](docs/superpowers/ui-review-results.md).
 - [ ] Erase trail and erase flash: their own plan (see Known bugs above).
+- [x] The two left from the branch review (2026-11-13, branch `leftovers`): the name of the copy is put in the strip at once after "save to a copy"; the grey mark of a long-pressed tile stays with its file when the folder refreshes under the open menu.
 
 ## Owner session (2026-11-13)
 
@@ -203,11 +204,14 @@ Next, each with its plan and its own decisions: [library design](docs/superpower
   - [x] **Owner library session** (Task 7, hard stop): work through [notes/TESTING-library.md](notes/TESTING-library.md), including its "Also check (tools fixes)" section. Rename, move and delete only on copies or a scratch folder. All checks pass (owner, 2026-11-12 and again 2026-11-13).
   - [x] Answer the two questions in the checklist: a changed file's tile keeps its old picture until the new one is ready; the folder-delete question also mentions non-PDF files. Not answered one by one; both stay as built.
   - [x] Write up the results (`docs/superpowers/library-results.md`) and record any design changes in the spec. Recorded here instead; no design changes.
-- [ ] Plan 5: conflicts and crash rescue (written only after the owner approves plans 3 and 4: both approved, 2026-11-13).
-  - [ ] A file changed on disk while open: keep both versions, save the app's writing as `<name> (my edits YYYY-MM-DD).pdf`, and continue in the copy (spec §7.4).
-  - [ ] Crash replay onto a changed file: turn set-aside journals (`.kept-…`) into a "(my edits …)" copy of the version they were drawn on.
-  - [ ] A session whose only change is the redraw of old mirrored ink counts as no writing, so it never makes a conflict copy.
-  - [ ] Show a lasting notice (not only a toast) when saving has stopped: changed on disk, repeated save failures, or a change that couldn't be written.
+- [x] Plan 5: conflicts and crash rescue. Built 2026-11-13 on the branch `leftovers`, without a plan document of its own: the owner said "fix the problems" after the inspection of that day, and made the one open decision (below). 524 laptop tests and 126 tablet tests pass.
+  - [x] A file changed on disk while open, with unsaved writing: both versions are kept. The file is left as it is, the app's version is saved as `<name> (my edits YYYY-MM-DD).pdf`, and the session continues in the copy, undo list and all (spec §7.4). A file deleted or moved elsewhere is treated the same way.
+  - [x] Changed on disk with nothing unsaved: the new version is opened in its place. Looked for at every save and each time the writing screen comes back in front (size and date first, so an unchanged file isn't read). Tried on the tablet over adb: a 124-page file swapped for a 125-page one while the screen slept showed 125 pages on waking.
+  - [x] Crash replay onto a changed file: the writing is put on a copy of the file as it is now, never into the file (owner's decision, 2026-11-13: the version it was written on is gone by then, and keeping a private copy of every open PDF would cost a full copy after each save). Writing on a page the file no longer has can't be placed: it's kept aside and the owner is told how many changes. Journals already set aside as `.kept-…` are left alone; the tablet had none (checked 2026-11-13).
+  - [x] A journal from a kill in the middle of adding or removing a page is never rescued: the journal notes the page change before the save ("renumbering"), and such a journal is set aside as before.
+  - [x] A session whose only change is the redraw of old ink counts as no writing: the new version is opened, and no copy is made.
+  - [x] A lasting notice when writing isn't reaching a file: the strip says "Not saved · tap" where the file's name is, and a tap says why. For a save that failed twice running, a full tablet (until the next good save), and a change that couldn't be written (until the file is closed).
+  - [ ] **Owner check:** [notes/TESTING-conflicts.md](notes/TESTING-conflicts.md). The copy made while writing needs the pen, so it has only been run by the tests, not on the screen.
 
 ## Later (not in the first version)
 

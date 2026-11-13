@@ -24,6 +24,7 @@ import android.widget.TextView
 import android.widget.Toast
 import com.fzizzle.epapernotes.doc.AddItems
 import com.fzizzle.epapernotes.doc.Change
+import com.fzizzle.epapernotes.doc.CopyReason
 import com.fzizzle.epapernotes.doc.DocumentSession
 import com.fzizzle.epapernotes.doc.RemoveItems
 import com.fzizzle.epapernotes.doc.ReplaceItems
@@ -112,6 +113,10 @@ class WritingActivity : Activity() {
     private var stripSide = 0
     /** The open file's name, in the strip beside ←. */
     private lateinit var fileName: TextView
+    /** Why writing isn't reaching a file right now, in full, or null: see [setNotSaving]. */
+    private var notSaving: String? = null
+    private var failedSaves = 0 // in a row
+    private var writingStopped = false // SessionEvent.WritingStopped: it lasts until the file is closed
     private var pageCount = 0
     private lateinit var pen: PenInput
     private lateinit var toolButtons: Map<Tool, StripButton>
@@ -400,6 +405,8 @@ class WritingActivity : Activity() {
             isSingleLine = true
             ellipsize = android.text.TextUtils.TruncateAt.START
             setPadding(gap, 0, 0, 0)
+            // Only does anything while it says "Not saved" ([notSaving]).
+            setOnClickListener { explainNotSaving() }
         }
         val strip = CentredStrip(this, gap = gap, start = left, middle = island, end = right, middleHeight = side, title = fileName).apply {
             setBackgroundColor(Color.WHITE)
@@ -696,6 +703,8 @@ class WritingActivity : Activity() {
         // Checked again when it runs: the screen may have been left in between.
         if (documentShown) pages.post { if (resumed) penOn() }
         if (showPending) retryShowWhenIdle()
+        // A sync app may have changed the file while the screen was away (spec §7.4).
+        if (documentShown) session.checkFile()
     }
 
     /**
@@ -1957,14 +1966,38 @@ class WritingActivity : Activity() {
         // or closed. Messages are still shown then: a failed save must never be silent. But
         // nothing touches the screen any more, and a question shown on a closed screen crashes.
         val needsTheScreen = event is SessionEvent.NeedsRepairDecision || event is SessionEvent.InkRedrawn ||
-            event is SessionEvent.PageChanged || event is SessionEvent.HistoryChanged || event is SessionEvent.PagesRenumbered
+            event is SessionEvent.PageChanged || event is SessionEvent.HistoryChanged || event is SessionEvent.PagesRenumbered ||
+            event is SessionEvent.Reloaded
         if (needsTheScreen && (isFinishing || isDestroyed)) return
         when (event) {
-            SessionEvent.Saved -> Unit // saving is silent when it works
-            is SessionEvent.SaveFailed -> toast("Couldn't save: ${event.message}. Your writing is kept safe and will be saved again.")
-            SessionEvent.JournalFailed -> toast("Storage is full: writing can't be kept safe until there's room.")
-            SessionEvent.ChangedOnDisk -> toast("This file was changed elsewhere, so it isn't being saved into. Your writing is kept safe.")
-            SessionEvent.WritingStopped -> toast("A change couldn't be written into this file, so it isn't being saved into. Your writing is kept safe in the app.")
+            SessionEvent.Saved -> {
+                // Saving is silent when it works. It also ends what a failed save or a full
+                // tablet put in the strip; a change that couldn't be written stays to the end.
+                failedSaves = 0
+                if (!writingStopped) setNotSaving(null)
+            }
+            is SessionEvent.SaveFailed -> {
+                toast("Couldn't save: ${event.message}. Your writing is kept safe and will be saved again.")
+                // Once can be a passing thing, and the message says so. Twice running is a
+                // state the owner should be able to see for as long as it lasts.
+                if (++failedSaves >= 2) {
+                    setNotSaving("Saving keeps failing: ${event.message}.\n\nYour writing is kept safe in the app, and saving is tried again every half minute.")
+                }
+            }
+            SessionEvent.JournalFailed -> {
+                toast("Storage is full: writing can't be kept safe until there's room.")
+                setNotSaving("The tablet's own storage is full, so new writing can't be kept safe against a crash until there's room.\n\nIt is still saved into the file as you go.")
+            }
+            SessionEvent.WritingStopped -> {
+                toast("A change couldn't be written into this file, so it isn't being saved into. Your writing is kept safe in the app.")
+                writingStopped = true
+                setNotSaving("A change couldn't be written into this file, so it isn't being saved into.\n\nEverything you've written is kept safe in the app. Close the file and open it again to bring it back.")
+            }
+            SessionEvent.Reloaded -> {
+                toast("This file was changed elsewhere. This is the new version.")
+                // Its pages may be other pages now: everything is laid out again, as after a page is added.
+                pagesRenumbered(pages.viewport?.page ?: 0)
+            }
             SessionEvent.NeedsRepairDecision -> askAboutRepair()
             is SessionEvent.Replayed -> toast("Recovered ${event.count} change(s) that hadn't been saved.")
             // A page that turned has a new size and place on screen: lay the pages out again first.
@@ -1982,12 +2015,25 @@ class WritingActivity : Activity() {
             is SessionEvent.EarlierWritingKept -> toast("Unsaved writing from before this file changed was kept safe.")
             is SessionEvent.SavedToCopy -> {
                 // The session writes into the copy from here on, so the copy is what "Continue"
-                // and the remembered page must follow, not the damaged original.
+                // and the remembered page must follow, not the original.
                 path = event.copy.path
-                fileName.text = event.copy.nameWithoutExtension
                 pages.viewport?.let { lastPages.set(path, it.page, pageCount) }
                 LibraryPrefs(this).lastOpened = event.copy
-                toast("Saved to ${event.copy.name}.")
+                val name = event.copy.nameWithoutExtension
+                val aside = if (event.notPlaced > 0) " ${event.notPlaced} change(s) were on pages it no longer has, and are kept aside." else ""
+                toast(
+                    when (event.why) {
+                        CopyReason.DAMAGED -> "Saved to ${event.copy.name}."
+                        CopyReason.CHANGED_WHILE_OPEN -> "This file was changed elsewhere. Both are kept: your writing continues in \"$name\"."
+                        CopyReason.RESCUED -> "This file was changed elsewhere before your last writing was saved. That writing is in \"$name\", now open.$aside"
+                    },
+                )
+                // The strip's name follows, on the panel too, unless the screen is closing.
+                if (!isFinishing && !isDestroyed) {
+                    failedSaves = 0
+                    if (!writingStopped) notSaving = null
+                    showFileName()
+                }
             }
             is SessionEvent.OpenFailed -> {
                 // Said plainly that it can't be opened: not the silent failure LaunchOpen guards against.
@@ -1996,6 +2042,48 @@ class WritingActivity : Activity() {
                 finish()
             }
         }
+    }
+
+    /**
+     * UI thread. Writing isn't reaching a file, for the reason [why] (null: it is again). While
+     * it lasts, the strip says "Not saved" where the file's name is, and a tap there says why:
+     * a toast alone is gone in seconds, and the owner could write on for an hour unaware.
+     */
+    private fun setNotSaving(why: String?) {
+        if (isFinishing || isDestroyed) return
+        val was = notSaving
+        notSaving = why
+        // Only the first reason and the end change the strip: each change is a flash while fast-ink is on.
+        if ((was == null) != (why == null)) showFileName()
+    }
+
+    /** The strip's name: the open file's, or the "Not saved" mark. Put on the panel at once, with fast-ink on too. */
+    private fun showFileName() {
+        val notSaved = notSaving != null
+        fileName.text = if (notSaved) "Not saved · tap" else File(path).nameWithoutExtension
+        fileName.setTextColor(if (notSaved) Color.BLACK else LibraryLook.GRAPHITE)
+        fileName.typeface = if (notSaved) android.graphics.Typeface.DEFAULT_BOLD else android.graphics.Typeface.DEFAULT
+        showStripChange(true)
+    }
+
+    /** A tap on "Not saved": why, in full. Nothing happens on a tap on the file's name. */
+    private fun explainNotSaving() {
+        val why = notSaving ?: return
+        if (dialogOpen || pen.isWriting || screenPenDown) return
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Not saved")
+            .setMessage(why)
+            .setPositiveButton("OK", null)
+            .create()
+        // As for "Go to page": fast-ink would freeze the message on screen.
+        dialogOpen = true
+        pausePenAndRedraw()
+        dialog.setOnDismissListener {
+            dialogOpen = false
+            handler.removeCallbacks(resumeFastInk)
+            handler.postDelayed(resumeFastInk, SHOW_PAUSE_MS)
+        }
+        dialog.show()
     }
 
     /** Spec §7.3: a repaired file is never written to until the owner chooses. */

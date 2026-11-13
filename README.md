@@ -8,7 +8,7 @@
 
 Jot is a lightweight Android app that works on top of your own folders, the way Obsidian works over a folder of Markdown files. Your PDFs stay where you put them, and the app shows exactly what's on disk. Your handwriting is saved back into those same files. Nothing gets imported, and there's no account or proprietary sync. Sync the folder any way you like: Syncthing, a cloud folder, or USB.
 
-> **Status:** in use on the tablet. The writing screen, the tools, the library and the readability settings are built and merged. Owner test sessions for the tools and the library are still open, and conflict copies (plan 5) come next. See [TODO.md](TODO.md) and the [design document](docs/superpowers/specs/2026-11-07-epaper-pdf-notes-design.md).
+> **Status:** in use on the tablet. The writing screen, the tools, the library, the readability settings, dotted pages and conflict copies are built, and the owner's test sessions have passed. Still open: the flash after each erase and a trail while erasing. See [TODO.md](TODO.md) and the [design document](docs/superpowers/specs/2026-11-07-epaper-pdf-notes-design.md).
 
 ## Screenshots
 
@@ -60,6 +60,7 @@ The stock Boox Notes app writes well but gets in the way:
 - **Readability:** sharp zoomed text, a contrast setting, trimmed margins, dark text as pure black.
 - **One toolbar strip,** nothing else on screen.
 - **Autosave** and crash-safe saving.
+- **Sync-safe:** if a file changes on disk while you're writing in it, both versions are kept. Your writing goes on in a copy named `<name> (my edits DATE).pdf`.
 
 Handwriting is saved as standard PDF annotations, so any PDF viewer shows it. The original page is never changed.
 

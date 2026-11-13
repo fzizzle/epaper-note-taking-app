@@ -110,6 +110,21 @@ class ChangeJournalTest {
         assertEquals(all, j.read()!!.changes)
     }
 
+    /** A page change notes itself before its save, and a journal rewritten after the save has no such note. */
+    @Test fun renumberingLineIsReadBackAndGoesWithARewrite() {
+        val j = journal()
+        j.start(base)
+        j.append(add(0, dot))
+        assertFalse(j.read()!!.renumbering)
+        j.markRenumbering()
+        j.append(add(2, line)) // written after it, with the new numbers
+        val read = j.read()!!
+        assertTrue(read.renumbering)
+        assertEquals(listOf(add(0, dot), add(2, line)), read.changes)
+        j.rewrite(base, read.changes)
+        assertFalse(j.read()!!.renumbering)
+    }
+
     /** Review 2.1: the journal notes a save just before the PDF is swapped in, and how many changes it holds. */
     @Test fun savingLineIsReadBack() {
         val j = journal()
