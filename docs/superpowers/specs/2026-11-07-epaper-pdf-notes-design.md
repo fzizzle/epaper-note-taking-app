@@ -65,7 +65,7 @@ It should be lightweight and fast, and it should do a small set of core things v
 - A **refresh** button and a **new folder** button sit at the top.
 - The grid **updates automatically** when files change on disk (added, removed, renamed, moved, or modified by a laptop, a sync app, or USB), and refresh forces a rescan.
 - **Long-press a tile** for a small menu: rename, move, delete. Delete asks for confirmation, because it deletes the real file. A PDF's menu also has **Fresh attempt** (owner's decision, 2026-11-12): a copy beside it named `<name> (attempt 2).pdf` (then 3, 4, …) without the owner's ink and pasted snips, to try a workbook again. Dotted pages the owner added stay, empty; marks made in other apps stay; the original isn't touched; a name already taken is never written over.
-- Thumbnails are cached in the app's own cache storage and regenerated only when a file changes, so the grid stays fast.
+- Thumbnails are cached in the app's own cache storage and regenerated only when a file changes, so the grid stays fast. Since 2026-11-13 ([lighter thumbnails plan](../plans/2026-11-13-lighter-thumbnails.md)): they are made at the size a tile shows them (240 px wide); while the library is open and idle, the thumbnails of every PDF in it that has none are drawn ahead, quietly, and never while a document is open; a folder is shown once its visible thumbnails are read from the cache, so it comes on in one refresh, and any still missing come on together.
 - Tapping a PDF opens it **at the page where it was last left**. That position is remembered in the app's private storage, never in the owner's folders.
 - "Bulk import" is just copying many PDFs into a folder. There is no import feature.
 
