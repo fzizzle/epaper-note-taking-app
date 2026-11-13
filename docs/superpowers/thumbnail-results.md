@@ -21,3 +21,4 @@ A thumbnail drawn from its PDF took 24 ms on average in the app, of which storin
 |---|---|---|---|---|
 | 2. A cached thumbnail isn't drawn again for its facts | tablet test `aCachedThumbnailWithoutFactsIsNotDrawnAgain`: draws for a cached thumbnail with no facts file | 1 (failed first) | 0; facts read from the PDF in about 1 ms | yes |
 | 2. Storing sweeps old versions by name | time to store one thumbnail, cold ML visit, two runs | 5.7 ms | 4.3 to 4.6 ms (a thumbnail in all: 24 → 23 ms) | yes: over 10% of its own measure |
+| 3. Thumbnails at the size they're shown (240 by at most 340) | a thumbnail in memory (16-bit) / on disk / the time to make one | 254 KB / 36 KB / 6 ms PNG | 163 KB / 27 KB / 4 ms PNG. A folder visit takes as long as before (ML first visit 638 ms): drawing the page and opening the PDF cost the same at either size | yes: a third less memory and disk |

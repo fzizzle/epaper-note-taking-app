@@ -213,7 +213,7 @@ class ThumbnailLoader(
         if (cached != null && cachedFacts != null && !intoMemory) return finished(key, ok = true)
         // A cached file can vanish before it's read, or be damaged: then it's rendered again.
         // One cached before thumbnails had a height limit is far too tall: also rendered again.
-        val decoded = cached?.takeIf { cachedFacts != null }?.let { BitmapFactory.decodeFile(it.path, SMALL) }?.takeIf { it.height <= THUMB_MAX_HEIGHT_PX }
+        val decoded = cached?.takeIf { cachedFacts != null }?.let { BitmapFactory.decodeFile(it.path, SMALL) }?.takeIf { it.height <= OLD_MAX_HEIGHT_PX }
         val bitmap = decoded ?: try {
             render(pdf, forScreen = intoMemory)
         } catch (e: Throwable) {
@@ -317,6 +317,12 @@ class ThumbnailLoader(
     private companion object {
         const val TAG = "Notes"
         const val MEMORY_BYTES = 40 * 1024 * 1024
+        /**
+         * The tallest cached thumbnail still used: the height limit before thumbnails were made
+         * smaller (300 by at most 450). Those are kept until their file changes, not drawn again;
+         * only one from before there was any limit at all is too tall.
+         */
+        const val OLD_MAX_HEIGHT_PX = 450
         /** How many pages are looked at for the owner's writing: past this a file just counts as having none. */
         const val INK_PAGES_LOOKED_AT = 300
         /** 16-bit colour: half the memory, and at thumbnail size on e-ink it looks the same. */

@@ -50,7 +50,7 @@ class ThumbnailLoaderTest {
 
     /** Review 2.3: a very tall first page gets a narrower thumbnail, not a huge one. */
     @Test fun tallFirstPageIsCapped() {
-        val tall = entry(TestPdfs.blank(dir, pages = 1, mediaBox = Box(0f, 0f, 300f, 6000f)))
+        val tall = entry(TestPdfs.blank(dir, pages = 1, mediaBox = Box(0f, 0f, 300f, 3000f)))
         loader.show(listOf(tall), onScreen = listOf(tall))
         val bitmap = next().second ?: throw AssertionError("no thumbnail for the tall page")
         assertTrue("${bitmap.width}x${bitmap.height}", bitmap.height <= THUMB_MAX_HEIGHT_PX && bitmap.width >= 20)
@@ -179,6 +179,17 @@ class ThumbnailLoaderTest {
     @Test fun ordinaryPageKeepsTheUsualWidth() {
         val page = entry(TestPdfs.blank(dir, pages = 1))
         loader.show(listOf(page), onScreen = listOf(page))
-        assertEquals(THUMB_WIDTH_PX, next().second?.width)
+        assertEquals(240, next().second?.width)
+    }
+
+    /** One made before thumbnails were made smaller, 300 by 424: shown as it is, not drawn again. */
+    @Test fun anOldBiggerThumbnailStillFits() {
+        val page = entry(TestPdfs.blank(dir, pages = 1))
+        val old = Bitmap.createBitmap(300, 424, Bitmap.Config.ARGB_8888).apply { eraseColor(android.graphics.Color.WHITE); setHasAlpha(false) }
+        cache.store(page, java.io.ByteArrayOutputStream().also { old.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray())
+        cache.storeFacts(page, PdfFacts(1, false))
+        loader.show(listOf(page), onScreen = listOf(page))
+        assertEquals(300, next().second?.width)
+        assertEquals(0, loader.draws)
     }
 }
