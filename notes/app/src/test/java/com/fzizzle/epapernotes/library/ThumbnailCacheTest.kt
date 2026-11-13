@@ -75,6 +75,18 @@ class ThumbnailCacheTest {
         assertNull(cache.cached(deleted))
     }
 
+    @Test fun storeSweepsOnlyThisFilesOlderVersions() {
+        val old = pdf("/s/a.pdf", 10, 5)
+        val others = listOf(pdf("/s/b.pdf"), pdf("/s/c.pdf", 3, 3))
+        others.forEach { cache.store(it, byteArrayOf(9)); cache.storeFacts(it, PdfFacts(2, false)) }
+        cache.store(old, byteArrayOf(1))
+        cache.storeFacts(old, PdfFacts(4, true))
+        cache.store(pdf("/s/a.pdf", 12, 7), byteArrayOf(2))
+        assertNull(cache.cached(old))
+        assertNull(cache.facts(old))
+        others.forEach { assertTrue(cache.cached(it) != null); assertEquals(PdfFacts(2, false), cache.facts(it)) }
+    }
+
     @Test fun factsAreStoredBesideTheThumbnail() {
         val a = pdf("/s/a.pdf", 10, 5)
         assertNull(cache.facts(a))
@@ -158,11 +170,16 @@ class ThumbnailCacheTest {
      * memory, and the loader then drew tiles again and again.
      */
     @Test fun tallPageGetsANarrowerThumbnail() {
-        assertEquals(THUMB_WIDTH_PX, thumbWidthPx(612f, 792f)) // an ordinary page: as before
-        assertEquals(THUMB_WIDTH_PX, thumbWidthPx(960f, 540f)) // a slide
-        assertEquals(THUMB_WIDTH_PX, thumbWidthPx(300f, 450f)) // exactly at the limit
-        val narrow = thumbWidthPx(300f, 6000f)
-        assertTrue("$narrow px wide", narrow >= 20 && narrow * 6000f / 300f <= THUMB_MAX_HEIGHT_PX)
+        // Made at the size a tile shows them (lighter thumbnails plan, decision 3): 240 by at most 340.
+        assertEquals(240, THUMB_WIDTH_PX)
+        assertEquals(340, THUMB_MAX_HEIGHT_PX)
+        assertEquals(240, thumbWidthPx(612f, 792f)) // an ordinary page
+        assertEquals(240, thumbWidthPx(960f, 540f)) // a slide
+        assertEquals(240, thumbWidthPx(240f, 340f)) // exactly at the limit
+        assertEquals(226, thumbWidthPx(300f, 450f)) // a little taller: a little narrower
+        // A long page, but not so long that the 20 px floor is reached (that's the next line).
+        val narrow = thumbWidthPx(300f, 3000f)
+        assertTrue("$narrow px wide", narrow > 20 && narrow * 3000f / 300f <= THUMB_MAX_HEIGHT_PX)
         assertEquals(20, thumbWidthPx(300f, 600_000f)) // never too thin to see
         assertEquals(THUMB_WIDTH_PX, thumbWidthPx(0f, 0f)) // a page with no size: nothing to work out
     }

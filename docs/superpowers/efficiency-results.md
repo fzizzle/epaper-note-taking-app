@@ -4,6 +4,10 @@ Plan: [efficiency](plans/2026-11-12-efficiency.md). Branch: `efficiency`. Tablet
 
 Numbers driven over adb are from the **debug** build, before and after alike: the adb shortcuts that open a file or set the library folder only exist there. Pen strokes can't be scripted (the tablet blocks injected pen events), so the pen-side numbers come from the owner's own session log of 2026-11-12 (release build of main) and from the owner's check at the end.
 
+## Verdict
+
+Owner, 2026-11-13: every check in the [owner checklist](../../notes/TESTING-efficiency.md) passes, including the run of erases ending in one refresh (E1) and the ten-second autosave (E2). Both decisions stand as built.
+
 ## Before (2026-11-12, main at 6c82ee9)
 
 | What | How | Before |

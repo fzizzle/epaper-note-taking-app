@@ -33,6 +33,7 @@ import com.fzizzle.epapernotes.library.FolderListing
 import com.fzizzle.epapernotes.library.FolderWatch
 import com.fzizzle.epapernotes.library.HookPath
 import com.fzizzle.epapernotes.library.LaunchOpen
+import com.fzizzle.epapernotes.library.LibraryWalk
 import com.fzizzle.epapernotes.library.PdfEntry
 import com.fzizzle.epapernotes.library.ThumbnailCache
 import com.fzizzle.epapernotes.library.TileMarks
@@ -204,6 +205,9 @@ class LibraryActivity : Activity() {
         showingLibrary = true
         // Started only now: its daily tidy-up, without file access, would think every PDF gone.
         if (prefs.showThumbnails && thumbnails == null) thumbnails = newThumbnails()
+        // Paused when a document was asked for (open); taken up again here even if the document
+        // closed before the library ever stopped (one that couldn't be opened, say).
+        thumbnails?.resume()
 
         // The adb shortcuts (--es root, --es path), for checks: only in a debug build. This
         // screen is the launcher's, so any app could send them otherwise (decision 4).
@@ -399,6 +403,11 @@ class LibraryActivity : Activity() {
     private fun list(redrawTiles: Boolean = false, afterSaveOf: File? = null, cameBackFrom: File? = null, then: () -> Unit = {}) {
         val root = root ?: return then()
         val wanted = folder ?: root
+        // A visit (another folder, or back from a document), not a re-read after a change on disk: timed for the log.
+        if (wanted != shownFolder || cameBackFrom != null) startVisit()
+        // Where the screen will be in the folder, so the thumbnails read ahead are the ones it shows.
+        val firstShown = if (wanted == shownFolder) grid.firstVisiblePosition else 0
+        val loader = thumbnails
         val ask = ++listed
         val last = prefs.lastOpened
         // Watched before it's read (review 2.10): a file landing while it's read still re-lists.
@@ -440,6 +449,17 @@ class LibraryActivity : Activity() {
             // The picture is only read when the row will change.
             val resumePicture = if (resume != null && resume != shownContinue) continuePicture.load(resume.file) else null
             Log.i(TAG, "library listed ${shown.path} n=${entries.size} ms=${SystemClock.uptimeMillis() - start}")
+            // The thumbnails of the tiles about to be shown, from the cache (a couple of
+            // milliseconds each), so the folder is drawn once, with its pictures, rather than
+            // grey and then again. Not in the list view, which shows none.
+            // Not after Refresh: its point is that every picture is made again.
+            if (loader != null && !prefs.listView && !redrawTiles) {
+                val from = cameBackFrom?.let { f -> entries.indexOfFirst { it.file == f } }?.takeIf { it >= 0 }?.let { (it - FIRST_SCREEN_TILES / 2).coerceAtLeast(0) }
+                    ?: firstShown.coerceIn(0, entries.size)
+                val upcoming = entries.drop(from).take(FIRST_SCREEN_TILES).filterIsInstance<PdfEntry>()
+                val read = loader.warm(upcoming, WARM_BUDGET_MS)
+                if (read > 0) Log.i(TAG, "thumbnails read ahead n=$read")
+            }
             main.post {
                 if (ask == listed && !isDestroyed) showListing(shown, entries, progress, pageTexts, courseColours, resume, resumePicture, rootMissing, redrawTiles, cameBackFrom)
                 then()
@@ -490,11 +510,13 @@ class LibraryActivity : Activity() {
         }
         continueRow.visibility = if (resume != null) View.VISIBLE else View.GONE
         // A document just left may only have moved to another page: the file is the same, its bar isn't.
+        if (visitStartedAt != 0L) visitGoes++ // this listing draws the grid
         val changed = redrawTiles || entries != adapter.entries || adapter.thumbnails != (thumbnails != null) || progress != this.progress || coloursChanged
         this.progress = progress
         this.pageTexts = pageTexts
         if (changed || adapter.listView != prefs.listView) {
             adapter.show(entries, thumbnails = thumbnails != null, dropPictures = redrawTiles, listView = prefs.listView)
+            PanelRefresh.gentle(grid)
         }
         // Back from a document (decision 7): its tile is brought into view if it isn't, and
         // marked until the next touch, so the eye finds its place again.
@@ -519,7 +541,10 @@ class LibraryActivity : Activity() {
         }
         emptyNote.visibility = if (entries.isEmpty()) View.VISIBLE else View.GONE
         tilesOnScreenChanged()
+        startDrawingAhead()
         logShown(waitForDraw = changed)
+        // The grid lays its tiles out on the next frame: look then.
+        grid.post { logFolderReadyIfSo() }
     }
 
     /** "library shown": from onResume to the grid on screen (Task 6 times leaving a document by it). */
@@ -602,32 +627,94 @@ class LibraryActivity : Activity() {
 
     private fun factsReady() {
         main.removeCallbacks(showArrivedFacts)
-        main.postDelayed(showArrivedFacts, TILE_BATCH_MS)
+        main.postDelayed(showArrivedFacts, FACTS_BATCH_MS)
     }
 
     /**
      * Thumbnails that have arrived and aren't on their tiles yet. They come one at a time, a
      * few milliseconds apart, and each tile drawn by itself is a panel update of its own: a
-     * folder filled in tile by tile. Those arriving within [TILE_BATCH_MS] go on together.
+     * folder filled in tile by tile. They go on together once all the tiles on screen have
+     * theirs, or [MISSING_WAIT_MS] after the first came at the latest.
      */
     private val pendingThumbnails = HashMap<PdfEntry, Bitmap?>()
     private val showPendingThumbnails = Runnable {
+        var onTiles = 0
         for (i in 0 until grid.childCount) {
             val tile = grid.getChildAt(i) as? TileView ?: continue
             val entry = tile.entry as? PdfEntry ?: continue
             if (pendingThumbnails.containsKey(entry)) {
                 tile.showBitmap(pendingThumbnails[entry])
                 tile.showMarks(marksFor(entry)) // its facts came with it
+                onTiles++
             }
         }
-        Log.i(TAG, "thumbnails shown n=${pendingThumbnails.size}")
+        Log.i(TAG, "thumbnails shown n=$onTiles of ${pendingThumbnails.size}")
+        // Only when a tile on screen changed: a picture that came for a folder since left (or
+        // for a tile scrolled away) is kept in memory, and costs no refresh of the panel.
+        if (onTiles > 0) {
+            PanelRefresh.gentle(grid)
+            if (visitStartedAt != 0L) visitGoes++
+        }
         pendingThumbnails.clear()
+        logFolderReadyIfSo()
+    }
+
+    /** The loader and library folder the drawing ahead was last started for: once each. */
+    private var aheadFor: Pair<ThumbnailLoader, File>? = null
+
+    /**
+     * Once the library is on screen, the thumbnails of every PDF in it that has none are drawn
+     * into the cache, quietly (lighter thumbnails plan, decision 2), so a folder visited for
+     * the first time comes on at once. The loader does it only when nothing on screen waits,
+     * and stops while a document is open. Again for a new library folder or a new loader
+     * (thumbnails switched off and on).
+     */
+    private fun startDrawingAhead() {
+        val loader = thumbnails ?: return
+        val root = root ?: return
+        if (aheadFor == loader to root) return
+        aheadFor = loader to root
+        loader.drawAhead(LibraryWalk.pdfsUnder(root))
+    }
+
+    // A folder visit, for the "folder ready" log line: when it was asked for, how many times
+    // the grid has been drawn with pictures since, and the loader's draw count then.
+    private var visitStartedAt = 0L
+    private var visitGoes = 0
+    private var visitDrawsAtStart = 0
+
+    private fun startVisit() {
+        visitStartedAt = SystemClock.uptimeMillis()
+        visitGoes = 0
+        visitDrawsAtStart = thumbnails?.draws ?: 0
+    }
+
+    /**
+     * Once every PDF tile on screen has its picture (or can't have one), logs how long the
+     * visit took, how many times the grid was drawn on the way, and how many thumbnails had to
+     * be drawn from their PDFs rather than read from the cache. Once per visit.
+     */
+    private fun logFolderReadyIfSo() {
+        if (visitStartedAt == 0L) return
+        val loader = thumbnails
+        val pdfs = onScreen().filterIsInstance<PdfEntry>()
+        if (loader != null && pdfs.any { loader.bitmapFor(it) == null && !loader.failedFor(it) }) return
+        val drawn = (loader?.draws ?: 0) - visitDrawsAtStart
+        Log.i(TAG, "folder ready ms=${SystemClock.uptimeMillis() - visitStartedAt} goes=$visitGoes drawn=$drawn cached=${(pdfs.size - drawn).coerceAtLeast(0)}")
+        visitStartedAt = 0L
     }
 
     private fun thumbnailReady(pdf: PdfEntry, bitmap: Bitmap?) {
         val waiting = pendingThumbnails.isNotEmpty()
         pendingThumbnails[pdf] = bitmap
-        if (!waiting) main.postDelayed(showPendingThumbnails, TILE_BATCH_MS)
+        // On together once every tile on screen has its picture (or can't have one), or at the
+        // latest MISSING_WAIT_MS after the first arrived: one refresh, not one per few tiles.
+        if (thumbnails?.waitingOnScreen() != true) {
+            main.removeCallbacks(showPendingThumbnails)
+            showPendingThumbnails.run()
+        } else if (!waiting) {
+            main.postDelayed(showPendingThumbnails, MISSING_WAIT_MS)
+        }
     }
 
     private fun switchThumbnails(on: Boolean) {
@@ -681,6 +768,9 @@ class LibraryActivity : Activity() {
         if (changes.busy) return toast("One moment: still finishing the last change.")
         opening = true
         prefs.lastOpened = pdf
+        // No thumbnail is drawn while the document opens: waiting for the library to stop
+        // left a few drawn alongside the document's first page. onResume takes it up again.
+        thumbnails?.pause()
         startActivity(Intent(this, WritingActivity::class.java).putExtra(WritingActivity.EXTRA_PATH, pdf.path))
     }
 
@@ -709,7 +799,14 @@ class LibraryActivity : Activity() {
         /** The longest the first listing waits for a document's last save; it's usually well under a second. */
         const val LEFT_SAVE_WAIT_MS = 3000L
         /** How long thumbnails are gathered before their tiles are drawn together (see pendingThumbnails). */
-        const val TILE_BATCH_MS = 120L
+        /** List rows whose facts arrive within this long of each other are bound again together. */
+        const val FACTS_BATCH_MS = 120L
+        /** The longest a folder waits for its visible thumbnails to be read from the cache before it is shown. */
+        const val WARM_BUDGET_MS = 300L
+        /** How many entries from where the screen will be are read ahead: seven rows of five, more than a screen. */
+        const val FIRST_SCREEN_TILES = 35
+        /** The longest missing thumbnails are held back so they come on together. */
+        const val MISSING_WAIT_MS = 1500L
         /** The line under the top strip, and the same line inside a course, in the course's colour. */
         /** How tall the Continue row's picture is. */
         const val CONTINUE_PICTURE_DP = 96

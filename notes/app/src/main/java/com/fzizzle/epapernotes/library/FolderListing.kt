@@ -60,9 +60,9 @@ object FolderListing {
     /** How many PDFs a folder may hold and still be opened out ([list]). */
     const val OPEN_OUT_UP_TO = 3
 
-    private fun isHidden(name: String) = name.startsWith(".") || SafeSave.isTempFile(name)
+    internal fun isHidden(name: String) = name.startsWith(".") || SafeSave.isTempFile(name)
 
-    private fun isPdf(name: String) = name.endsWith(PDF_SUFFIX, ignoreCase = true)
+    internal fun isPdf(name: String) = name.endsWith(PDF_SUFFIX, ignoreCase = true)
 
     private const val PDF_SUFFIX = ".pdf"
 }

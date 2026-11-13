@@ -3,15 +3,19 @@ package com.fzizzle.epapernotes.library
 import java.io.File
 import java.security.MessageDigest
 
-/** Width the library renders first-page thumbnails at. */
-const val THUMB_WIDTH_PX = 300
+/**
+ * Width the library renders first-page thumbnails at: about the size a tile shows them on the
+ * Note Air 6 C (a page's picture there is about 233 by 330 px). Made at 300 before, a third
+ * more pixels to draw, store and keep in memory for nothing the panel could show.
+ */
+const val THUMB_WIDTH_PX = 240
 
 /**
  * And the most a thumbnail may be tall. With no limit, the thumbnail of a very long page (a
  * scan or an exported web page) is thousands of pixels tall; a few of those on screen didn't
  * fit the loader's picture memory, which then drew tiles again and again.
  */
-const val THUMB_MAX_HEIGHT_PX = 450
+const val THUMB_MAX_HEIGHT_PX = 340
 
 /**
  * How wide to render the thumbnail of a page of this size (in points, as shown): the usual
@@ -50,9 +54,10 @@ class ThumbnailCache(private val dir: File, private val clock: () -> Long = Syst
         val hash = hashOf(pdf)
         if (!publish(target, png)) return
         publish(File(dir, "$hash.path"), pathOf(pdf).toByteArray())
-        dir.listFiles()?.forEach {
-            if (it != target && it.name.startsWith("$hash-")) it.delete()
-        }
+        // This file's older versions only. Names, not File objects: the cache folder holds
+        // hundreds of files, and this runs for every thumbnail made.
+        dir.list { _, name -> name.startsWith("$hash-") && name != target.name && name != factsFileFor(pdf).name }
+            ?.forEach { File(dir, it).delete() }
     }
 
     /** Where [pdf]'s facts are kept: beside its thumbnail, under the same name, so a changed file has none. */

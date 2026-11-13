@@ -50,7 +50,7 @@ class ThumbnailLoaderTest {
 
     /** Review 2.3: a very tall first page gets a narrower thumbnail, not a huge one. */
     @Test fun tallFirstPageIsCapped() {
-        val tall = entry(TestPdfs.blank(dir, pages = 1, mediaBox = Box(0f, 0f, 300f, 6000f)))
+        val tall = entry(TestPdfs.blank(dir, pages = 1, mediaBox = Box(0f, 0f, 300f, 3000f)))
         loader.show(listOf(tall), onScreen = listOf(tall))
         val bitmap = next().second ?: throw AssertionError("no thumbnail for the tall page")
         assertTrue("${bitmap.width}x${bitmap.height}", bitmap.height <= THUMB_MAX_HEIGHT_PX && bitmap.width >= 20)
@@ -160,9 +160,164 @@ class ThumbnailLoaderTest {
         }
     }
 
+    /**
+     * A thumbnail cached before facts were kept beside it: it is shown from the cache, and its
+     * page count and writing mark are worked out from the PDF without drawing the page again.
+     */
+    @Test fun aCachedThumbnailWithoutFactsIsNotDrawnAgain() {
+        val page = entry(TestPdfs.blank(dir, pages = 3))
+        val picture = Bitmap.createBitmap(240, 310, Bitmap.Config.ARGB_8888).apply { eraseColor(android.graphics.Color.WHITE); setHasAlpha(false) }
+        cache.store(page, java.io.ByteArrayOutputStream().also { picture.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray())
+        assertEquals(null, cache.facts(page))
+        loader.show(listOf(page), onScreen = listOf(page))
+        assertNotNull(next().second)
+        assertEquals(0, loader.draws)
+        assertEquals(PdfFacts(3, false), loader.factsFor(page))
+        assertEquals(PdfFacts(3, false), cache.facts(page))
+    }
+
+    private fun cachedEntry(name: String): PdfEntry {
+        val page = entry(TestPdfs.blank(dir, pages = 1).let { f -> File(dir, name).also { f.renameTo(it) } })
+        val picture = Bitmap.createBitmap(240, 310, Bitmap.Config.ARGB_8888).apply { eraseColor(android.graphics.Color.WHITE); setHasAlpha(false) }
+        cache.store(page, java.io.ByteArrayOutputStream().also { picture.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray())
+        cache.storeFacts(page, PdfFacts(1, false))
+        return page
+    }
+
+    /** Before a folder is shown: the visible tiles' thumbnails read from the cache, none drawn. */
+    @Test fun warmReadsCachedThumbnailsWithoutDrawing() {
+        loader.pause() // the loader's own thread stays out of it
+        val a = cachedEntry("a.pdf")
+        val b = cachedEntry("b.pdf")
+        val missing = entry(TestPdfs.blank(dir, pages = 1).let { f -> File(dir, "c.pdf").also { f.renameTo(it) } })
+        assertEquals(2, loader.warm(listOf(a, missing, b), budgetMs = 1000))
+        assertNotNull(loader.bitmapFor(a))
+        assertNotNull(loader.bitmapFor(b))
+        assertEquals(null, loader.bitmapFor(missing))
+        assertEquals(PdfFacts(1, false), loader.factsFor(a))
+        assertEquals(0, loader.draws)
+    }
+
+    /** Refresh drops a folder's thumbnails: one read ahead from the cache meanwhile must not bring an old picture back. */
+    @Test fun warmDoesNotBringBackAThumbnailARefreshDropped() {
+        val a = cachedEntry("a.pdf")
+        loader.pause() // the drop is still waiting for the loader's thread
+        loader.redraw(onScreen = listOf(a), rest = emptyList())
+        assertEquals(0, loader.warm(listOf(a), budgetMs = 1000))
+        assertEquals(null, loader.bitmapFor(a))
+    }
+
+    /** "Is a tile on screen still waiting?" decides when missing thumbnails come on together. */
+    @Test fun waitingOnScreenUntilEveryTileHasAPictureOrFailed() {
+        loader.pause()
+        val good = entry(TestPdfs.blank(dir, pages = 1))
+        val bad = entry(TestPdfs.garbage(dir))
+        loader.show(listOf(good, bad), onScreen = listOf(good, bad))
+        assertTrue(loader.waitingOnScreen())
+        loader.resume()
+        next(); next()
+        assertEquals(false, loader.waitingOnScreen())
+    }
+
+    @Test fun warmStopsAtItsBudget() {
+        loader.pause()
+        val a = cachedEntry("a.pdf")
+        assertEquals(0, loader.warm(listOf(a), budgetMs = 0))
+        assertEquals(null, loader.bitmapFor(a))
+    }
+
+    // ---- Drawing ahead (lighter thumbnails plan, decision 2)
+
+    /** A small library under [dir]/lib: [count] PDFs in two folders, plus [extra] files as given. */
+    private fun library(count: Int, extra: (File) -> Unit = {}): File {
+        val lib = File(dir, "lib").apply { mkdirs() }
+        repeat(count) { i -> TestPdfs.blank(dir, pages = 1).renameTo(File(File(lib, if (i % 2 == 0) "A" else "B").apply { mkdirs() }, "p$i.pdf")) }
+        extra(lib)
+        return lib
+    }
+
+    private fun waitUntil(what: String, check: () -> Boolean) {
+        val until = System.currentTimeMillis() + 15_000
+        while (!check()) {
+            if (System.currentTimeMillis() > until) throw AssertionError("timed out: $what")
+            Thread.sleep(50)
+        }
+    }
+
+    private fun cachedUnder(lib: File) = com.fzizzle.epapernotes.library.LibraryWalk.pdfsUnder(lib).count { cache.cached(it) != null }
+
+    @Test fun drawingAheadFillsTheCache() {
+        val lib = library(6)
+        loader.drawAhead(com.fzizzle.epapernotes.library.LibraryWalk.pdfsUnder(lib))
+        waitUntil("all six drawn") { cachedUnder(lib) == 6 }
+        assertEquals(6, loader.draws)
+        assertTrue(com.fzizzle.epapernotes.library.LibraryWalk.pdfsUnder(lib).all { cache.facts(it) != null })
+    }
+
+    /** Paused partway through, as when a document is opened: no more drawn until resumed. */
+    @Test fun drawingAheadStopsWhenPaused() {
+        val lib = library(20)
+        loader.drawAhead(com.fzizzle.epapernotes.library.LibraryWalk.pdfsUnder(lib))
+        waitUntil("a couple drawn") { loader.draws >= 2 }
+        loader.pause()
+        val atPause = loader.draws
+        Thread.sleep(800)
+        assertTrue("drew ${loader.draws - atPause} after the pause", loader.draws <= atPause + 1) // the one under way may finish
+        assertTrue(cachedUnder(lib) < 20)
+        loader.resume()
+        waitUntil("drawn after resuming") { cachedUnder(lib) == 20 }
+    }
+
+    @Test fun aBrokenPdfIsSkippedNotRetried() {
+        val lib = library(4) { TestPdfs.garbage(dir).renameTo(File(it, "A/broken.pdf")) }
+        loader.drawAhead(com.fzizzle.epapernotes.library.LibraryWalk.pdfsUnder(lib))
+        waitUntil("the good ones drawn") { cachedUnder(lib) == 4 }
+        Thread.sleep(500)
+        assertEquals(5, loader.draws) // four good, the broken one tried once
+    }
+
+    @Test fun onScreenTilesGoFirst() {
+        val lib = library(20)
+        val wanted = entry(TestPdfs.blank(dir, pages = 1))
+        loader.drawAhead(com.fzizzle.epapernotes.library.LibraryWalk.pdfsUnder(lib))
+        loader.show(listOf(wanted), onScreen = listOf(wanted))
+        assertEquals(wanted, next().first)
+        assertTrue("drawn ahead before the tile on screen: ${loader.draws - 1}", loader.draws - 1 <= 1) // at most the one under way
+    }
+
+    /** The card taken out partway through: the pass ends, and the thumbnails already made are all kept. */
+    @Test fun drawingAheadStopsWhenTheCardGoesOut() {
+        val lib = library(20)
+        loader.drawAhead(com.fzizzle.epapernotes.library.LibraryWalk.pdfsUnder(lib))
+        waitUntil("a few drawn") { loader.draws >= 3 }
+        loader.pause()
+        val pictures = File(dir, "cache").listFiles { f -> f.name.endsWith(".png") }.orEmpty().map { it.name }.toSet()
+        assertTrue(pictures.size >= 3)
+        lib.deleteRecursively() // as when the card is taken out
+        loader.resume()
+        Thread.sleep(1500)
+        val after = File(dir, "cache").listFiles { f -> f.name.endsWith(".png") }.orEmpty().map { it.name }.toSet()
+        assertTrue("deleted: ${pictures - after}", after.containsAll(pictures))
+        // Still alive: a tile on screen is served.
+        val page = entry(TestPdfs.blank(dir, pages = 1))
+        loader.show(listOf(page), onScreen = listOf(page))
+        assertNotNull(next().second)
+    }
+
     @Test fun ordinaryPageKeepsTheUsualWidth() {
         val page = entry(TestPdfs.blank(dir, pages = 1))
         loader.show(listOf(page), onScreen = listOf(page))
-        assertEquals(THUMB_WIDTH_PX, next().second?.width)
+        assertEquals(240, next().second?.width)
+    }
+
+    /** One made before thumbnails were made smaller, 300 by 424: shown as it is, not drawn again. */
+    @Test fun anOldBiggerThumbnailStillFits() {
+        val page = entry(TestPdfs.blank(dir, pages = 1))
+        val old = Bitmap.createBitmap(300, 424, Bitmap.Config.ARGB_8888).apply { eraseColor(android.graphics.Color.WHITE); setHasAlpha(false) }
+        cache.store(page, java.io.ByteArrayOutputStream().also { old.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray())
+        cache.storeFacts(page, PdfFacts(1, false))
+        loader.show(listOf(page), onScreen = listOf(page))
+        assertEquals(300, next().second?.width)
+        assertEquals(0, loader.draws)
     }
 }
