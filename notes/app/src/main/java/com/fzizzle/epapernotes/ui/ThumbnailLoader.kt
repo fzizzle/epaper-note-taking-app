@@ -49,6 +49,14 @@ class ThumbnailLoader(
     // All guarded by lock.
     private var folder: List<PdfEntry> = emptyList()
     private var onScreen: List<PdfEntry> = emptyList()
+    /**
+     * The PDFs of the whole library, to draw ahead ([drawAhead]), and what that pass has done
+     * so far for its log line. Guarded by [lock]; the walk itself is advanced outside it.
+     */
+    private var ahead: Iterator<PdfEntry>? = null
+    private var aheadDrawn = 0
+    private var aheadStartedAt = 0L
+
     /** The PDFs whose facts are wanted without their pictures ([showFacts]). */
     private var factsWanted: List<PdfEntry> = emptyList()
     /**
@@ -140,6 +148,20 @@ class ThumbnailLoader(
         lock.notifyAll()
     }
 
+    /**
+     * Draws, into the cache, the thumbnails of [pdfs] that have none: the whole library
+     * (LibraryWalk), so a folder visited for the first time finds them ready (lighter
+     * thumbnails plan, decision 2). One at a time, at the lowest priority, and only when
+     * nothing on screen is waiting; paused with the rest while a document is open. A file
+     * that can't be drawn is tried once a session, as for tiles. Replaces any pass under way.
+     */
+    fun drawAhead(pdfs: Sequence<PdfEntry>) = synchronized(lock) {
+        ahead = pdfs.iterator()
+        aheadDrawn = 0
+        aheadStartedAt = SystemClock.uptimeMillis()
+        lock.notifyAll()
+    }
+
     /** While the library is off screen (a document is open), it renders nothing. */
     fun pause() = synchronized(lock) { paused = true }
 
@@ -161,6 +183,8 @@ class ThumbnailLoader(
     private class Show(val pdf: PdfEntry) : Job
     /** For the rest of the folder: into the disk cache only. */
     private class Store(val pdf: PdfEntry) : Job
+    /** The next PDF of the library to draw ahead ([drawAhead]): taken from the walk outside the lock, since it may read a folder. */
+    private data object Ahead : Job
     /** For a list row: its facts only, no picture. */
     private class Facts(val pdf: PdfEntry) : Job
 
@@ -186,7 +210,11 @@ class ThumbnailLoader(
             // A tile on screen is waiting for a Show: that runs at normal priority. At background
             // priority the tablet keeps the thread to its slow cores, and a folder's tiles filled
             // in one by one. The rest of the folder (Store) and the tidying stay in the background.
-            val wanted = if (job is Show || job is Facts) Process.THREAD_PRIORITY_DEFAULT else Process.THREAD_PRIORITY_BACKGROUND
+            val wanted = when (job) {
+                is Show, is Facts -> Process.THREAD_PRIORITY_DEFAULT
+                Ahead -> Process.THREAD_PRIORITY_LOWEST
+                else -> Process.THREAD_PRIORITY_BACKGROUND
+            }
             if (wanted != priority) {
                 priority = wanted
                 Process.setThreadPriority(priority)
@@ -209,6 +237,7 @@ class ThumbnailLoader(
                 is Facts -> loadFacts(job.pdf)
                 is Show -> load(job.pdf, intoMemory = true)
                 is Store -> load(job.pdf, intoMemory = false)
+                Ahead -> drawNextAhead()
             }
         }
     }
@@ -221,6 +250,7 @@ class ThumbnailLoader(
         onScreen.firstOrNull { memory.get(key(it)) == null && key(it) !in failed }?.let { return Show(it) }
         factsWanted.firstOrNull { factsInMemory[key(it)] == null && key(it) !in failed }?.let { return Facts(it) }
         folder.firstOrNull { key(it) !in done }?.let { return Store(it) }
+        if (ahead != null) return Ahead
         return null
     }
 
@@ -259,6 +289,40 @@ class ThumbnailLoader(
         if (decoded != null && cachedFacts != null) factsInMemory[key] = cachedFacts
         memory.put(key, bitmap)
         tell(pdf, bitmap)
+    }
+
+    /**
+     * One step of the drawing ahead: the walk's next PDFs are passed over while their
+     * thumbnail is in the cache already (a quick look each, up to [AHEAD_SKIPS_PER_TURN] at a
+     * turn), and the first that has none is drawn. Ends the pass, with a log line, when the
+     * walk is done or fails (a folder gone, a card taken out).
+     */
+    private fun drawNextAhead() {
+        val walk = synchronized(lock) { ahead } ?: return
+        var skipped = 0
+        try {
+            while (skipped < AHEAD_SKIPS_PER_TURN) {
+                if (!walk.hasNext()) return endAhead(walk)
+                val pdf = walk.next()
+                val key = key(pdf)
+                if (synchronized(lock) { key in done || key in failed } || (cache.cached(pdf) != null && cache.facts(pdf) != null)) {
+                    skipped++
+                    continue
+                }
+                load(pdf, intoMemory = false)
+                synchronized(lock) { if (ahead === walk && key !in failed) aheadDrawn++ }
+                return
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "drawing ahead stopped: ${e.message}")
+            endAhead(walk)
+        }
+    }
+
+    private fun endAhead(walk: Iterator<PdfEntry>) = synchronized(lock) {
+        if (ahead !== walk) return@synchronized // a newer pass took its place
+        ahead = null
+        Log.i(TAG, "ahead: drawn=$aheadDrawn ms=${SystemClock.uptimeMillis() - aheadStartedAt}")
     }
 
     /** A list row's facts: from the cache, else from the PDF, opened but not drawn. Kept in the cache for next time. */
@@ -344,6 +408,8 @@ class ThumbnailLoader(
     private companion object {
         const val TAG = "Notes"
         const val MEMORY_BYTES = 40 * 1024 * 1024
+        /** How many already-cached PDFs the drawing ahead passes over in one turn before letting other work in. */
+        const val AHEAD_SKIPS_PER_TURN = 50
         /**
          * The tallest cached thumbnail still used: the height limit before thumbnails were made
          * smaller (300 by at most 450). Those are kept until their file changes, not drawn again;

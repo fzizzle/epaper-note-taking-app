@@ -33,6 +33,7 @@ import com.fzizzle.epapernotes.library.FolderListing
 import com.fzizzle.epapernotes.library.FolderWatch
 import com.fzizzle.epapernotes.library.HookPath
 import com.fzizzle.epapernotes.library.LaunchOpen
+import com.fzizzle.epapernotes.library.LibraryWalk
 import com.fzizzle.epapernotes.library.PdfEntry
 import com.fzizzle.epapernotes.library.ThumbnailCache
 import com.fzizzle.epapernotes.library.TileMarks
@@ -204,6 +205,9 @@ class LibraryActivity : Activity() {
         showingLibrary = true
         // Started only now: its daily tidy-up, without file access, would think every PDF gone.
         if (prefs.showThumbnails && thumbnails == null) thumbnails = newThumbnails()
+        // Paused when a document was asked for (open); taken up again here even if the document
+        // closed before the library ever stopped (one that couldn't be opened, say).
+        thumbnails?.resume()
 
         // The adb shortcuts (--es root, --es path), for checks: only in a debug build. This
         // screen is the launcher's, so any app could send them otherwise (decision 4).
@@ -535,6 +539,7 @@ class LibraryActivity : Activity() {
         }
         emptyNote.visibility = if (entries.isEmpty()) View.VISIBLE else View.GONE
         tilesOnScreenChanged()
+        startDrawingAhead()
         logShown(waitForDraw = changed)
         // The grid lays its tiles out on the next frame: look then.
         grid.post { logFolderReadyIfSo() }
@@ -645,6 +650,24 @@ class LibraryActivity : Activity() {
         logFolderReadyIfSo()
     }
 
+    /** The loader and library folder the drawing ahead was last started for: once each. */
+    private var aheadFor: Pair<ThumbnailLoader, File>? = null
+
+    /**
+     * Once the library is on screen, the thumbnails of every PDF in it that has none are drawn
+     * into the cache, quietly (lighter thumbnails plan, decision 2), so a folder visited for
+     * the first time comes on at once. The loader does it only when nothing on screen waits,
+     * and stops while a document is open. Again for a new library folder or a new loader
+     * (thumbnails switched off and on).
+     */
+    private fun startDrawingAhead() {
+        val loader = thumbnails ?: return
+        val root = root ?: return
+        if (aheadFor == loader to root) return
+        aheadFor = loader to root
+        loader.drawAhead(LibraryWalk.pdfsUnder(root))
+    }
+
     // A folder visit, for the "folder ready" log line: when it was asked for, how many times
     // the grid has been drawn with pictures since, and the loader's draw count then.
     private var visitStartedAt = 0L
@@ -736,6 +759,9 @@ class LibraryActivity : Activity() {
         if (changes.busy) return toast("One moment: still finishing the last change.")
         opening = true
         prefs.lastOpened = pdf
+        // No thumbnail is drawn while the document opens: waiting for the library to stop
+        // left a few drawn alongside the document's first page. onResume takes it up again.
+        thumbnails?.pause()
         startActivity(Intent(this, WritingActivity::class.java).putExtra(WritingActivity.EXTRA_PATH, pdf.path))
     }
 

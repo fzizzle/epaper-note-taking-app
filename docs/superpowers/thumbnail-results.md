@@ -25,3 +25,6 @@ A thumbnail drawn from its PDF took 24 ms on average in the app, of which storin
 | 4. One go per folder | first visit, ML / CTM: time, refreshes | 637 to 664 ms, 5 goes / 766 ms, 6 goes | 542 ms, 2 goes / 686 ms, 2 goes (the folder, then all the missing ones together) | yes |
 | 4. One go per folder | after the app is restarted (thumbnails on disk only), ML | 193 ms, 2 goes (grey pages, then pictures) | 159 ms, 1 go | yes |
 | 4. One go per folder | second visit / back from a document | 72 to 81 ms, 1 go / 165 to 192 ms, 1 go | 98 to 105 ms, 1 go / 167 to 196 ms, 1 go: no change (back from a document waits for the document's last save) | |
+| 5. Draw ahead | a folder visited for the first time, once the pass has been through it (ML) | 542 ms, 2 goes, 23 drawn while watching | 162 ms, 1 go, none drawn | yes |
+| 5. Draw ahead | the pass itself | | 53 PDFs in 1.3 s, 348 in about 7 s of drawing (20 ms each); the owner's real library, already mostly cached: 3 drawn, 0.9 s to look through it | |
+| 5. Draw ahead | a document opened while the pass runs | 4 thumbnails were drawn alongside the document's first page (the loader paused only once the library had stopped) | none drawn from the tap until the library is back: the loader now pauses as soon as a document is asked for | yes |

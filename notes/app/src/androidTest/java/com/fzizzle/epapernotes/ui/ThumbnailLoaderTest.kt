@@ -205,6 +205,77 @@ class ThumbnailLoaderTest {
         assertEquals(null, loader.bitmapFor(a))
     }
 
+    // ---- Drawing ahead (lighter thumbnails plan, decision 2)
+
+    /** A small library under [dir]/lib: [count] PDFs in two folders, plus [extra] files as given. */
+    private fun library(count: Int, extra: (File) -> Unit = {}): File {
+        val lib = File(dir, "lib").apply { mkdirs() }
+        repeat(count) { i -> TestPdfs.blank(dir, pages = 1).renameTo(File(File(lib, if (i % 2 == 0) "A" else "B").apply { mkdirs() }, "p$i.pdf")) }
+        extra(lib)
+        return lib
+    }
+
+    private fun waitUntil(what: String, check: () -> Boolean) {
+        val until = System.currentTimeMillis() + 15_000
+        while (!check()) {
+            if (System.currentTimeMillis() > until) throw AssertionError("timed out: $what")
+            Thread.sleep(50)
+        }
+    }
+
+    private fun cachedUnder(lib: File) = com.fzizzle.epapernotes.library.LibraryWalk.pdfsUnder(lib).count { cache.cached(it) != null }
+
+    @Test fun drawingAheadFillsTheCache() {
+        val lib = library(6)
+        loader.drawAhead(com.fzizzle.epapernotes.library.LibraryWalk.pdfsUnder(lib))
+        waitUntil("all six drawn") { cachedUnder(lib) == 6 }
+        assertEquals(6, loader.draws)
+        assertTrue(com.fzizzle.epapernotes.library.LibraryWalk.pdfsUnder(lib).all { cache.facts(it) != null })
+    }
+
+    @Test fun drawingAheadStopsWhenPaused() {
+        val lib = library(8)
+        loader.pause()
+        loader.drawAhead(com.fzizzle.epapernotes.library.LibraryWalk.pdfsUnder(lib))
+        Thread.sleep(800)
+        assertEquals(0, loader.draws)
+        loader.resume()
+        waitUntil("drawn after resuming") { cachedUnder(lib) == 8 }
+    }
+
+    @Test fun aBrokenPdfIsSkippedNotRetried() {
+        val lib = library(4) { TestPdfs.garbage(dir).renameTo(File(it, "A/broken.pdf")) }
+        loader.drawAhead(com.fzizzle.epapernotes.library.LibraryWalk.pdfsUnder(lib))
+        waitUntil("the good ones drawn") { cachedUnder(lib) == 4 }
+        Thread.sleep(500)
+        assertEquals(5, loader.draws) // four good, the broken one tried once
+    }
+
+    @Test fun onScreenTilesGoFirst() {
+        val lib = library(20)
+        val wanted = entry(TestPdfs.blank(dir, pages = 1))
+        loader.drawAhead(com.fzizzle.epapernotes.library.LibraryWalk.pdfsUnder(lib))
+        loader.show(listOf(wanted), onScreen = listOf(wanted))
+        assertEquals(wanted, next().first)
+        assertTrue("drawn ahead before the tile on screen: ${loader.draws - 1}", loader.draws - 1 < 20)
+    }
+
+    @Test fun drawingAheadStopsWhenTheCardGoesOut() {
+        val lib = library(10)
+        loader.pause()
+        loader.drawAhead(com.fzizzle.epapernotes.library.LibraryWalk.pdfsUnder(lib))
+        val before = cache.cached(entry(File(lib, "A/p0.pdf")))
+        lib.deleteRecursively() // as when the card is taken out
+        loader.resume()
+        Thread.sleep(1000)
+        assertEquals(null, before)
+        assertEquals(0, loader.draws)
+        // Still alive: a tile on screen is served.
+        val page = entry(TestPdfs.blank(dir, pages = 1))
+        loader.show(listOf(page), onScreen = listOf(page))
+        assertNotNull(next().second)
+    }
+
     @Test fun ordinaryPageKeepsTheUsualWidth() {
         val page = entry(TestPdfs.blank(dir, pages = 1))
         loader.show(listOf(page), onScreen = listOf(page))
