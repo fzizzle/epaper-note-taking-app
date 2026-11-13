@@ -176,6 +176,35 @@ class ThumbnailLoaderTest {
         assertEquals(PdfFacts(3, false), cache.facts(page))
     }
 
+    private fun cachedEntry(name: String): PdfEntry {
+        val page = entry(TestPdfs.blank(dir, pages = 1).let { f -> File(dir, name).also { f.renameTo(it) } })
+        val picture = Bitmap.createBitmap(240, 310, Bitmap.Config.ARGB_8888).apply { eraseColor(android.graphics.Color.WHITE); setHasAlpha(false) }
+        cache.store(page, java.io.ByteArrayOutputStream().also { picture.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray())
+        cache.storeFacts(page, PdfFacts(1, false))
+        return page
+    }
+
+    /** Before a folder is shown: the visible tiles' thumbnails read from the cache, none drawn. */
+    @Test fun warmReadsCachedThumbnailsWithoutDrawing() {
+        loader.pause() // the loader's own thread stays out of it
+        val a = cachedEntry("a.pdf")
+        val b = cachedEntry("b.pdf")
+        val missing = entry(TestPdfs.blank(dir, pages = 1).let { f -> File(dir, "c.pdf").also { f.renameTo(it) } })
+        assertEquals(2, loader.warm(listOf(a, missing, b), budgetMs = 1000))
+        assertNotNull(loader.bitmapFor(a))
+        assertNotNull(loader.bitmapFor(b))
+        assertEquals(null, loader.bitmapFor(missing))
+        assertEquals(PdfFacts(1, false), loader.factsFor(a))
+        assertEquals(0, loader.draws)
+    }
+
+    @Test fun warmStopsAtItsBudget() {
+        loader.pause()
+        val a = cachedEntry("a.pdf")
+        assertEquals(0, loader.warm(listOf(a), budgetMs = 0))
+        assertEquals(null, loader.bitmapFor(a))
+    }
+
     @Test fun ordinaryPageKeepsTheUsualWidth() {
         val page = entry(TestPdfs.blank(dir, pages = 1))
         loader.show(listOf(page), onScreen = listOf(page))

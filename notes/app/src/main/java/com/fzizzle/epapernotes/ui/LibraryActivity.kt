@@ -401,6 +401,9 @@ class LibraryActivity : Activity() {
         val wanted = folder ?: root
         // A visit (another folder, or back from a document), not a re-read after a change on disk: timed for the log.
         if (wanted != shownFolder || cameBackFrom != null) startVisit()
+        // Where the screen will be in the folder, so the thumbnails read ahead are the ones it shows.
+        val firstShown = if (wanted == shownFolder) grid.firstVisiblePosition else 0
+        val loader = thumbnails
         val ask = ++listed
         val last = prefs.lastOpened
         // Watched before it's read (review 2.10): a file landing while it's read still re-lists.
@@ -442,6 +445,16 @@ class LibraryActivity : Activity() {
             // The picture is only read when the row will change.
             val resumePicture = if (resume != null && resume != shownContinue) continuePicture.load(resume.file) else null
             Log.i(TAG, "library listed ${shown.path} n=${entries.size} ms=${SystemClock.uptimeMillis() - start}")
+            // The thumbnails of the tiles about to be shown, from the cache (a couple of
+            // milliseconds each), so the folder is drawn once, with its pictures, rather than
+            // grey and then again. Not in the list view, which shows none.
+            if (loader != null && !prefs.listView) {
+                val from = cameBackFrom?.let { f -> entries.indexOfFirst { it.file == f } }?.takeIf { it >= 0 }?.let { (it - FIRST_SCREEN_TILES / 2).coerceAtLeast(0) }
+                    ?: firstShown.coerceIn(0, entries.size)
+                val upcoming = entries.drop(from).take(FIRST_SCREEN_TILES).filterIsInstance<PdfEntry>()
+                val read = loader.warm(upcoming, WARM_BUDGET_MS)
+                if (read > 0) Log.i(TAG, "thumbnails read ahead n=$read")
+            }
             main.post {
                 if (ask == listed && !isDestroyed) showListing(shown, entries, progress, pageTexts, courseColours, resume, resumePicture, rootMissing, redrawTiles, cameBackFrom)
                 then()
@@ -607,13 +620,14 @@ class LibraryActivity : Activity() {
 
     private fun factsReady() {
         main.removeCallbacks(showArrivedFacts)
-        main.postDelayed(showArrivedFacts, TILE_BATCH_MS)
+        main.postDelayed(showArrivedFacts, FACTS_BATCH_MS)
     }
 
     /**
      * Thumbnails that have arrived and aren't on their tiles yet. They come one at a time, a
      * few milliseconds apart, and each tile drawn by itself is a panel update of its own: a
-     * folder filled in tile by tile. Those arriving within [TILE_BATCH_MS] go on together.
+     * folder filled in tile by tile. They go on together once all the tiles on screen have
+     * theirs, or [MISSING_WAIT_MS] after the first came at the latest.
      */
     private val pendingThumbnails = HashMap<PdfEntry, Bitmap?>()
     private val showPendingThumbnails = Runnable {
@@ -661,7 +675,14 @@ class LibraryActivity : Activity() {
     private fun thumbnailReady(pdf: PdfEntry, bitmap: Bitmap?) {
         val waiting = pendingThumbnails.isNotEmpty()
         pendingThumbnails[pdf] = bitmap
-        if (!waiting) main.postDelayed(showPendingThumbnails, TILE_BATCH_MS)
+        // On together once every tile on screen has its picture (or can't have one), or at the
+        // latest MISSING_WAIT_MS after the first arrived: one refresh, not one per few tiles.
+        if (thumbnails?.waitingOnScreen() != true) {
+            main.removeCallbacks(showPendingThumbnails)
+            showPendingThumbnails.run()
+        } else if (!waiting) {
+            main.postDelayed(showPendingThumbnails, MISSING_WAIT_MS)
+        }
     }
 
     private fun switchThumbnails(on: Boolean) {
@@ -743,7 +764,14 @@ class LibraryActivity : Activity() {
         /** The longest the first listing waits for a document's last save; it's usually well under a second. */
         const val LEFT_SAVE_WAIT_MS = 3000L
         /** How long thumbnails are gathered before their tiles are drawn together (see pendingThumbnails). */
-        const val TILE_BATCH_MS = 120L
+        /** List rows whose facts arrive within this long of each other are bound again together. */
+        const val FACTS_BATCH_MS = 120L
+        /** The longest a folder waits for its visible thumbnails to be read from the cache before it is shown. */
+        const val WARM_BUDGET_MS = 300L
+        /** How many entries from where the screen will be are read ahead: seven rows of five, more than a screen. */
+        const val FIRST_SCREEN_TILES = 35
+        /** The longest missing thumbnails are held back so they come on together. */
+        const val MISSING_WAIT_MS = 1500L
         /** The line under the top strip, and the same line inside a course, in the course's colour. */
         /** How tall the Continue row's picture is. */
         const val CONTINUE_PICTURE_DP = 96

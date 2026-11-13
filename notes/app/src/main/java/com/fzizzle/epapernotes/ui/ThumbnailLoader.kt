@@ -70,6 +70,33 @@ class ThumbnailLoader(
     /** Main thread. Memory only: never the disk. */
     fun bitmapFor(pdf: PdfEntry): Bitmap? = memory.get(key(pdf))
 
+    /**
+     * Before a folder is shown: reads into memory, from the cache only, the thumbnails and facts
+     * of [pdfs] in order, until done or [budgetMs] has passed, so their tiles are drawn with
+     * their pictures the first time instead of grey and then again (a refresh each). Never
+     * draws one; the ones not in the cache are left to the loader's own thread. Returns how
+     * many it read. Any thread but the screen's: it reads files. A thumbnail read here and by
+     * the loader's thread at the same moment is only read twice.
+     */
+    fun warm(pdfs: List<PdfEntry>, budgetMs: Long): Int {
+        val until = SystemClock.uptimeMillis() + budgetMs
+        var read = 0
+        for (pdf in pdfs) {
+            if (SystemClock.uptimeMillis() >= until) break
+            val key = key(pdf)
+            if (memory.get(key) != null) continue
+            val facts = cache.facts(pdf) ?: continue
+            val bitmap = cache.cached(pdf)?.let { BitmapFactory.decodeFile(it.path, SMALL) }?.takeIf { it.height <= OLD_MAX_HEIGHT_PX } ?: continue
+            factsInMemory[key] = facts
+            memory.put(key, bitmap)
+            read++
+        }
+        return read
+    }
+
+    /** Main thread: whether any tile on screen still has neither a picture in memory nor a failure to make one. */
+    fun waitingOnScreen(): Boolean = synchronized(lock) { onScreen.any { memory.get(key(it)) == null && key(it) !in failed } }
+
     /** Whether [pdf]'s thumbnail couldn't be made this session (its tile stays the grey page). */
     fun failedFor(pdf: PdfEntry): Boolean = synchronized(lock) { key(pdf) in failed }
 
