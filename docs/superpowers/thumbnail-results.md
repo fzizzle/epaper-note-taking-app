@@ -28,7 +28,11 @@ A thumbnail drawn from its PDF took 24 ms on average in the app, of which storin
 | 5. Draw ahead | a folder visited for the first time, once the pass has been through it (ML) | 542 ms, 2 goes, 23 drawn while watching | 162 ms, 1 go, none drawn | yes |
 | 5. Draw ahead | the pass itself | | 53 PDFs in 1.3 s, 348 in about 7 s of drawing (20 ms each); the owner's real library, already mostly cached: 3 drawn, 0.9 s to look through it | |
 | 5. Draw ahead | a document opened while the pass runs | 4 thumbnails were drawn alongside the document's first page (the loader paused only once the library had stopped) | none drawn from the tap until the library is back: the loader now pauses as soon as a document is asked for | yes |
-| 6. A gentler panel update (REGAL) for the library | the owner's eye | | in the checklist | owner decides |
+| 6. A gentler panel update (REGAL) for the library | the owner's eye | | owner, 2026-11-13: works well | yes |
+
+## Verdict
+
+Owner, 2026-11-13: "it works well", every check in the [owner checklist](../../notes/TESTING-thumbnails.md) passes, the gentler refresh (T4) included, so it stays.
 
 ## Tests
 
