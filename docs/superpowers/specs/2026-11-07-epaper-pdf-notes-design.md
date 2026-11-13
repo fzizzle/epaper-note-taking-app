@@ -150,7 +150,9 @@ Owner's decisions, 2026-11-12 ([pages plan](../plans/2026-11-12-pages.md)). For 
 - **Add a dotted page after this one**, from ⋯ on any page, or **+** in place of › on the last page. The new page is an ordinary page of the PDF, drawn with plain PDF drawing, so every other viewer shows it. It is the same size and way up as the page it follows: dots 5 mm apart, about 0.4 mm across, mid grey.
 - **It can't be undone with Undo, and it empties the undo list.** Every later page's number changes, and the undo list is kept by page number. Instead, ⋯ shows **Remove this added page** on a page the app added, never on the PDF's own pages. It asks first if the page has writing on it.
 - **It saves the file at once.** Everything written so far goes into the PDF first, then the page is added and the file saved the usual safe way. If the file can't be saved into right now (changed elsewhere, or a damaged file waiting for the owner's answer), the page isn't added and a message says why.
-- While the page is being added or removed, the pen and every action that names a page wait: about a tenth of a second for a small file.
+- While the page is being added or removed, the pen and every action that names a page wait, and a short message says what is happening ("Adding a page…"): about a tenth of a second for a small file, longer for a big one, since the whole file is written again.
+- A stroke the pen hands over just as a page is added still goes to the page it was written on: each stroke carries the page numbering it began under, and the session moves it to that page's new number.
+- On the last page, + ignores a tap in the first 0.6 s after the page arrives, so a quick second tap on › can't add a page by mistake.
 - This is not blank notebooks (section 3): pages are added to an existing PDF.
 
 ## 7. Storage and saving: never lose writing

@@ -9,7 +9,9 @@ For the [pages plan](../docs/superpowers/plans/2026-11-12-pages.md). Adding, rem
 2. Write a few lines on it. Press ←, then open the file again.
    - **Expected:** the dotted page and your writing are there.
 3. Go to the last page.
-   - **Expected:** › has become a page with a plus. Tap it: a dotted page after the last.
+   - **Expected:** › has become a page with a plus. Tap it: "Adding a page…", then a dotted page after the last.
+   - On the page before the last, tap › twice quickly. **Expected:** one page turn, and no page added.
+   - Try adding a page in your biggest file. **Tell me** how long the wait feels.
 4. Rotate a page (⋯), then add a page after it.
    - **Expected:** the new page is the same way up as the page before it.
 
