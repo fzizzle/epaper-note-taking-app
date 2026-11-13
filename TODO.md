@@ -8,7 +8,7 @@ From using the app on the tablet. Worked through on the branch `owner-feedback-f
 
 - [x] The writable area stops about 1 cm before the page edge. Found: at the sides the page is narrower than the screen (93 px each side), and ink can't be saved beside the page. That band is now shaded light grey (owner's choice).
 - [x] Ink changes after it's written: a stroke thins out once you've finished it. Found (system log): about a second after the pen leaves, Onyx turns the app's own drawing back on ("Post enabled"), and the panel swaps Onyx's hard black line for the app's copy, whose grey rim was 34–45% of its pixels. Built: ink at full strength is drawn solid on screen at the same width (rim 1% on the owner's page); the page, highlighter and thumbnails stay smoothed. Costs 137 ms instead of 91 ms to draw a page of 1,500 strokes. Owner-checked 2026-11-10: it no longer thins. Tablet tests (84) and laptop tests (289) pass.
-- [ ] Ink still thinned (owner, 2026-11-10, after picking another tool). Found (measured with Onyx's own fountain-pen code on the tablet, `check/FountainWidthCheck`): Onyx draws a point 2 + (W + 1) × pressure² px wide for a set width W, but the saved ink followed pressure in a straight line, so firm strokes were saved up to 40% thinner (8 px live, 5 px saved at full pressure). Built: the pen's saved width follows pressure squared, 0.8 to 3.2 pt, and Onyx gets the matching width; now equal at every pressure at 2.5 px/pt, within half a pixel at other page sizes. Strokes already saved keep their old width. **Owner check:** write firmly, pick another tool: does the ink stay as it was? Owner, 2026-11-12: no, the live line is thicker (see Owner session (2026-11-12) below).
+- [x] Ink still thinned (owner, 2026-11-10, after picking another tool). Found (measured with Onyx's own fountain-pen code on the tablet, `check/FountainWidthCheck`): Onyx draws a point 2 + (W + 1) × pressure² px wide for a set width W, but the saved ink followed pressure in a straight line, so firm strokes were saved up to 40% thinner (8 px live, 5 px saved at full pressure). Built: the pen's saved width follows pressure squared, 0.8 to 3.2 pt, and Onyx gets the matching width; now equal at every pressure at 2.5 px/pt, within half a pixel at other page sizes. Strokes already saved keep their old width. **Owner check:** write firmly, pick another tool: does the ink stay as it was? Owner, 2026-11-12: no, the live line is thicker (see Owner session (2026-11-12) below). Fixed by the 1.2× wider saved ink; owner, 2026-11-12: "it works now".
 - [x] Paste a copied item with a finger press: a long-press shows a Paste button there (owner's choice: confirmed). Copy and snip now say so in a toast.
 - [x] Turn the page with the volume buttons (also Page Up/Down).
 - [x] Palm presses cause screen refreshes. Fixed: a touch only pauses fast-ink once it pinches or moves a zoomed page, and fingers are ignored while the pen is near.
@@ -46,6 +46,12 @@ The UI and UX review on the tablet, and its fixes: [plan](docs/superpowers/plans
 - [x] Owner checklist: [notes/TESTING-ui-review.md](notes/TESTING-ui-review.md): all checks pass (owner, 2026-11-12). [Results](docs/superpowers/ui-review-results.md).
 - [ ] Erase trail and erase flash: their own plan (see Known bugs above).
 
+## Owner session (2026-11-13)
+
+All four checklists pass: efficiency, library design, writing screen design, dotted pages and fresh attempts; and the original library checklist again.
+
+- [ ] **Opening a course with small folders opened out is slow, with all the thumbnails** (owner, 2026-11-13). Measured from the tablet's log ([findings log](docs/superpowers/findings-log.md)): a course now shows about twice as many PDF tiles (22 to 30, each topic's two PDFs, where there used to be 11 to 15 folder tiles), and the first visit after the library design build drew every one of them again (22 × about 30 ms) because the cached thumbnails had no page count or writing mark yet. They came onto the screen in five goes over 0.8 s, so five refreshes. Later visits read them from the cache and show them in one go. Coming back from a document to a course took 380 to 500 ms before the folder showed. Measured further on the tablet (`check/ThumbnailCheck`): a thumbnail is cheap to make (about 15 ms) and to read from the cache (2 ms); what's felt is the folder drawn twice (grey, then pictures) and missing ones coming on in several goes. [Plan](docs/superpowers/plans/2026-11-13-lighter-thumbnails.md), awaiting the owner's approval.
+
 ## Dotted pages and fresh attempts (2026-11-12)
 
 [Plan](docs/superpowers/plans/2026-11-12-pages.md). Built on the branch `pages`, each task by its own agent with a review after it.
@@ -57,8 +63,8 @@ The UI and UX review on the tablet, and its fixes: [plan](docs/superpowers/plans
 - [x] Adding or removing a page saves first, then renumbers (Task 4). A stroke that arrives late keeps its page.
 - [x] The writing screen: ⋯ "Add a dotted page after this one", "Remove this added page", + on the last page (Task 5). Tried on the tablet over adb; writing on a new page needs the pen.
 - [x] Fresh attempt in the library (Task 6).
-- [ ] The dots' strength: 0.5 grey for now. **Owner picks** on the tablet (checklist P2).
-- [ ] **Owner checklist:** [notes/TESTING-pages.md](notes/TESTING-pages.md) (Task 7, hard stop).
+- [x] The dots' strength: 0.5 grey, kept (owner passed checklist P2, 2026-11-13).
+- [x] Owner checklist: [notes/TESTING-pages.md](notes/TESTING-pages.md). All checks pass (owner, 2026-11-13). The questions in the checklist weren't answered one by one, so what was built stays as it is.
 - For plan 5 (conflict copies): a journal set aside by a page change holds old page numbers against a file that no longer exists, and its first changes are already in the new file. It must never be replayed onto the current file.
 
 ## Writing screen design (2026-11-12)
@@ -73,7 +79,7 @@ The UI and UX review on the tablet, and its fixes: [plan](docs/superpowers/plans
 - [x] Duplicate on the selection's bar (Task 6). Not tried on the tablet: a selection needs the pen.
 - [x] A tap with the lasso selects the stroke under it (Task 7). Not tried on the tablet: it needs the pen.
 - [x] A sideways deck is offered a rotation the first time it's opened (Task 8).
-- [ ] **Owner checklist:** [notes/TESTING-writing-design.md](notes/TESTING-writing-design.md) (Task 9, hard stop).
+- [x] Owner checklist: [notes/TESTING-writing-design.md](notes/TESTING-writing-design.md). All checks pass (owner, 2026-11-13). The questions in the checklist weren't answered one by one, so what was built stays as it is.
 
 ## Library design (2026-11-12)
 
@@ -87,7 +93,7 @@ The UI and UX review on the tablet, and its fixes: [plan](docs/superpowers/plans
 - [x] Continue shows the page you left (Task 5).
 - [x] A list view, your place kept, and a hint in an empty folder (Task 6).
 - [x] A setting to start in the last document (Task 7).
-- [ ] **Owner checklist:** [notes/TESTING-library-design.md](notes/TESTING-library-design.md) (Task 8, hard stop).
+- [x] Owner checklist: [notes/TESTING-library-design.md](notes/TESTING-library-design.md). All checks pass (owner, 2026-11-13). The questions in the checklist weren't answered one by one, so what was built stays as it is.
 
 ## Efficiency (2026-11-12)
 
@@ -103,7 +109,7 @@ The UI and UX review on the tablet, and its fixes: [plan](docs/superpowers/plans
 - [x] Thumbnails on screen are read at normal priority and shown in groups (Task 7): one pass over a folder's tiles, not five or six.
 - [x] Thumbnails survive a start with the SD card out (Task 8).
 - [x] Small ones (Task 9): 16-bit cached thumbnails, one read per subfolder, idle scroll callbacks skipped.
-- [ ] **Owner checklist:** [notes/TESTING-efficiency.md](notes/TESTING-efficiency.md) (Task 10, hard stop).
+- [x] Owner checklist: [notes/TESTING-efficiency.md](notes/TESTING-efficiency.md). All checks pass (owner, 2026-11-13). The questions in the checklist weren't answered one by one, so what was built stays as it is.
 
 Next, each with its plan and its own decisions: [library design](docs/superpowers/plans/2026-11-12-library-design.md), [writing screen design](docs/superpowers/plans/2026-11-12-writing-screen-design.md), [dotted pages and fresh attempts](docs/superpowers/plans/2026-11-12-pages.md).
 
@@ -122,7 +128,7 @@ Next, each with its plan and its own decisions: [library design](docs/superpower
 - [x] The pen's on, off and palm rules (Task 8). Includes a stroke begun during a screen update (review 1.5).
 - [x] Tall first pages get a capped thumbnail (Task 9).
 - [x] Tablet tests run (68 pass), build installed, 2026-11-10.
-- [ ] Owner checklist: [notes/TESTING-review-fixes.md](notes/TESTING-review-fixes.md) (Task 10, hard stop).
+- [x] Owner checklist: [notes/TESTING-review-fixes.md](notes/TESTING-review-fixes.md) (Task 10, hard stop). Passed in the owner session of 2026-11-12.
 
 ## Review: speed
 
@@ -187,17 +193,17 @@ Next, each with its plan and its own decisions: [library design](docs/superpower
 - [x] Carry out plan 2: [writing screen](docs/superpowers/plans/2026-11-09-writing-screen.md), ending in an owner writing session (hard stop).
   - [x] Gentler refresh after zooming: REGAL instead of the full flash, the owner's choice (2026-11-10, readability plan Task 4).
   - [ ] Screen-recording test of writing (owner asked, 2026-11-09): record the screen while writing fast, to check no stroke ever disappears.
-- [ ] Plan 3: [tools](docs/superpowers/plans/2026-11-09-tools.md): eraser, lasso, snip, paste, undo/redo, page menu, pen buttons, ending in an owner tool session (hard stop).
+- [x] Plan 3: [tools](docs/superpowers/plans/2026-11-09-tools.md): eraser, lasso, snip, paste, undo/redo, page menu, pen buttons, ending in an owner tool session (hard stop).
   - [x] Owner approves the plan and its 11 decisions.
   - [x] Build the tools (Tasks 1–9), with the fixes from the final review (merged as PR #3, 2026-11-10).
-  - [ ] **Owner tool session** (Task 10, hard stop): work through [notes/TESTING-tools.md](notes/TESTING-tools.md) on the tablet, on the test copy.
-  - [ ] Write up the results (`docs/superpowers/tools-results.md`) and record any design changes in the spec.
-- [ ] Plan 4: [library](docs/superpowers/plans/2026-11-09-library.md): folders and thumbnails, breadcrumb, rename/move/delete, Settings (thumbnails switch, library folder), SD card, fast exit from a document. Approved 2026-11-10.
+  - [x] **Owner tool session** (Task 10, hard stop): work through [notes/TESTING-tools.md](notes/TESTING-tools.md) on the tablet, on the test copy. Passed in the owner session of 2026-11-12.
+  - [x] Write up the results (`docs/superpowers/tools-results.md`) and record any design changes in the spec. Recorded in "Owner session (2026-11-12)" above instead; no design changes.
+- [x] Plan 4: [library](docs/superpowers/plans/2026-11-09-library.md): folders and thumbnails, breadcrumb, rename/move/delete, Settings (thumbnails switch, library folder), SD card, fast exit from a document. Approved 2026-11-10.
   - [x] Build the library (Tasks 1–6), SD card support, and the fixes from the final review (merged as PR #4, 2026-11-10). Library folder: SD card › Workbooks.
-  - [ ] **Owner library session** (Task 7, hard stop): work through [notes/TESTING-library.md](notes/TESTING-library.md), including its "Also check (tools fixes)" section. Rename, move and delete only on copies or a scratch folder.
-  - [ ] Answer the two questions in the checklist: a changed file's tile keeps its old picture until the new one is ready; the folder-delete question also mentions non-PDF files.
-  - [ ] Write up the results (`docs/superpowers/library-results.md`) and record any design changes in the spec.
-- [ ] Plan 5: conflicts and crash rescue (written only after the owner approves plans 3 and 4).
+  - [x] **Owner library session** (Task 7, hard stop): work through [notes/TESTING-library.md](notes/TESTING-library.md), including its "Also check (tools fixes)" section. Rename, move and delete only on copies or a scratch folder. All checks pass (owner, 2026-11-12 and again 2026-11-13).
+  - [x] Answer the two questions in the checklist: a changed file's tile keeps its old picture until the new one is ready; the folder-delete question also mentions non-PDF files. Not answered one by one; both stay as built.
+  - [x] Write up the results (`docs/superpowers/library-results.md`) and record any design changes in the spec. Recorded here instead; no design changes.
+- [ ] Plan 5: conflicts and crash rescue (written only after the owner approves plans 3 and 4: both approved, 2026-11-13).
   - [ ] A file changed on disk while open: keep both versions, save the app's writing as `<name> (my edits YYYY-MM-DD).pdf`, and continue in the copy (spec §7.4).
   - [ ] Crash replay onto a changed file: turn set-aside journals (`.kept-…`) into a "(my edits …)" copy of the version they were drawn on.
   - [ ] A session whose only change is the redraw of old mirrored ink counts as no writing, so it never makes a conflict copy.

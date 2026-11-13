@@ -2,6 +2,21 @@
 
 What was found while debugging on the tablet: causes, measurements and the tricks that got them. Newest first. Bugs and to-dos themselves live in [TODO.md](../../TODO.md).
 
+## 2026-11-13: opened-out folders and thumbnails
+
+Owner: opening the small folders out is expensive and a bit slow with all the thumbnails. The tablet's log (release build of main, be19a62) for the ML course, 11 topics of two PDFs each:
+
+| Visit | Listing | Thumbnails drawn | Shown on screen |
+|---|---|---|---|
+| First, after the library design build | 260 ms | 22, about 30 ms each, 641 ms in all | in five goes (5, 6, 5, 5, 1 tiles) over 0.8 s |
+| Back from a document | 26 to 266 ms | 1 (the file just written) | the folder 380 to 500 ms after the screen came back |
+| CTM course, thumbnails cached | 52 ms | none | all 30 in one go |
+
+- Why the first visit drew everything: thumbnails cached before the library design build have no `.facts` file beside them, so each was drawn again once to read its page count and writing mark (`ThumbnailLoader.load`). This happens once per file.
+- Why five goes: the loader draws a tile in about 30 ms, so about four or five finish in each 120 ms gathering window (`TILE_BATCH_MS`), and each window is a refresh.
+- Opening out doubles the PDF tiles in a course (each topic's two PDFs instead of one folder tile), and each one needs its thumbnail.
+- Reading the page count and looking for writing cost 0 to 1 ms per file: not the slow part.
+
 ## 2026-11-12: owner session
 
 ### Button 2 does nothing when pressed close to the screen
