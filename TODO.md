@@ -6,13 +6,13 @@ The four sections below come from the [project review of 2026-11-10](docs/superp
 
 A read-through of the whole app for bugs, with suggestions: [findings](docs/superpowers/review-2026-11-16.md). Nothing was run on the tablet, and no way to lose writing in normal use was found. Three plans, written and not started; each opens with decisions for the owner to approve. Suggested order as listed.
 
-- [ ] Owner approves the decisions in each plan (4, 5 and 6 of them).
-- [ ] **[Conflict copy and journal fixes](docs/superpowers/plans/2026-11-16-conflict-copy-fixes.md)** (rows A1–A10), ending in the open checklist [notes/TESTING-conflicts.md](notes/TESTING-conflicts.md) with two checks added.
-  - [ ] One way into a "(my edits)" copy, which happens whole or leaves nothing behind: no pile of copies on a full tablet (Task 1).
-  - [ ] A changed file is opened only once the pen is held; a stroke before that goes into a copy (Task 2).
-  - [ ] What MuPDF does when a file is overwritten under it, tried on the tablet; a copy is checked before it's trusted (Task 3).
-  - [ ] No copy with nothing in it (Task 4).
-  - [ ] The journal's notes (Task 5).
+- [ ] Owner approves the decisions in each plan (4, 5 and 6 of them). (Conflict copy plan: decisions approved 2026-11-16.)
+- [ ] **[Conflict copy and journal fixes](docs/superpowers/plans/2026-11-16-conflict-copy-fixes.md)** (rows A1–A10), built on the branch `conflict-fixes`. **Owner checklist open:** [notes/TESTING-conflicts.md](notes/TESTING-conflicts.md), checks C4 to C6 and the line under C1.
+  - [x] One way into a "(my edits)" copy, which happens whole or leaves nothing behind: no pile of copies on a full tablet (Task 1).
+  - [x] A changed file is opened only once the pen is held; a stroke before that goes into a copy (Task 2).
+  - [x] What MuPDF does when a file is overwritten under it, tried on the tablet; a copy is checked before it's trusted (Task 3). The fault was real, so files up to 64 MB are now read into memory when opened for writing.
+  - [x] No copy with nothing in it (Task 4).
+  - [x] The journal's notes (Task 5).
 - [ ] **[Writing screen and library fixes](docs/superpowers/plans/2026-11-16-screen-and-library-fixes.md)** (rows B1–B7, C1–C3, D1–D2), ending in an owner checklist.
   - [ ] A rebuilt screen comes back to the right file; a keyboard or dark mode no longer rebuilds it (Task 1).
   - [ ] A page that couldn't be drawn is asked for again (Task 2).

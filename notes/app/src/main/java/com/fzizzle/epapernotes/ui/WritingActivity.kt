@@ -256,6 +256,14 @@ class WritingActivity : Activity() {
     @Volatile private var pageChangeUnderWay = false
 
     /**
+     * The file changed elsewhere ([SessionEvent.ChangedElsewhere]) and its new version is to be
+     * opened once the pen is held ([holdForReload]), until the session answers. A second notice
+     * meanwhile changes nothing. UI thread.
+     */
+    private var reloadWanted = false
+    private val retryReload = Runnable { holdForReload() }
+
+    /**
      * Goes up by one each time the pages are renumbered. Answers from the worker that were
      * asked for under older numbers (a page's printed area, its writing, a layout) are
      * thrown away when they come. Set on the UI thread; Onyx's thread reads it.
@@ -433,7 +441,7 @@ class WritingActivity : Activity() {
         session = DocumentSession(
             pdf = File(path),
             journalDir = File(filesDir, "journals"),
-            open = { PdfFile.open(it) },
+            open = { PdfFile.open(it, inMemory = true) }, // the open document can't be changed under us
             scheduler = WorkerScheduler(),
             events = { e ->
                 // On the worker. After leaving, this is how a check sees the last save land.
@@ -900,6 +908,10 @@ class WritingActivity : Activity() {
      * Onyx's ink stays on screen, and the page view keeps its own copy of the stroke for
      * whenever it redraws ([write]). Redrawing here used to pause fast-ink and cut off the next
      * stroke (owner's first writing session).
+     *
+     * Ink must be recorded before this returns, never posted for later: a reload of a changed
+     * file waits only until this returns (PenInput.strokeComing), so a stroke recorded after
+     * that could land on the new version's pages.
      */
     private fun onPenStroke(points: List<FloatArray>) {
         val (page, screenToPdf, numberedUnder) = strokeMapping ?: penMapping ?: return
@@ -1593,6 +1605,31 @@ class WritingActivity : Activity() {
     }
 
     /**
+     * Holds the pen as for a page change, then asks the session to open the file's new version:
+     * opened under a live pen, a stroke written on the old pages could land on the new ones.
+     * With the pen down or fingers on the page, it waits and tries again, so a stroke in
+     * progress is never cut. It waits too while a lifted stroke's points are still to come
+     * ([PenInput.strokeComing]): Onyx reports the lift before it hands them over, and a stroke
+     * recorded after the reload would be put on the new version's page of that number. (The
+     * session's renumbering, DocumentSession.reload, is the second line of defence: a stroke
+     * from a page the new version lacks isn't recorded there.) Page changes don't wait for
+     * this: their renumbering moves a late stroke to its own page. In the background it's
+     * dropped: coming back looks at the file again.
+     */
+    private fun holdForReload() {
+        if (!resumed) {
+            reloadWanted = false
+            return
+        }
+        if (pen.strokeComing) {
+            Log.i(TAG, "reload: refused, a lifted stroke is still to be handed over")
+            handler.postDelayed(retryReload, RELOAD_RETRY_MS)
+            return
+        }
+        if (holdForPageChange("reload")) session.reload() else handler.postDelayed(retryReload, RELOAD_RETRY_MS)
+    }
+
+    /**
      * The session added or removed a page and saved: every page after it has a new number.
      * Everything kept by page number is forgotten, every page is read and laid out again, and
      * [showPage] is shown. Only then may anything name a page again. UI thread.
@@ -1885,6 +1922,9 @@ class WritingActivity : Activity() {
         handler.removeCallbacks(resumeFastInk)
         handler.removeCallbacks(heldCleanRefresh) // it would resume fast-ink after its refresh
         cleanRefreshHeld = false
+        // A reload still waiting for the pen: coming back looks at the file again (onResume).
+        handler.removeCallbacks(retryReload)
+        reloadWanted = false
         pen.off()
         // The page view's picture may lack the latest strokes ([write]). The screen can stay
         // in view after this (the tablet going to sleep, another window on top), so draw them.
@@ -1967,7 +2007,7 @@ class WritingActivity : Activity() {
         // nothing touches the screen any more, and a question shown on a closed screen crashes.
         val needsTheScreen = event is SessionEvent.NeedsRepairDecision || event is SessionEvent.InkRedrawn ||
             event is SessionEvent.PageChanged || event is SessionEvent.HistoryChanged || event is SessionEvent.PagesRenumbered ||
-            event is SessionEvent.Reloaded
+            event is SessionEvent.Reloaded || event is SessionEvent.ChangedElsewhere
         if (needsTheScreen && (isFinishing || isDestroyed)) return
         when (event) {
             SessionEvent.Saved -> {
@@ -1993,10 +2033,19 @@ class WritingActivity : Activity() {
                 writingStopped = true
                 setNotSaving("A change couldn't be written into this file, so it isn't being saved into.\n\nEverything you've written is kept safe in the app. Close the file and open it again to bring it back.")
             }
+            SessionEvent.ChangedElsewhere -> if (!reloadWanted) {
+                reloadWanted = true
+                holdForReload()
+            }
             SessionEvent.Reloaded -> {
+                reloadWanted = false
                 toast("This file was changed elsewhere. This is the new version.")
                 // Its pages may be other pages now: everything is laid out again, as after a page is added.
                 pagesRenumbered(pages.viewport?.page ?: 0)
+            }
+            SessionEvent.NotReloaded -> {
+                reloadWanted = false
+                releasePageChangeHold()
             }
             SessionEvent.NeedsRepairDecision -> askAboutRepair()
             is SessionEvent.Replayed -> toast("Recovered ${event.count} change(s) that hadn't been saved.")
@@ -2145,6 +2194,9 @@ class WritingActivity : Activity() {
 
         /** How long the pen must rest before a show skipped while writing is tried again. */
         const val SHOW_RETRY_IDLE_MS = 500L
+
+        /** How soon a reload waiting for the pen to lift, or the fingers to stop, tries again. */
+        const val RELOAD_RETRY_MS = 300L
 
         /** No hover or touch from the pen for this long: it has left the screen's range (hover events come many times a second). */
         const val PEN_GONE_MS = 300L

@@ -389,6 +389,59 @@ class ChangeJournalTest {
         assertEquals(listOf(add(0, dot), AddItems(1, listOf(snip)), RemoveItems(1, listOf(snip))), next.read()!!.changes)
     }
 
+    /** The same for the notes: one written after a cut-short line must not be joined to it. */
+    @Test fun aSavingNoteAfterACutShortLineIsNotJoinedToIt() {
+        val j = journal()
+        j.start(base)
+        j.append(add(0, dot))
+        j.file.appendText("add 0 12") // no newline: cut short
+        j.markSaving(base, 1)
+        val read = j.read()!!
+        assertEquals(listOf(add(0, dot)), read.changes)
+        assertEquals(PendingSave(base, 1), read.pendingSave)
+    }
+
+    @Test fun aRenumberingNoteAfterACutShortLineIsNotJoinedToIt() {
+        val j = journal()
+        j.start(base)
+        j.append(add(0, dot))
+        j.file.appendText("add 0 12") // no newline: cut short
+        j.markRenumbering()
+        val read = j.read()!!
+        assertEquals(listOf(add(0, dot)), read.changes)
+        assertTrue(read.renumbering)
+    }
+
+    /**
+     * Final review 9: a cut-short snip line can be far longer than the 8 KB block the end of
+     * the file is read back in, so the last newline is several blocks back. Tried at lengths
+     * around one block, where an off-by-one would show, and at several blocks.
+     */
+    @Test fun aCutShortLineLongerThanABlockIsCutOffWhole() {
+        for (tail in listOf(8191, 8192, 8193, 3 * 8192 + 100)) {
+            val j = journal()
+            j.start(base)
+            j.append(add(0, dot))
+            val whole = j.file.length()
+            j.file.appendText("img " + "A".repeat(tail - 4)) // a snip's line, no newline: cut short
+            assertEquals(whole + tail, j.file.length())
+            j.markSaving(base, 1)
+            val read = journal().read()!!
+            assertEquals("tail $tail", listOf(add(0, dot)), read.changes)
+            assertEquals("tail $tail", PendingSave(base, 1), read.pendingSave)
+            assertFalse("tail $tail", j.file.readText().contains("AAAA"))
+            j.file.delete()
+        }
+    }
+
+    /** A file with no newline at all, over several blocks, holds no whole line: it's emptied before the note. */
+    @Test fun aFileThatIsAllOneCutShortLineIsEmptied() {
+        val j = journal()
+        j.file.writeText("A".repeat(3 * 8192 + 100))
+        j.markRenumbering()
+        assertEquals("renumbering\n", j.file.readText())
+    }
+
     /** Every mention of a picture read back is the same bytes in memory, not a copy each. */
     @Test fun aPictureReadBackIsHeldOnce() {
         val j = journal()

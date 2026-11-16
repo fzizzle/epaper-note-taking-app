@@ -14,6 +14,7 @@ import java.io.File
 import java.util.Collections
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -26,11 +27,12 @@ class DocumentSessionDeviceTest {
     private val journals = File(dir, "journals")
     private val line = Stroke(StrokeKind.PEN, (0..40).map { StrokePoint(100f + it * 5, 300f, 0.6f) })
 
-    private class Run(pdf: File, journals: File) {
+    /** [inMemory]: open as the writing screen does, the whole file read into memory. */
+    private class Run(pdf: File, journals: File, inMemory: Boolean = false) {
         val events: MutableList<SessionEvent> = Collections.synchronizedList(mutableListOf())
         val scheduler = WorkerScheduler()
         var opened: PdfFile? = null
-        val session = DocumentSession(pdf, journals, { PdfFile.open(it).also { f -> opened = f } }, scheduler, { events += it })
+        val session = DocumentSession(pdf, journals, { PdfFile.open(it, inMemory).also { f -> opened = f } }, scheduler, { events += it })
 
         fun waitFor(timeoutMs: Long = 6000, check: () -> Boolean) {
             val end = System.currentTimeMillis() + timeoutMs
@@ -118,6 +120,35 @@ class DocumentSessionDeviceTest {
         assertTrue(run.events.none { it == SessionEvent.Saved })
         run.scheduler.killNow()
         run.opened?.close()
+    }
+
+    /**
+     * Final review 4: "save my writing to a copy" on a really damaged file. The copy is checked
+     * before it's trusted, and refused if it needs repair, so the copy MuPDF writes from a
+     * repaired file must open clean, with the same pages. Opened by path and, as the writing
+     * screen does it, from memory.
+     */
+    @Test fun aDamagedFilesCopyOpensCleanWithTheSamePages() {
+        for (inMemory in listOf(false, true)) {
+            val pdf = TestPdfs.brokenXref(File(dir, "inMemory=$inMemory").apply { mkdirs() })
+            val before = pdf.readBytes()
+            val run = Run(pdf, journals, inMemory).apply { session.start() }
+            run.waitFor { run.events.contains(SessionEvent.NeedsRepairDecision) }
+            run.session.addStroke(0, line)
+            run.session.saveRepairedToCopy()
+            run.waitFor { copyMade(run) != null || run.events.any { it is SessionEvent.SaveFailed } }
+            assertTrue("inMemory=$inMemory: ${run.events}", run.events.none { it is SessionEvent.SaveFailed })
+            val made = copyMade(run)!!
+            assertEquals(CopyReason.DAMAGED, made.why)
+            run.session.close()
+            Thread.sleep(200)
+            PdfFile.open(made.copy).use {
+                assertFalse("inMemory=$inMemory: the copy needed repair", it.wasRepaired)
+                assertEquals(2, it.pageCount)
+            }
+            assertEquals(1, strokesIn(made.copy))
+            assertArrayEquals(before, pdf.readBytes())
+        }
     }
 
     /** As a laptop or a sync app would: the file gets a new version, with a stroke of theirs. */

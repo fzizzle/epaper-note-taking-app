@@ -8,6 +8,7 @@ import com.fzizzle.epapernotes.ink.Item
 import com.fzizzle.epapernotes.ink.Stroke
 import com.fzizzle.epapernotes.ink.StrokeKind
 import com.fzizzle.epapernotes.ink.StrokePoint
+import com.fzizzle.epapernotes.storage.CopyNames
 import com.fzizzle.epapernotes.storage.FileIdentity
 import java.io.File
 import java.time.LocalDateTime
@@ -30,7 +31,8 @@ class DocumentSessionTest {
     private val events = mutableListOf<SessionEvent>()
     private var fake = FakePdfPages()
     /** How the session opens the PDF. A test can make it fail. */
-    private var opening: (File) -> PdfPages = { fake }
+    private var opening: (File) -> PdfPages = { f -> if (isACopy(f)) FakePdfPages(pages = fake.pageCount) else fake }
+    private fun isACopy(f: File) = "(my edits" in f.name
     /** Runs at each event after it's noted, so a test can make one fail. */
     private var onEvent: (SessionEvent) -> Unit = {}
     /** Every file whose identity the session read (each read goes through the whole file). */
@@ -259,7 +261,7 @@ class DocumentSessionTest {
         assertEquals(1, journalStrokes(myEdits))
     }
 
-    /** Spec §7.4: changed on disk, nothing unsaved. The new version is opened in its place. */
+    /** Spec §7.4: changed on disk, nothing unsaved. Once the screen holds the pen, the new version is opened in its place. */
     @Test fun aFileChangedWhileOpenWithNothingUnsavedIsOpenedAgain() {
         val s = session()
         s.addStroke(0, dot)
@@ -268,6 +270,8 @@ class DocumentSessionTest {
         val newVersion = FakePdfPages().apply { pageItems[3] = mutableListOf(InkItem("theirs", line)) }
         fake = newVersion
         s.checkFile()
+        assertTrue(events.contains(SessionEvent.ChangedElsewhere))
+        s.reload() // what the screen does once the pen is held
         assertTrue(events.contains(SessionEvent.Reloaded))
         assertTrue(events.none { it is SessionEvent.SavedToCopy })
         assertFalse(myEdits.exists())
@@ -289,6 +293,8 @@ class DocumentSessionTest {
         fake = FakePdfPages()
         s.saveNow()
         assertEquals(0, old.saves)
+        assertTrue(events.contains(SessionEvent.ChangedElsewhere))
+        s.reload()
         assertTrue(events.contains(SessionEvent.Reloaded))
         assertFalse(myEdits.exists())
         assertEquals("edited on the laptop", pdf.readText())
@@ -300,7 +306,158 @@ class DocumentSessionTest {
         identityReads.clear()
         s.checkFile()
         assertTrue(identityReads.isEmpty())
+        assertTrue(events.none { it is SessionEvent.Reloaded || it is SessionEvent.ChangedElsewhere })
+    }
+
+    /** Decision 1: a changed file with nothing unsaved isn't swapped in behind the pen. The screen is asked first. */
+    @Test fun aChangedFileWithNothingUnsavedAsksFirst() {
+        val s = session()
+        pdf.writeText("edited on the laptop")
+        s.checkFile()
+        assertEquals(1, events.count { it == SessionEvent.ChangedElsewhere })
         assertTrue(events.none { it is SessionEvent.Reloaded })
+        assertFalse(fake.closed) // the old version is still the one open
+    }
+
+    /** The file changed, the screen held the pen and asked: the new version is opened, under new page numbers. */
+    private fun reloadOnto(newVersion: FakePdfPages): DocumentSession {
+        val s = session()
+        pdf.writeText("edited on the laptop")
+        s.checkFile()
+        assertTrue(events.contains(SessionEvent.ChangedElsewhere))
+        opening = { newVersion }
+        s.reload()
+        return s
+    }
+
+    @Test fun reloadOpensTheNewVersion() {
+        val old = fake
+        val s = reloadOnto(FakePdfPages(pages = 3))
+        assertTrue(events.contains(SessionEvent.Reloaded))
+        assertTrue(old.closed)
+        assertEquals(1, s.pageNumbering)
+        assertTrue(ChangeJournal.forDocument(journals, pdf).read()!!.base.sameContentAs(FileIdentity.of(pdf)))
+    }
+
+    /** Review focus 2: a stroke written before the pen was held is on the old version's pages, so it goes into a copy of those. */
+    @Test fun aStrokeBeforeTheReloadGoesIntoACopyOfTheOldVersion() {
+        val s = session()
+        pdf.writeText("edited on the laptop")
+        s.checkFile()
+        assertEquals(1, events.count { it == SessionEvent.ChangedElsewhere })
+        s.addStroke(0, dot) // the pen wasn't held yet
+        val newVersion = FakePdfPages()
+        opening = { newVersion }
+        s.reload()
+        assertTrue(events.contains(SessionEvent.NotReloaded))
+        assertTrue(events.none { it is SessionEvent.Reloaded })
+        assertTrue(events.contains(SessionEvent.SavedToCopy(myEdits, CopyReason.CHANGED_WHILE_OPEN)))
+        assertEquals("items=1", myEdits.readText())
+        assertEquals("edited on the laptop", pdf.readText())
+        assertTrue(newVersion.closed)
+    }
+
+    /** A stroke the pen handed over late, read under the old numbers: on a page the new version has, it keeps it. */
+    @Test fun aLateStrokeAfterAReloadKeepsItsPage() {
+        val newVersion = FakePdfPages(pages = 5)
+        val s = reloadOnto(newVersion)
+        fake = newVersion
+        assertEquals(2, (s.addStroke(2, dot, numbering = 0) as AddItems).page)
+        assertEquals(listOf(dot), strokesOn(2))
+    }
+
+    /** Review focus 3: the new version is shorter, and a late stroke from a page it lacks has nowhere to go. Saving goes on. */
+    @Test fun aLateStrokeOnAPageTheNewVersionLacksIsNotRecorded() {
+        val newVersion = FakePdfPages(pages = 3)
+        val s = reloadOnto(newVersion)
+        fake = newVersion
+        assertEquals(null, s.addStroke(4, dot, numbering = 0))
+        assertTrue(events.none { it is SessionEvent.WritingStopped })
+        s.addStroke(0, line)
+        s.saveNow()
+        assertEquals("items=1", pdf.readText())
+        assertEquals(listOf(line), strokesOn(0))
+    }
+
+    /** The new version can't be opened (out of memory, say): the old one stays open and on screen, and the pen comes back. */
+    @Test fun aNewVersionThatCanNotBeOpenedLeavesTheOldOneOnScreen() {
+        val s = session()
+        pdf.writeText("edited on the laptop")
+        s.checkFile()
+        opening = { throw OutOfMemoryError("opening") }
+        s.reload()
+        assertTrue(events.contains(SessionEvent.NotReloaded))
+        assertTrue(events.none { it is SessionEvent.OpenFailed || it is SessionEvent.Reloaded })
+        assertFalse(fake.closed)
+        s.addStroke(1, dot)
+        assertEquals(listOf(dot), strokesOn(1))
+    }
+
+    /**
+     * Final review 6: the new version opens, but reading its page count fails (memory running
+     * out, say). The journal must stay on the old version, which stays on screen: moved onto the
+     * new one, a stroke on the old pages and a kill would replay it onto the new version's pages.
+     */
+    @Test fun aReloadThatFailsMidwayLeavesTheJournalOnTheOldVersion() {
+        val s = session()
+        val oldIdentity = FileIdentity.of(pdf)
+        pdf.writeText("edited on the laptop")
+        s.checkFile()
+        val newVersion = FakePdfPages()
+        val failing = object : PdfPages by newVersion {
+            override val pageCount: Int get() = throw OutOfMemoryError("counting pages")
+        }
+        opening = { failing }
+        s.reload()
+        assertEquals(1, events.count { it == SessionEvent.NotReloaded })
+        assertTrue(events.none { it is SessionEvent.Reloaded })
+        assertTrue(newVersion.closed)
+        assertFalse(fake.closed)
+        assertEquals(0, s.pageNumbering)
+        assertTrue(ChangeJournal.forDocument(journals, pdf).read()!!.base.sameContentAs(oldIdentity))
+    }
+
+    /** By the time the screen asks, the file is as it was: nothing to open. */
+    @Test fun aReloadOfAFileThatChangedBackAnswersNotReloaded() {
+        val s = session()
+        val modified = pdf.lastModified()
+        pdf.writeText("edited on the laptop")
+        s.checkFile()
+        assertTrue(events.contains(SessionEvent.ChangedElsewhere))
+        pdf.writeText("original")
+        pdf.setLastModified(modified)
+        val newVersion = FakePdfPages()
+        opening = { newVersion }
+        s.reload()
+        assertTrue(events.contains(SessionEvent.NotReloaded))
+        assertTrue(events.none { it is SessionEvent.Reloaded })
+        assertFalse(fake.closed)
+        assertFalse(newVersion.closed) // never opened
+        assertEquals(0, s.pageNumbering)
+    }
+
+    /** Review A9: the old version's ink pass stops at a reload, and the new version is walked once, from page 0. */
+    @Test fun anInkRedrawUnderWayStopsAtAReload() {
+        val calls = mutableListOf<String>()
+        lateinit var s: DocumentSession
+        fake.faultyStrokes += mapOf(0 to 1, 1 to 1, 2 to 1)
+        fake.duringRedraw = { page ->
+            calls += "old $page"
+            // In the middle of the pass: a sync replaces the file, and the screen asks for it.
+            if (page == 1) {
+                pdf.writeText("edited on the laptop")
+                s.checkFile()
+                s.reload()
+            }
+        }
+        val newVersion = FakePdfPages().apply { duringRedraw = { calls += "new $it" } }
+        s = session()
+        opening = { newVersion }
+        scheduler.runDelayed() // the old version's pass, a moment after opening
+        assertTrue(events.contains(SessionEvent.Reloaded))
+        assertEquals(listOf("old 0", "old 1"), calls)
+        scheduler.runDelayed() // the new version's pass
+        assertEquals(listOf("old 0", "old 1") + (0 until 5).map { "new $it" }, calls)
     }
 
     /** The copy can't be saved (the folder went with the file, say): told, tried again, and nothing lost meanwhile. */
@@ -316,6 +473,161 @@ class DocumentSessionTest {
         scheduler.runDelayed() // the retry
         assertEquals("items=1", myEdits.readText())
         assertEquals("edited on the laptop", pdf.readText())
+    }
+
+    private val sessionClock = LocalDateTime.of(2026, 11, 9, 14, 5)
+
+    /** As [breakTheJournal], for [file]'s journal: a full tablet, so it can't be started. */
+    private fun breakTheJournalOf(file: File): File {
+        val journalFile = ChangeJournal.forDocument(journals, file).file
+        journalFile.delete()
+        assertTrue(journalFile.mkdir())
+        return journalFile
+    }
+
+    /** Every "(my edits …)" copy beside the file. */
+    private fun myEditsCopies() = pdf.parentFile!!.listFiles()!!.filter { "(my edits" in it.name }
+
+    /** Review A1: the copy is made, its journal can't be. No copy is left behind, and the retry makes just one. */
+    @Test fun aCopyWhoseJournalCantBeStartedLeavesNoCopyBehind() {
+        val s = session()
+        s.addStroke(0, dot)
+        pdf.writeText("edited on the laptop")
+        val broken = breakTheJournalOf(CopyNames.myEdits(pdf, sessionClock))
+        s.saveNow()
+        assertEquals(1, events.count { it is SessionEvent.SaveFailed })
+        assertEquals(emptyList<File>(), myEditsCopies())
+        assertEquals(pdf, s.file)
+        broken.delete() // room again
+        scheduler.runDelayed() // the retry
+        assertEquals(listOf(myEdits), myEditsCopies())
+        assertEquals("items=1", myEdits.readText())
+        assertEquals(1, events.count { it == SessionEvent.SavedToCopy(myEdits, CopyReason.CHANGED_WHILE_OPEN) })
+        assertEquals("edited on the laptop", pdf.readText())
+    }
+
+    /** Review A3 / decision 2: a copy MuPDF had to repair isn't trusted. It goes, the writing stays where it was. */
+    @Test fun aCopyThatDoesNotOpenCleanIsNotTrusted() {
+        val s = session()
+        s.addStroke(0, dot)
+        pdf.writeText("edited on the laptop")
+        opening = { f -> if (isACopy(f)) FakePdfPages(wasRepaired = true, pages = fake.pageCount) else fake }
+        s.saveNow()
+        assertEquals(1, events.count { it is SessionEvent.SaveFailed })
+        assertEquals(emptyList<File>(), myEditsCopies())
+        assertEquals(pdf, s.file)
+        assertEquals(1, journalStrokes())
+    }
+
+    @Test fun aCopyWithTheWrongPageCountIsNotTrusted() {
+        val s = session()
+        s.addStroke(0, dot)
+        pdf.writeText("edited on the laptop")
+        opening = { f -> if (isACopy(f)) FakePdfPages(pages = 2) else fake }
+        s.saveNow()
+        assertEquals(1, events.count { it is SessionEvent.SaveFailed })
+        assertEquals(emptyList<File>(), myEditsCopies())
+        assertEquals(pdf, s.file)
+        assertEquals(1, journalStrokes())
+    }
+
+    /** The fault itself: a PDF opened by path counts the overwriting file's pages, and so does the copy saved from it. */
+    @Test fun aCopyMatchingTheOpenDocumentsChangedCountIsNotTrusted() {
+        val s = session() // opened with 5 pages
+        s.addStroke(0, dot)
+        pdf.writeText("overwritten by a shorter file")
+        fake.loseAllButPages(2) // the open document now says 2; the copy saved from it has 2
+        s.saveNow()
+        assertEquals(1, events.count { it is SessionEvent.SaveFailed })
+        assertEquals(emptyList<File>(), myEditsCopies())
+        assertEquals(pdf, s.file)
+        assertEquals(1, journalStrokes())
+    }
+
+    /** The session's own page changes move the count it checks against. */
+    @Test fun aCopyAfterAnAddedPageIsTrustedWithOneMorePage() {
+        val s = session()
+        s.addPageAfter(0)
+        events.clear()
+        s.addStroke(0, dot)
+        pdf.writeText("edited on the laptop")
+        s.saveNow()
+        assertTrue(events.none { it is SessionEvent.SaveFailed })
+        assertEquals(listOf(myEdits), myEditsCopies())
+    }
+
+    @Test fun aCopyThatOpensCleanIsUsed() {
+        val s = session()
+        s.addStroke(0, dot)
+        pdf.writeText("edited on the laptop")
+        val checked = mutableListOf<FakePdfPages>()
+        opening = { f -> if (isACopy(f)) FakePdfPages(pages = fake.pageCount).also { checked += it } else fake }
+        s.saveNow()
+        assertEquals(1, checked.size) // one extra open, on the copy
+        assertTrue(checked.single().closed)
+        assertFalse(fake.closed)
+        assertEquals(listOf(myEdits), myEditsCopies())
+        assertEquals(myEdits, s.file)
+    }
+
+    /** Review A1: a failed move into the copy leaves the journal as it was, so writing after it survives a kill. */
+    @Test fun strokesAfterAFailedSwitchSurviveAKill() {
+        val s = session()
+        s.addStroke(0, dot)
+        pdf.writeText("edited on the laptop")
+        val broken = breakTheJournalOf(CopyNames.myEdits(pdf, sessionClock))
+        s.saveNow()
+        assertEquals(1, events.count { it is SessionEvent.SaveFailed })
+        s.addStroke(1, line)
+        broken.delete() // room again; then the app is killed
+        reopenAfterKill()
+        assertTrue(events.contains(SessionEvent.SavedToCopy(myEdits, CopyReason.RESCUED)))
+        assertEquals(listOf(myEdits), myEditsCopies())
+        assertEquals("items=2", myEdits.readText())
+    }
+
+    /** A rescue whose copy can't get a journal goes the way any failed rescue goes: set aside, the file opened plain. */
+    @Test fun aRescueWhoseJournalCantBeStartedOpensTheFilePlain() {
+        ChangeJournal.forDocument(journals, pdf).apply { start(otherVersion); append(AddItems(0, listOf(InkItem("a", dot)))) }
+        breakTheJournalOf(CopyNames.myEdits(pdf, sessionClock))
+        val s = session()
+        assertTrue(events.none { it is SessionEvent.OpenFailed })
+        assertEquals(1, events.count { it is SessionEvent.EarlierWritingKept })
+        assertEquals(emptyList<File>(), myEditsCopies())
+        assertEquals(pdf, s.file)
+    }
+
+    /** Review A7: a session that moves into a copy, then into a second one, frees both when it closes. */
+    @Test fun aSessionThatMovedTwiceFreesBothCopies() {
+        val s = session()
+        s.addStroke(0, dot)
+        pdf.writeText("edited on the laptop")
+        s.saveNow()
+        assertEquals(myEdits, s.file)
+        myEdits.writeText("edited on the laptop too")
+        s.addStroke(0, line)
+        s.saveNow()
+        assertEquals(2, myEditsCopies().size)
+        s.close()
+        assertFalse(DocumentSession.anyOpenIn(pdf.parentFile!!))
+    }
+
+    /** Review A8: a file that arrives at the damaged file's copy's name meanwhile is never replaced. */
+    @Test fun aDamagedFilesCopyNeverReplacesAFileThatArrived() {
+        fake = FakePdfPages(wasRepaired = true)
+        val s = session()
+        s.addStroke(0, dot)
+        fake.duringSave = { fake.duringSave = null; myEdits.writeText("from the laptop") }
+        s.saveRepairedToCopy()
+        assertEquals("from the laptop", myEdits.readText())
+        assertTrue(events.any { it is SessionEvent.SaveFailed })
+        assertEquals(pdf, s.file)
+        s.saveRepairedToCopy() // the owner asks again
+        val next = File(pdf.parentFile, "Lecture (my edits 2026-11-09 14-05).pdf")
+        assertEquals("items=1", next.readText())
+        assertEquals("from the laptop", myEdits.readText())
+        assertTrue(events.contains(SessionEvent.SavedToCopy(next, CopyReason.DAMAGED)))
+        assertEquals("original", pdf.readText())
     }
 
     @Test fun failedSaveKeepsJournalAndRetries() {
@@ -389,6 +701,84 @@ class DocumentSessionTest {
         assertTrue(events.contains(SessionEvent.SavedToCopy(myEdits, CopyReason.RESCUED, notPlaced = 1)))
         val kept = events.filterIsInstance<SessionEvent.EarlierWritingKept>().single().journal
         assertEquals(2, ChangeJournal(kept).read()!!.changes.size)
+    }
+
+    /** Writing that fits nowhere in the file makes no copy: it is kept aside and the file opens plain. */
+    @Test fun earlierWritingThatFitsNowhereMakesNoCopy() {
+        ChangeJournal.forDocument(journals, pdf).apply { start(otherVersion); append(AddItems(45, listOf(InkItem("a", dot)))) }
+        val s = session()
+        assertEquals(1, events.count { it is SessionEvent.EarlierWritingKept })
+        assertTrue(events.none { it is SessionEvent.SavedToCopy })
+        assertFalse(myEdits.exists())
+        assertEquals(pdf, s.file)
+        s.addStroke(0, dot)
+        s.saveNow()
+        assertEquals("items=1", pdf.readText())
+    }
+
+    /** Writing the file already holds needs no copy, and nothing is kept aside. */
+    @Test fun earlierWritingAlreadyInTheFileMakesNoCopy() {
+        val a = InkItem("a", dot)
+        val b = InkItem("b", line)
+        fake.pageItems[0] = mutableListOf(a, b)
+        ChangeJournal.forDocument(journals, pdf).apply { start(otherVersion); append(AddItems(0, listOf(a, b))) }
+        val s = session()
+        assertTrue(events.none { it is SessionEvent.SavedToCopy || it is SessionEvent.EarlierWritingKept })
+        assertFalse(myEdits.exists())
+        assertEquals(pdf, s.file)
+        assertEquals(0, journalStrokes(pdf))
+        assertEquals(FileIdentity.of(pdf), ChangeJournal.forDocument(journals, pdf).read()!!.base)
+    }
+
+    /** As above, but some of the writing is on pages the file lost: that part is kept aside, once. */
+    @Test fun earlierWritingAlreadyInTheFileButPartlyOnMissingPagesIsKeptAside() {
+        val a = InkItem("a", dot)
+        fake.pageItems[0] = mutableListOf(a)
+        ChangeJournal.forDocument(journals, pdf).apply { start(otherVersion); append(AddItems(0, listOf(a))); append(AddItems(7, listOf(InkItem("b", line)))) }
+        val s = session()
+        assertEquals(1, events.count { it is SessionEvent.EarlierWritingKept })
+        assertTrue(events.none { it is SessionEvent.SavedToCopy })
+        assertFalse(myEdits.exists())
+        assertEquals(pdf, s.file)
+        val kept = events.filterIsInstance<SessionEvent.EarlierWritingKept>().single().journal
+        assertEquals(2, ChangeJournal(kept).read()!!.changes.size)
+    }
+
+    /** Only some of the writing is in the file: the rest still goes into a copy. */
+    @Test fun earlierWritingPartlyInTheFileStillGoesIntoACopy() {
+        val a = InkItem("a", dot)
+        fake.pageItems[0] = mutableListOf(a)
+        ChangeJournal.forDocument(journals, pdf).apply { start(otherVersion); append(AddItems(0, listOf(a, InkItem("b", line)))) }
+        val s = session()
+        assertTrue(events.contains(SessionEvent.SavedToCopy(myEdits, CopyReason.RESCUED)))
+        assertEquals(myEdits, s.file)
+    }
+
+    /**
+     * Final review 1: reading the page to see whether the writing is already there fails (an
+     * annotation MuPDF can't read, or memory running out). That counts as "not there": the
+     * writing goes into a copy, and the file still opens, now and every time after.
+     */
+    @Test fun aPageThatCanNotBeReadForTheAlreadyThereCheckStillGetsACopy() {
+        ChangeJournal.forDocument(journals, pdf).apply { start(otherVersion); append(AddItems(0, listOf(InkItem("a", dot)))) }
+        var reads = 0
+        fake.duringItems = { if (reads++ == 0) throw OutOfMemoryError("reading page 0") }
+        val s = session()
+        assertTrue(events.none { it is SessionEvent.OpenFailed })
+        assertTrue(events.contains(SessionEvent.SavedToCopy(myEdits, CopyReason.RESCUED)))
+        assertEquals("items=1", myEdits.readText())
+        assertEquals(myEdits, s.file)
+        assertEquals("original", pdf.readText())
+    }
+
+    /** An erase among the writing is not "already there": it still goes into a copy. */
+    @Test fun anEraseAmongEarlierWritingStillGoesIntoACopy() {
+        val a = InkItem("a", dot)
+        fake.pageItems[0] = mutableListOf(a)
+        ChangeJournal.forDocument(journals, pdf).apply { start(otherVersion); append(AddItems(0, listOf(a))); append(RemoveItems(0, listOf(a))) }
+        val s = session()
+        assertTrue(events.contains(SessionEvent.SavedToCopy(myEdits, CopyReason.RESCUED)))
+        assertEquals(myEdits, s.file)
     }
 
     /** A rescue that fails leaves the file plain and open, with the writing set aside whole, as before rescues existed. */
@@ -1258,6 +1648,29 @@ class DocumentSessionTest {
         assertTrue(events.contains(SessionEvent.Replayed(1)))
         assertEquals(5, fake.pageCount)
         assertEquals(listOf(dot), strokesOn(1)) // its old page, in the old file
+    }
+
+    /**
+     * The renumbering note goes in just before the swap. If the swap then fails, the file is
+     * still the old one, so the note must not stay: it would make the next opening keep the
+     * stroke aside instead of replaying it.
+     */
+    @Test fun aPageChangeThatCouldNotBeSavedLeavesNoRenumberingNote() {
+        val s = session()
+        s.addStroke(1, dot)
+        reopenFreshFromTheFile()
+        // The swap can't happen: the file's name is taken by a folder that isn't empty. This
+        // is after the note is written (and after the file was found unchanged).
+        fake.duringSave = {
+            pdf.delete()
+            pdf.mkdir()
+            File(pdf, "x").writeText("x")
+        }
+        s.addPageAfter(0)
+        assertEquals(1, pageNotChanged().size)
+        val contents = ChangeJournal.forDocument(journals, pdf).read()!!
+        assertFalse(contents.renumbering)
+        assertEquals(listOf(dot), contents.changes.map { ((it as AddItems).items[0] as InkItem).stroke })
     }
 
     /**

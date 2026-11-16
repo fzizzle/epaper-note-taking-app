@@ -2,6 +2,23 @@
 
 What was found while debugging on the tablet: causes, measurements and the tricks that got them. Newest first. Bugs and to-dos themselves live in [TODO.md](../../TODO.md).
 
+## 2026-11-16: a file overwritten in place under an open document
+
+Question (review A3): what does MuPDF do when the file under an open document is changed by something else, and can a "(my edits)" copy then be damaged? `PdfFileChangedUnderneathTest` on the tablet: A is 40 pages (150 KB), B is 3 pages (11 KB), each case on a fresh copy of A, opened, page 0 drawn, then:
+
+| Case | Opened by path (before) | Opened from memory (after) |
+|---|---|---|
+| A overwritten in place with B (file cut to B's length), stroke, `saveTo(copy)` | no error; copy of 3 pages (B's), `wasRepaired` false, page 30 doesn't exist | copy of 40 pages, not repaired |
+| same overwrite, then `render(30, 600)` | no error: a blank page, `pageCount` of the open document now 3 | A's page 30, identical to a render before the overwrite |
+| B moved over A with `ATOMIC_MOVE` (as Syncthing does), stroke, `saveTo(copy)` | copy of 40 pages, not repaired, stroke on page 0 | the same |
+
+- The fault is real: MuPDF reads the open file as it goes, so an overwrite in place changes the document under the app, including what it counts: the open document itself said 3 pages after the overwrite. The copy opened clean, with someone else's 3 pages and the owner's writing on page 0.
+- So a page count read from the open document is no check against this: the copy matches it. The session compares a copy with the count it holds itself (taken at opening, on reload and on opening again, moved by its own page adds and removes). That catches this overwrite when the other file has another page count, and a repaired copy. It does not catch an overwrite by a file with the same page count.
+- Decision 3 was therefore needed and is built: `PdfFile.open(file, inMemory = true)` reads files of up to 64 MB into memory (`IN_MEMORY_LIMIT_BYTES`). Only the writing screen's document asks for it; the library's thumbnails and facts open by path as before. All three cases give A whole when opened that way.
+- A rename leaves the old file alone (the open handle follows the old file), so it was never the problem.
+- Cost, on the 14 MB lecture deck (125 pages, `SpeedCheck`, two runs each): open 11 and 12 ms before, 26 ms after (the read of the file; the fingerprint, which also reads it, takes 14 ms); first page 202 and 214 ms before, 173 and 195 ms after (no change); reopen and read strokes the same. Memory (native heap allocated, after opening and drawing page 1): 19.2 MB before, 32.9 MB after, 13.7 MB more: the file's size. After closing, both are back to 16.3 MB. The Java heap does not grow: the bytes are copied into MuPDF and let go.
+- Files over 64 MB still open by path and keep the exposure: for them the session's own page count and the repair check are the only protection, and a same-page-count overwrite gets through.
+
 ## 2026-11-13: opened-out folders and thumbnails
 
 Owner: opening the small folders out is expensive and a bit slow with all the thumbnails. The tablet's log (release build of main, be19a62) for the ML course, 11 topics of two PDFs each:

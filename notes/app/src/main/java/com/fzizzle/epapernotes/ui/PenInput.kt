@@ -2,6 +2,7 @@ package com.fzizzle.epapernotes.ui
 
 import android.graphics.Color
 import android.graphics.Rect
+import android.os.SystemClock
 import android.view.View
 import com.fzizzle.epapernotes.ink.StrokeKind
 import com.fzizzle.epapernotes.ink.StrokeStyle
@@ -44,6 +45,17 @@ class PenInput(
     private var line = LiveLine.PEN
     private var pxPerPt = 1f
 
+    private val handover = StrokeHandover()
+
+    /**
+     * True from a pen-down until its points have been handed over through [onStroke] or
+     * [onEraseTrail], and those have returned (the stroke is recorded, the erase sent). Onyx
+     * reports the lift ([isWriting] goes false) before it hands the points over, so in between
+     * the pen is up but the stroke isn't with the app yet. A reload must wait for it: see
+     * [StrokeHandover]. UI thread.
+     */
+    val strokeComing: Boolean get() = handover.coming(SystemClock.uptimeMillis())
+
     /**
      * True while Onyx draws the pen's ink on the panel: fast-ink is on and not paused. A stroke
      * that lands then is drawn by Onyx, so the app must record it. It errs towards true: set
@@ -70,6 +82,7 @@ class PenInput(
         h.setRawDrawingEnabled(false)
         drawsInk = false
         isWriting = false // as in pause()
+        handover.cut(SystemClock.uptimeMillis())
         h.closeRawDrawing()
         helper = null
     }
@@ -81,6 +94,7 @@ class PenInput(
         // Onyx may send no end callback for a stroke this cut short. Left true, the screen
         // would wait for a lift that never comes: no page would show, and no finger would work.
         isWriting = false
+        handover.cut(SystemClock.uptimeMillis()) // nor would a reload wait for ever for its points
     }
 
     fun resume() {
@@ -167,17 +181,25 @@ class PenInput(
     }
 
     private val callback = object : RawInputCallback() {
+        // Comes after onEndRawDrawing: the stroke is only with the app once this returns.
         override fun onRawDrawingTouchPointListReceived(list: TouchPointList?) {
-            val points = list?.points ?: return
-            onStroke(points.map { floatArrayOf(it.x, it.y, it.pressure) })
+            try {
+                handover.receiving() // from here it's waited for until recorded, however long that takes
+                val points = list?.points ?: return
+                onStroke(points.map { floatArrayOf(it.x, it.y, it.pressure) })
+            } finally {
+                handover.handedOver()
+            }
         }
 
         override fun onBeginRawDrawing(shortcut: Boolean, p: TouchPoint?) {
+            handover.begun()
             isWriting = true
             onPenDown()
         }
 
         override fun onEndRawDrawing(shortcut: Boolean, p: TouchPoint?) {
+            handover.lifted(SystemClock.uptimeMillis())
             isWriting = false
             onPenUp()
         }
@@ -186,18 +208,25 @@ class PenInput(
         // Button 2 (the "eraser end", probe results §1): a pen-down like any other, so the
         // trail is placed with the view as it was when it started.
         override fun onBeginRawErasing(shortcut: Boolean, p: TouchPoint?) {
+            handover.begun()
             isWriting = true
             onPenDown()
         }
 
         override fun onEndRawErasing(shortcut: Boolean, p: TouchPoint?) {
+            handover.lifted(SystemClock.uptimeMillis())
             isWriting = false
             onPenUp()
         }
         override fun onRawErasingTouchPointMoveReceived(p: TouchPoint?) = Unit
         override fun onRawErasingTouchPointListReceived(list: TouchPointList?) {
-            val points = list?.points ?: return
-            onEraseTrail(points.map { floatArrayOf(it.x, it.y, it.pressure) })
+            try {
+                handover.receiving() // from here it's waited for until recorded, however long that takes
+                val points = list?.points ?: return
+                onEraseTrail(points.map { floatArrayOf(it.x, it.y, it.pressure) })
+            } finally {
+                handover.handedOver()
+            }
         }
     }
 
