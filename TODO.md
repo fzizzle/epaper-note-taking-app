@@ -13,15 +13,15 @@ A read-through of the whole app for bugs, with suggestions: [findings](docs/supe
   - [x] What MuPDF does when a file is overwritten under it, tried on the tablet; a copy is checked before it's trusted (Task 3). The fault was real, so files up to 64 MB are now read into memory when opened for writing.
   - [x] No copy with nothing in it (Task 4).
   - [x] The journal's notes (Task 5).
-- [ ] **[Writing screen and library fixes](docs/superpowers/plans/2026-11-16-screen-and-library-fixes.md)** (rows B1–B7, C1–C3, D1–D2), ending in an owner checklist.
-  - [ ] A rebuilt screen comes back to the right file; a keyboard or dark mode no longer rebuilds it (Task 1).
-  - [ ] A page that couldn't be drawn is asked for again (Task 2).
-  - [ ] A selection or a paste stops at the page's edge (Task 3).
-  - [ ] Does the pen mark the page through the notification shade? Checked first, fixed only if so (Task 4).
-  - [ ] Two windows open at once (Task 5).
-  - [ ] A rename or move never replaces a file; a moved file never inherits another's writing; the folder watch (Task 6).
-  - [ ] A snip over handwriting hides it on screen too (Task 7).
-  - [ ] Very long file names can be saved (Task 8).
+- [ ] **[Writing screen and library fixes](docs/superpowers/plans/2026-11-16-screen-and-library-fixes.md)** (rows B1–B7, C1–C3, D1–D2), built on the branch `screen-library-fixes`. **Owner checklist open:** [notes/TESTING-review-2.md](notes/TESTING-review-2.md).
+  - [x] A rebuilt screen comes back to the right file; a keyboard or dark mode no longer rebuilds it (Task 1).
+  - [x] A page that couldn't be drawn is asked for again (Task 2).
+  - [x] A selection or a paste stops at the page's edge (Task 3).
+  - [x] Does the pen mark the page through the notification shade? Check done (Task 4): the shade and the power menu take focus while fast-ink stays on. The fix waits on the owner's shade check in the checklist.
+  - [x] Two windows open at once (Task 5).
+  - [x] A rename or move never replaces a file; a moved file never inherits another's writing; the folder watch (Task 6).
+  - [x] A snip over handwriting hides it on screen too (Task 7).
+  - [x] Very long file names can be saved (Task 8).
 - [ ] **[Improvements](docs/superpowers/plans/2026-11-16-improvements.md)** (rows E1–E8), each its own task, ending in an owner checklist.
   - [ ] The page is remembered at each turn (Task 1); tiles carry their name as text (Task 2); the Onyx SDK download is checked (Task 3).
   - [ ] Back lets go first (Task 4).
