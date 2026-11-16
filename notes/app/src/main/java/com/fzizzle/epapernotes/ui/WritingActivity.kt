@@ -340,9 +340,18 @@ class WritingActivity : Activity() {
         handler.postDelayed(resumeFastInk, CLEAN_REFRESH_MS)
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        // Only once onCreate got as far as having a path.
+        if (this::path.isInitialized) outState.putString(STATE_PATH, path)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        path = intent.getStringExtra(EXTRA_PATH) ?: return finish()
+        // Android rebuilds a screen from the intent it was first started with, which still names
+        // the original file. After "saved to a copy" the session writes into the copy, so the
+        // path is kept in the saved state ([onSaveInstanceState]) and read back first.
+        path = savedInstanceState?.getString(STATE_PATH) ?: intent.getStringExtra(EXTRA_PATH) ?: return finish()
         lastPages = LastPageStore(this)
         contrast = readingPrefs.contrast
         darkTextAsBlack = readingPrefs.darkTextAsBlack
@@ -1470,7 +1479,7 @@ class WritingActivity : Activity() {
      */
     private fun offerRotation(openedBefore: Boolean) {
         val screen = resources.displayMetrics
-        if (dialogOpen || pageChangeUnderWay || isFinishing || !RotateOffer.shouldOffer(pageSizes, screen.widthPixels, screen.heightPixels, openedBefore)) return
+        if (dialogOpen || pageChangeUnderWay || isFinishing || isDestroyed || !RotateOffer.shouldOffer(pageSizes, screen.widthPixels, screen.heightPixels, openedBefore)) return
         lastPages.set(path, pages.viewport?.page ?: 0, pageCount)
         Log.i(TAG, "offering to rotate all pages")
         val dialog = AlertDialog.Builder(this)
@@ -1544,6 +1553,8 @@ class WritingActivity : Activity() {
      * held for the page change already. Cancel lets it go.
      */
     private fun askBeforeRemoving(page: Int) {
+        // A dialog can't be shown on a screen that is gone; the page change is let go.
+        if (isFinishing || isDestroyed) return releasePageChangeHold()
         Log.i(TAG, "asking before removing page ${page + 1}: it has writing")
         var removing = false
         val dialog = AlertDialog.Builder(this)
@@ -2168,6 +2179,7 @@ class WritingActivity : Activity() {
 
     companion object {
         const val EXTRA_PATH = "path"
+        private const val STATE_PATH = "path"
 
         /**
          * + ignores a tap this soon after the last page arrives. A quick double tap on › at the
