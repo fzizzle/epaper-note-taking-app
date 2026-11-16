@@ -24,7 +24,17 @@ object CopyNames {
         val withTime = "$stamp ${now.format(TIME)}"
 
         val candidates = sequenceOf(stamp, withTime) + generateSequence(2) { it + 1 }.map { "$withTime $it" }
-        return candidates.map { File(folder, "$base ($it).pdf") }.first { !it.exists() }
+        return candidates.map { File(folder, fitted(base, " ($it).pdf")) }.first { !it.exists() }
+    }
+
+    /**
+     * [base] plus [tail], with whole characters cut from the end of [base] until the name fits
+     * (and so its temporary name, which [SafeSave.tempFileFor] shortens itself, does too).
+     */
+    private fun fitted(base: String, tail: String): String {
+        var cut = base
+        while (cut.isNotEmpty() && !SafeSave.fitsName(cut + tail)) cut = cut.substring(0, cut.offsetByCodePoints(cut.length, -1))
+        return cut + tail
     }
 
     /** From here an attempt's number isn't counted on, so counting never runs past what an Int holds. */
@@ -46,7 +56,7 @@ object CopyNames {
         val base = if (number != null) found.groupValues[1] else original.nameWithoutExtension
         val first = (number ?: 1) + 1
         return generateSequence(first) { it + 1 }
-            .map { File(folder, "$base (attempt $it).${original.extension}") }
+            .map { File(folder, fitted(base, " (attempt $it).${original.extension}")) }
             .first { !taken(it) }
     }
 }

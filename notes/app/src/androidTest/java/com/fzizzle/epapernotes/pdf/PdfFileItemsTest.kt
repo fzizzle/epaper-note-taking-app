@@ -1,5 +1,6 @@
 package com.fzizzle.epapernotes.pdf
 
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -20,6 +21,7 @@ import com.fzizzle.epapernotes.ink.StrokeKind
 import com.fzizzle.epapernotes.ink.StrokePoint
 import com.fzizzle.epapernotes.ink.transformed
 import com.fzizzle.epapernotes.pdf.TestPdfs.isDark
+import java.io.ByteArrayOutputStream
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -373,6 +375,57 @@ class PdfFileItemsTest {
         assertFalse(isDark(region.getPixel(10, 10))) // the page is white away from the ink
     }
 
+    // Review D2: on screen, items stack in the page's own order, as in the file and every other viewer.
+    private val across = Stroke(StrokeKind.PEN, (0..50).map { StrokePoint(156f + it * 6, 396f, 0.8f) }) // through the page's middle
+    private fun whiteSnip(id: String) = ImageItem(id, Box(200f, 300f, 400f, 500f), 0, whitePng(40, 40)) // covers the stroke's middle
+
+    /** The pixel of a 600-pixel-wide picture under the middle of [across]. */
+    private fun PdfFile.middleOfTheStroke(): Pt = pdfToDisplay(0).map(Pt(306f, 396f)).let { Pt(it.x * 600 / 612, it.y * 600 / 612) }
+    private fun Bitmap.at(p: Pt) = getPixel(p.x.toInt(), p.y.toInt())
+
+    @Test fun aSnipPastedOverInkHidesItOnScreenToo() = PdfFile.open(TestPdfs.blank(dir)).use { pdf ->
+        pdf.apply(AddItems(0, listOf(ink("pen", across))))
+        val middle = pdf.middleOfTheStroke()
+        assertTrue(isDark(pdf.render(0, 600).at(middle)))
+        pdf.apply(AddItems(0, listOf(whiteSnip("snip"))))
+        assertTrue("the file's own drawing shows the snip", isWhite(pdf.render(0, 600, smoothInk = true).at(middle)))
+        val onScreen = pdf.render(0, 600).at(middle)
+        assertTrue("on screen ${Integer.toHexString(onScreen)}", isWhite(onScreen))
+    }
+
+    @Test fun inkOverASnipStillShows() = PdfFile.open(TestPdfs.blank(dir)).use { pdf ->
+        pdf.apply(AddItems(0, listOf(whiteSnip("snip"))))
+        pdf.apply(AddItems(0, listOf(ink("pen", across))))
+        assertEquals(Color.BLACK, pdf.render(0, 600).at(pdf.middleOfTheStroke()))
+    }
+
+    @Test fun highlighterOverPenInkLooksAsBefore() = PdfFile.open(TestPdfs.blank(dir)).use { pdf ->
+        pdf.apply(AddItems(0, listOf(ink("pen", across))))
+        val middle = pdf.middleOfTheStroke()
+        val penAlone = pdf.render(0, 600).at(middle)
+        assertTrue(isDark(penAlone))
+        pdf.apply(AddItems(0, listOf(ink("marker", across.copy(kind = StrokeKind.HIGHLIGHTER)))))
+        assertEquals(penAlone, pdf.render(0, 600).at(middle))
+    }
+
+    /** Write, paste a figure elsewhere on the page, then highlight the earlier writing: the pen stays on top. */
+    @Test fun aSnipElsewhereLeavesHighlighterOverPenInkAsBefore() = PdfFile.open(TestPdfs.blank(dir)).use { pdf ->
+        pdf.apply(AddItems(0, listOf(ink("pen", across))))
+        val middle = pdf.middleOfTheStroke()
+        val penAlone = pdf.render(0, 600).at(middle)
+        assertTrue(isDark(penAlone))
+        pdf.apply(AddItems(0, listOf(ImageItem("figure", Box(100f, 650f, 300f, 750f), 0, whitePng(40, 20))))) // far above the stroke
+        pdf.apply(AddItems(0, listOf(ink("marker", across.copy(kind = StrokeKind.HIGHLIGHTER)))))
+        val now = pdf.render(0, 600).at(middle)
+        assertEquals("${Integer.toHexString(penAlone)} became ${Integer.toHexString(now)}", penAlone, now)
+    }
+
+    private fun whitePng(width: Int, height: Int): ByteArray {
+        val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.WHITE) }
+        return ByteArrayOutputStream().also { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
+    }
+
+    private fun isWhite(px: Int) = Color.red(px) > 240 && Color.green(px) > 240 && Color.blue(px) > 240
     private fun isRed(px: Int) = Color.red(px) > 180 && Color.green(px) < 80 && Color.blue(px) < 80
     private fun isBlue(px: Int) = Color.blue(px) > 180 && Color.red(px) < 80 && Color.green(px) < 80
 }

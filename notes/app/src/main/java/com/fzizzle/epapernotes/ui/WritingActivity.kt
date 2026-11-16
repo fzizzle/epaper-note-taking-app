@@ -44,6 +44,7 @@ import com.fzizzle.epapernotes.tools.PenButton
 import com.fzizzle.epapernotes.tools.TapSelect
 import com.fzizzle.epapernotes.tools.Tool
 import com.fzizzle.epapernotes.tools.duplicateOf
+import com.fzizzle.epapernotes.tools.onPage
 import com.fzizzle.epapernotes.tools.ToolState
 import com.fzizzle.epapernotes.tools.liveLine
 import com.fzizzle.epapernotes.tools.placedOn
@@ -241,7 +242,13 @@ class WritingActivity : Activity() {
 
     /** The page last on show: turning it lets go of the selection and an armed paste. */
     private var shownPage = -1
-    private var dialogOpen = false
+    /**
+     * How many menus, pads and questions are open. A count, not a flag: the damaged-file question
+     * can come from the session while a menu or the page pad is open, and the first of the two to
+     * close must not turn fast-ink back on under the other.
+     */
+    private var windowsOpen = 0
+    private val dialogOpen get() = windowsOpen > 0
 
     /**
      * True from asking the session to add or remove a page until the pages are laid out again
@@ -340,9 +347,18 @@ class WritingActivity : Activity() {
         handler.postDelayed(resumeFastInk, CLEAN_REFRESH_MS)
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        // Only once onCreate got as far as having a path.
+        if (this::path.isInitialized) outState.putString(STATE_PATH, path)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        path = intent.getStringExtra(EXTRA_PATH) ?: return finish()
+        // Android rebuilds a screen from the intent it was first started with, which still names
+        // the original file. After "saved to a copy" the session writes into the copy, so the
+        // path is kept in the saved state ([onSaveInstanceState]) and read back first.
+        path = savedInstanceState?.getString(STATE_PATH) ?: intent.getStringExtra(EXTRA_PATH) ?: return finish()
         lastPages = LastPageStore(this)
         contrast = readingPrefs.contrast
         darkTextAsBlack = readingPrefs.darkTextAsBlack
@@ -460,7 +476,9 @@ class WritingActivity : Activity() {
                     // (dropAllRenderings), so reading the two one after the other is enough.
                     PageLook.applyTo(bitmap, contrast, darkTextAsBlack)
                     runOnUiThread { pages.pageRendered(page, width, bitmap) }
-                } catch (e: Exception) {
+                } catch (e: Throwable) {
+                    // Throwable, not Exception: running out of memory for one picture must still reach
+                    // renderFailed, or that page at that width is never asked for again and stays grey.
                     Log.w(TAG, "render failed page=$page", e)
                     runOnUiThread { pages.renderFailed(page, width) }
                 }
@@ -478,7 +496,7 @@ class WritingActivity : Activity() {
                     PageLook.applyTo(bitmap, contrast, darkTextAsBlack)
                     Log.i(TAG, "region rendered page=$page ${bitmap.width}x${bitmap.height} ms=${SystemClock.uptimeMillis() - started}")
                     runOnUiThread { pages.regionRendered(page, part, token, version, bitmap) }
-                } catch (e: Exception) {
+                } catch (e: Throwable) {
                     // The scaled-up page stays on show; the next zoom or move asks again.
                     Log.w(TAG, "region render failed page=$page", e)
                     runOnUiThread { pages.regionFailed(token) }
@@ -1129,10 +1147,10 @@ class WritingActivity : Activity() {
             Log.i(TAG, "paste by long-press")
             selectionListener.pasteAt(at)
         }
-        dialogOpen = true
+        windowsOpen++
         pausePenAndRedraw()
         popup.setOnDismissListener {
-            dialogOpen = false
+            windowsOpen = (windowsOpen - 1).coerceAtLeast(0)
             handler.removeCallbacks(resumeFastInk)
             handler.postDelayed(resumeFastInk, SHOW_PAUSE_MS)
         }
@@ -1148,7 +1166,9 @@ class WritingActivity : Activity() {
         override fun moved(pdfTransform: Affine) {
             val page = selectedPage
             val before = selected
-            val after = before.map { it.transformed(pdfTransform, pdfTransform.uniformScale()) }
+            // Kept on the page: what lies beside it wouldn't be saved.
+            val size = pageSizes[page]
+            val after = onPage(before.map { it.transformed(pdfTransform, pdfTransform.uniformScale()) }, pdfToDisplay[page], size.w, size.h)
             val done = recordFromScreen(ReplaceItems(page, before, after)) as? ReplaceItems ?: return
             Log.i(TAG, "moved page=$page items=${done.after.size} scale=${pdfTransform.uniformScale()}")
             setSelection(page, done.after, notShownYet = true)
@@ -1195,7 +1215,9 @@ class WritingActivity : Activity() {
             val clip = toolState.clipboard ?: return
             val page = pages.viewport?.page ?: return
             toolState.pasteArmed = false
-            val done = recordFromScreen(AddItems(page, clip.placedOn(displayToPdf[page], at))) as? AddItems
+            val size = pageSizes[page]
+            val placed = onPage(clip.placedOn(displayToPdf[page], at), pdfToDisplay[page], size.w, size.h)
+            val done = recordFromScreen(AddItems(page, placed)) as? AddItems
             Log.i(TAG, "pasted page=$page items=${done?.items?.size ?: 0}")
             if (done != null) setSelection(page, done.items, notShownYet = true) else toolStateChanged()
         }
@@ -1355,12 +1377,12 @@ class WritingActivity : Activity() {
         if (pageChangeUnderWay) return
         val v = pages.viewport ?: return
         // Fast-ink would freeze the pad on screen, so it's off while the pad is open.
-        dialogOpen = true
+        windowsOpen++
         pausePenAndRedraw()
         showPagePad(
             this, current = v.page, pageCount = pageCount,
             onDismiss = {
-                dialogOpen = false
+                windowsOpen = (windowsOpen - 1).coerceAtLeast(0)
                 // After the usual pause, not at once: the screen must first draw the page without
                 // the pad, or fast-ink would freeze bits of it (or the old page) on the panel.
                 handler.removeCallbacks(resumeFastInk)
@@ -1420,10 +1442,10 @@ class WritingActivity : Activity() {
                 true
             }
         menu.menu.setGroupDividerEnabled(true)
-        dialogOpen = true
+        windowsOpen++
         pausePenAndRedraw()
         menu.setOnDismissListener {
-            dialogOpen = false
+            windowsOpen = (windowsOpen - 1).coerceAtLeast(0)
             // After the usual pause, as for "Go to page".
             handler.removeCallbacks(resumeFastInk)
             handler.postDelayed(resumeFastInk, SHOW_PAUSE_MS)
@@ -1470,7 +1492,7 @@ class WritingActivity : Activity() {
      */
     private fun offerRotation(openedBefore: Boolean) {
         val screen = resources.displayMetrics
-        if (dialogOpen || pageChangeUnderWay || isFinishing || !RotateOffer.shouldOffer(pageSizes, screen.widthPixels, screen.heightPixels, openedBefore)) return
+        if (dialogOpen || pageChangeUnderWay || isFinishing || isDestroyed || !RotateOffer.shouldOffer(pageSizes, screen.widthPixels, screen.heightPixels, openedBefore)) return
         lastPages.set(path, pages.viewport?.page ?: 0, pageCount)
         Log.i(TAG, "offering to rotate all pages")
         val dialog = AlertDialog.Builder(this)
@@ -1479,10 +1501,10 @@ class WritingActivity : Activity() {
             .setNegativeButton("Leave them", null)
             .create()
         // As for the other questions: fast-ink would freeze it on screen.
-        dialogOpen = true
+        windowsOpen++
         pausePenAndRedraw()
         dialog.setOnDismissListener {
-            dialogOpen = false
+            windowsOpen = (windowsOpen - 1).coerceAtLeast(0)
             handler.removeCallbacks(resumeFastInk)
             handler.postDelayed(resumeFastInk, SHOW_PAUSE_MS)
         }
@@ -1544,6 +1566,8 @@ class WritingActivity : Activity() {
      * held for the page change already. Cancel lets it go.
      */
     private fun askBeforeRemoving(page: Int) {
+        // A dialog can't be shown on a screen that is gone; the page change is let go.
+        if (isFinishing || isDestroyed) return releasePageChangeHold()
         Log.i(TAG, "asking before removing page ${page + 1}: it has writing")
         var removing = false
         val dialog = AlertDialog.Builder(this)
@@ -1554,10 +1578,10 @@ class WritingActivity : Activity() {
             }
             .setNegativeButton("Cancel", null)
             .create()
-        dialogOpen = true
+        windowsOpen++
         pausePenAndRedraw()
         dialog.setOnDismissListener {
-            dialogOpen = false
+            windowsOpen = (windowsOpen - 1).coerceAtLeast(0)
             if (!removing) {
                 Log.i(TAG, "page ${page + 1} kept")
                 releasePageChangeHold()
@@ -1913,6 +1937,12 @@ class WritingActivity : Activity() {
         @Suppress("DEPRECATION") super.onBackPressed()
     }
 
+    /** Logged only, to learn which other windows (shade, menus) take focus from the page. */
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        Log.i(TAG, "focus=$hasFocus fast-ink=${pen.drawsInk} dialog=$dialogOpen")
+    }
+
     override fun onPause() {
         super.onPause()
         resumed = false
@@ -1954,7 +1984,7 @@ class WritingActivity : Activity() {
                 val png = ByteArrayOutputStream().also { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
                 bitmap.recycle()
                 picture.store(pdfFile, png)
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 Log.w(TAG, "the Continue picture couldn't be made", e) // the row then shows the name alone
             }
         }
@@ -2125,10 +2155,10 @@ class WritingActivity : Activity() {
             .setPositiveButton("OK", null)
             .create()
         // As for "Go to page": fast-ink would freeze the message on screen.
-        dialogOpen = true
+        windowsOpen++
         pausePenAndRedraw()
         dialog.setOnDismissListener {
-            dialogOpen = false
+            windowsOpen = (windowsOpen - 1).coerceAtLeast(0)
             handler.removeCallbacks(resumeFastInk)
             handler.postDelayed(resumeFastInk, SHOW_PAUSE_MS)
         }
@@ -2146,10 +2176,10 @@ class WritingActivity : Activity() {
             .create()
         // As for "Go to page": fast-ink would freeze the question on screen, and pen taps on its
         // buttons would mark the page underneath.
-        dialogOpen = true
+        windowsOpen++
         pausePenAndRedraw()
         dialog.setOnDismissListener {
-            dialogOpen = false
+            windowsOpen = (windowsOpen - 1).coerceAtLeast(0)
             handler.removeCallbacks(resumeFastInk)
             handler.postDelayed(resumeFastInk, SHOW_PAUSE_MS)
         }
@@ -2168,6 +2198,7 @@ class WritingActivity : Activity() {
 
     companion object {
         const val EXTRA_PATH = "path"
+        private const val STATE_PATH = "path"
 
         /**
          * + ignores a tap this soon after the last page arrives. A quick double tap on › at the

@@ -139,4 +139,21 @@ class SafeSaveTest {
         assertEquals("synced", f.readText())
         assertFalse(SafeSave.tempFileFor(f).exists())
     }
+
+    private fun longName() = "é".repeat(125) + ".pdf"
+
+    @Test fun aVeryLongNameStillHasATempFileThatFits() {
+        val a = SafeSave.tempFileFor(File(tmp.root, longName()))
+        val b = SafeSave.tempFileFor(File(tmp.root, "x" + longName()))
+        assertTrue(a.name.toByteArray().size <= 255)
+        assertTrue(a.name.startsWith("."))
+        assertTrue(SafeSave.isTempFile(a.name))
+        assertTrue(a.name != b.name)
+    }
+
+    @Test fun aVeryLongNameIsStillSaved() {
+        val target = File(tmp.root, longName())
+        SafeSave.replace(target) { it.writeText("hello") }
+        assertEquals("hello", target.readText())
+    }
 }

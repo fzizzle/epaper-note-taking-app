@@ -15,10 +15,12 @@
         android:theme="@style/Theme.Jot"
         tools:replace="android:icon,android:label,android:roundIcon,android:theme">
 
-        <!-- The library (spec §6.1). Turning the tablet only changes how many tiles fit across. -->
+        <!-- The library (spec §6.1). Turning the tablet only changes how many tiles fit across.
+             keyboard, keyboardHidden and navigation: a keyboard or clip-on page turner connecting;
+             uiMode: dark mode switching. None of them needs the screen rebuilt. -->
         <activity
             android:name=".ui.LibraryActivity"
-            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -27,10 +29,12 @@
         </activity>
 
         <!-- Turning the tablet must not restart the writing screen: the open document and its
-             saving carry on, and the page just refits (spec §6.2: the screen follows the tablet). -->
+             saving carry on, and the page just refits (spec §6.2: the screen follows the tablet).
+             keyboard, keyboardHidden and navigation: a keyboard or clip-on page turner connecting;
+             uiMode: dark mode switching. Nothing drawn here depends on them. -->
         <activity
             android:name=".ui.WritingActivity"
-            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode"
             android:exported="false" />
     </application>
 </manifest>

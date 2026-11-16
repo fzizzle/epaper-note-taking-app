@@ -121,21 +121,60 @@ class PdfFile private constructor(private val doc: PDFDocument) : PdfPages {
      * Draws [p] with [ctm] onto [bmp], whose pixels are [box] of the page's device space:
      * everything smoothed, as MuPDF draws it, except ink at full strength, which is drawn
      * solid ([drawSolid]; see [render] for why).
+     *
+     * Solid ink is drawn after the MuPDF pass it sits in, so it lands on top of that pass. The
+     * annotations therefore go in runs, in the page's own order: an annotation that isn't ink,
+     * comes after solid ink and covers some of it (a snip pasted over the writing) ends a run.
+     * The solid ink gathered so far is drawn, and the next pass draws over it, so the snip
+     * covers the ink on screen as it does in the file and in every other viewer. Ink never
+     * ends a run, and neither does a snip that touches none of the run's solid ink, so pen ink
+     * and highlighter look against each other as before: pen on top. Only where a snip was
+     * pasted over a pen stroke and highlighter then went over that stroke is the highlighter
+     * on top, as it is in the file.
+     *
+     * A page with only pen ink, or with its snips under the ink, is the usual page, and must
+     * stay fast: it is one run, drawn exactly as before, in one MuPDF pass and one [drawSolid].
+     * Where the ink lies is only looked up when a snip follows it.
      */
     private fun drawWithSolidInk(p: PDFPage, bmp: Bitmap, box: RectI, ctm: Matrix) {
-        val annots = p.annotations ?: emptyArray()
-        val isSolid = BooleanArray(annots.size) { annots[it].type == PDFAnnotation.TYPE_INK && annots[it].opacity >= 0.99f }
-        // The usual order, with the solid ink left out: the page, annotations, form fields.
-        val dev = AndroidDrawDevice(bmp, box.x0, box.y0)
-        try {
-            p.runPageContents(dev, ctm, null)
-            annots.forEachIndexed { i, a -> if (!isSolid[i]) a.run(dev, ctm, null) }
-            p.runPageWidgets(dev, ctm, null)
-            dev.close()
-        } finally {
-            dev.destroy()
+        val runs = arrayListOf(InkRun())
+        for (a in p.annotations ?: emptyArray()) {
+            val ink = a.type == PDFAnnotation.TYPE_INK
+            if (ink && a.opacity >= 0.99f) {
+                runs.last().solid += a
+                continue
+            }
+            if (!ink && runs.last().solid.isNotEmpty() && runs.last().solidUnder(a.bounds)) runs += InkRun()
+            runs.last().smoothed += a
         }
-        if (isSolid.any { it }) drawSolid(bmp, box, annots.filterIndexed { i, _ -> isSolid[i] }, ctm)
+        runs.forEachIndexed { i, run ->
+            // The first pass starts on a clear picture with the page itself; form fields go last, as before.
+            val dev = AndroidDrawDevice(bmp, box.x0, box.y0, i == 0)
+            try {
+                if (i == 0) p.runPageContents(dev, ctm, null)
+                run.smoothed.forEach { it.run(dev, ctm, null) }
+                if (i == runs.lastIndex) p.runPageWidgets(dev, ctm, null)
+                dev.close()
+            } finally {
+                dev.destroy()
+            }
+            if (run.solid.isNotEmpty()) drawSolid(bmp, box, run.solid, ctm)
+        }
+    }
+
+    /** Annotations drawn in one MuPDF pass ([smoothed]), then the solid ink among them on top ([solid]). */
+    private class InkRun {
+        val smoothed = ArrayList<PDFAnnotation>()
+        val solid = ArrayList<PDFAnnotation>()
+
+        /** Where each of [solid]'s strokes is on the page, looked up the first time a snip after it asks. */
+        private val solidBounds = ArrayList<Rect>()
+
+        /** True when some of the solid ink so far lies under [area] (page space, as [PDFAnnotation.getBounds] gives). */
+        fun solidUnder(area: Rect): Boolean {
+            while (solidBounds.size < solid.size) solidBounds += solid[solidBounds.size].bounds
+            return solidBounds.any { it.x0 < area.x1 && it.x1 > area.x0 && it.y0 < area.y1 && it.y1 > area.y0 }
+        }
     }
 
     /**

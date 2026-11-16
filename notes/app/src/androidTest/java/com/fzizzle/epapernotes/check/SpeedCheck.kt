@@ -125,6 +125,15 @@ class SpeedCheck {
                 val (_, decodeMs) = timed { texts.forEach { com.fzizzle.epapernotes.ink.StrokeCodec.decode(it) } }
                 log("decode $FULL_PAGE_STROKES stroke texts alone: $decodeMs ms")
 
+                // Drawing the full page, pen ink only: the case PdfFile.drawWithSolidInk must keep fast
+                // (128–131 ms, debug build, 2026-11-16). The checksum shows whether a change to the drawing changed a pixel.
+                val picture = pdf.render(0, FITTED_WIDTH_PX)
+                val pixels = IntArray(picture.width * picture.height).also { picture.getPixels(it, 0, picture.width, 0, 0, picture.width, picture.height) }
+                picture.recycle()
+                log("checksum of $FULL_PAGE_STROKES strokes at width $FITTED_WIDTH_PX: ${pixels.contentHashCode()}")
+                val draws = (1..5).map { timed { pdf.render(0, FITTED_WIDTH_PX).recycle() }.second }
+                log("render $FULL_PAGE_STROKES strokes at width $FITTED_WIDTH_PX: median ${median(draws)} ms, all $draws")
+
                 // Review speed, focus 1 (addingAStrokeDoesNotGrowWithThePage): on a full page a
                 // stroke may cost up to three times what it does on a nearly empty one, no more.
                 // (Loading the page still grows a little with what's on it: 2.5 ms against
