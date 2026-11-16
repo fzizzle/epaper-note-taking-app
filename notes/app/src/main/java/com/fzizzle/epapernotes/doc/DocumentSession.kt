@@ -113,6 +113,7 @@ class DocumentSession(
     private var inkCheckNs = 0L // time spent looking for (and redrawing) old faulty ink since opening, for the log
     private var inkCheckRedrawn = 0
     private var inkRedrawn = false // strokes were drawn again (redrawFaultyInk) since the last save: save even with nothing journaled
+    private var inkPass = 0 // which pass of the ink redraw is the current one: a reload starts a new pass, and the old one stops
     private var known: FileIdentity? = null // the file as it was when opened or last saved
     private var repairDecided = false
     private var waitingForRepairDecision = false
@@ -286,8 +287,11 @@ class DocumentSession(
      * since each is redrawn within one task. So `applied`, and the ordering rule, are untouched.
      *
      * [redrawnHere] counts this page's strokes fixed by earlier chunks, for the one InkRedrawn.
+     * [pass]: the [inkPass] this walk belongs to. A [reload] starts a new one on the new
+     * version, and the old walk's next task then stops here, rather than going on alongside it.
      */
-    private fun redrawFaultyInkFrom(page: Int, redrawnHere: Int = 0) {
+    private fun redrawFaultyInkFrom(page: Int, redrawnHere: Int = 0, pass: Int = inkPass) {
+        if (pass != inkPass) return
         val p = pages ?: return // closed
         if (page >= p.pageCount) {
             System.err.println("DocumentSession: ink check ms=${inkCheckNs / 1_000_000} pages=${p.pageCount} redrawn=$inkCheckRedrawn")
@@ -308,9 +312,9 @@ class DocumentSession(
             System.err.println("DocumentSession: redrawing ink on page $page failed: $e")
         }
         inkCheckNs += System.nanoTime() - started
-        if (more) return scheduler.post { redrawFaultyInkFrom(page, redrawn) }
+        if (more) return scheduler.post { redrawFaultyInkFrom(page, redrawn, pass) }
         if (redrawn > 0) events(SessionEvent.InkRedrawn(page))
-        scheduler.post { redrawFaultyInkFrom(page + 1) }
+        scheduler.post { redrawFaultyInkFrom(page + 1, pass = pass) }
     }
 
     /**
@@ -859,12 +863,109 @@ class DocumentSession(
     }
 
     /**
+     * The screen's answer to [SessionEvent.ChangedElsewhere], with the pen held: opens the new
+     * version in the old one's place, if that's still right. From any thread; the work runs on
+     * the worker. It always answers with exactly one of [SessionEvent.Reloaded] or
+     * [SessionEvent.NotReloaded], whatever goes wrong: the screen holds the pen until it hears.
+     *
+     * Not opened: a file that's as it was after all, or can't be read or opened (the old
+     * version stays on screen), or writing that got in before the pen was held. That writing
+     * is on the old version's pages, so it goes into a copy, as any unsaved writing does when
+     * the file changes ([fileChanged]); it's never moved onto the new version's pages.
+     *
+     * Opened: page numbers go up by one ([pageNumbering]), as after a page change, so a stroke
+     * the pen hands over late, read under the old numbers, keeps its page if the new version
+     * has it, and isn't recorded if not.
+     */
+    fun reload() {
+        scheduler.post {
+            val before = pages
+            var answered = false
+            fun answer(event: SessionEvent) {
+                answered = true // before sending: a second answer must not follow a failed one
+                events(event)
+            }
+            try {
+                reloadOnWorker(::answer)
+            } catch (t: Throwable) { // out of memory too: the screen must still hear
+                System.err.println("DocumentSession: reloading failed: $t")
+                // Once `pages` is the new version, it's the one open: the screen must lay it out.
+                if (!answered) answer(if (pages !== before) SessionEvent.Reloaded else SessionEvent.NotReloaded)
+            }
+        }
+    }
+
+    /** Worker thread only: [reload]'s work, answering through [answer]. */
+    private fun reloadOnWorker(answer: (SessionEvent) -> Unit) {
+        val old = pages
+        val now = try { identityOf(file) } catch (e: Exception) { null }
+        if (old == null || now == null || now.sameContentAs(known)) {
+            answer(SessionEvent.NotReloaded)
+            return
+        }
+        val opened = try {
+            open(file)
+        } catch (e: Throwable) { // out of memory too: the old version stays, and the screen hears
+            System.err.println("DocumentSession: the new version couldn't be opened: $e")
+            answer(SessionEvent.NotReloaded)
+            return
+        }
+        var journalFailed = false
+        val swap = synchronized(lock) {
+            if (unsaved.isNotEmpty()) return@synchronized false
+            try {
+                journal.rewrite(now, emptyList())
+                journalBroken = false
+            } catch (e: Throwable) { // anything: the swap goes on, and the journal counts as broken
+                System.err.println("DocumentSession: the journal couldn't be rewritten: $e")
+                journalFailed = !journalBroken
+                journalBroken = true
+            }
+            undoable.clear()
+            redoable.clear()
+            // The new version's pages are other pages: a change read under the old numbers keeps
+            // its page if the new version has one by that number, and goes nowhere if not.
+            val newCount = opened.pageCount
+            pageChanges += { if (it < newCount) it else null }
+            pageNumbering++
+            true
+        }
+        if (!swap) {
+            runCatching { opened.close() }
+            answer(SessionEvent.NotReloaded)
+            // Writing got in before the pen was held: it's on the old pages, so it goes into a
+            // copy of those, the way of any unsaved writing on a changed file. (Only the worker
+            // empties `unsaved`, so it's still there.)
+            fileChanged(now)
+            return
+        }
+        // At once: the journal and the page numbers are the new version's now, and so must the PDF be.
+        pages = opened
+        applied = 0
+        known = now
+        inkRedrawn = false
+        runCatching { old.close() }
+        if (journalFailed) events(SessionEvent.JournalFailed)
+        // The old version's ink pass stops; the new version gets its own, from page 0.
+        scheduler.cancel(REDRAW_INK)
+        inkPass++
+        inkCheckNs = 0L
+        inkCheckRedrawn = 0
+        scheduler.postDelayed(REDRAW_INK, REDRAW_INK_DELAY_MS) { redrawFaultyInkFrom(0) }
+        checkRepair(opened)
+        events(SessionEvent.HistoryChanged(canUndo = false, canRedo = false))
+        answer(SessionEvent.Reloaded)
+    }
+
+    /**
      * Worker thread only. Something else changed the file while it was open (spec §7.4); [now]
      * is what it looks like, or null if it can't be read (moved or deleted).
      *
-     * With no writing the new version lacks, the new version is opened in the old one's place.
-     * Ink redrawn from an earlier version ([redrawFaultyInkFrom]) isn't writing: it's done
-     * again on the new version.
+     * With no writing the new version lacks, the screen is asked to hold the pen
+     * ([SessionEvent.ChangedElsewhere]), and only then is the new version opened ([reload]):
+     * opened now, a stroke on its way from the pen would land on the new version's pages. Ink
+     * redrawn from an earlier version ([redrawFaultyInkFrom]) isn't writing: it's done again on
+     * the new version.
      *
      * With unsaved writing, both are kept: the file stays as it is, and the open PDF, which is
      * the old version with the writing, is saved beside it as a "(my edits …)" copy. The
@@ -873,32 +974,10 @@ class DocumentSession(
      */
     private fun fileChanged(now: FileIdentity?) {
         if (applyFailed) return // told already; the journal has everything for the next opening
-        var journalFailed = false
-        val reload = synchronized(lock) {
-            if (unsaved.isNotEmpty()) return@synchronized false
-            if (now == null) return // gone, and nothing to save: nothing to do until there's writing
-            try {
-                journal.rewrite(now, emptyList())
-                journalBroken = false
-            } catch (e: IOException) {
-                System.err.println("DocumentSession: the journal couldn't be rewritten: $e")
-                journalFailed = !journalBroken
-                journalBroken = true
-            }
-            undoable.clear()
-            redoable.clear()
-            true
-        }
-        if (reload) {
-            if (journalFailed) events(SessionEvent.JournalFailed)
-            known = now
-            inkRedrawn = false
-            scheduler.cancel(REDRAW_INK)
-            openAgainFromTheFile()
-            if (pages == null) return
-            scheduler.postDelayed(REDRAW_INK, REDRAW_INK_DELAY_MS) { redrawFaultyInkFrom(0) }
-            events(SessionEvent.HistoryChanged(canUndo = false, canRedo = false))
-            events(SessionEvent.Reloaded)
+        if (synchronized(lock) { unsaved.isEmpty() }) {
+            // The screen holds the pen, then asks for the new version ([reload]). A file that's
+            // gone has no new version, and nothing needs saving: nothing to do until there's writing.
+            if (now != null) events(SessionEvent.ChangedElsewhere)
             return
         }
         applyPending()

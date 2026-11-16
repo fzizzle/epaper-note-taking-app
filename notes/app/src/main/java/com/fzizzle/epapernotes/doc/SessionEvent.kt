@@ -18,11 +18,25 @@ sealed interface SessionEvent {
     data object JournalFailed : SessionEvent
 
     /**
-     * Something else changed the file while it was open, and the app had no writing the new
-     * version lacks: the new version has been opened in its place. Its pages may differ, and
-     * the undo list is empty: lay all the pages out again.
+     * Something else changed the file while it was open, and the app has no writing the new
+     * version lacks. Nothing is opened yet: the pen may still be writing on the old pages. Hold
+     * the pen (after the stroke in progress), then call DocumentSession.reload. Sent each time
+     * the change is noticed, so a second one can come while the first is being handled.
+     */
+    data object ChangedElsewhere : SessionEvent
+
+    /**
+     * The answer to DocumentSession.reload: the new version has been opened in the old one's
+     * place. Its pages may differ, and the undo list is empty: lay all the pages out again.
      */
     data object Reloaded : SessionEvent
+
+    /**
+     * The other answer to DocumentSession.reload: no new version was opened after all (the file
+     * is as it was, can't be opened, or writing got in before the pen was held, which then goes
+     * into a copy). The old pages are still the ones open: let the pen go.
+     */
+    data object NotReloaded : SessionEvent
 
     /**
      * A change couldn't be written into the open PDF, which may now hold only part of it. The

@@ -5,7 +5,7 @@ import java.io.File
 import java.io.IOException
 
 /** Stands in for a real PDF. Saving writes how many items it holds, so tests can read files back. */
-class FakePdfPages(override var wasRepaired: Boolean = false, private val saveDelayMs: Long = 0) : PdfPages {
+class FakePdfPages(override var wasRepaired: Boolean = false, private val saveDelayMs: Long = 0, pages: Int = 5) : PdfPages {
     /** Each page's items, in drawing order. */
     val pageItems = mutableMapOf<Int, MutableList<Item>>()
     val rotations = mutableMapOf<Int, Int>()
@@ -27,8 +27,8 @@ class FakePdfPages(override var wasRepaired: Boolean = false, private val saveDe
     /** Runs at each redraw call (a page, or a part of one), to imitate the screen or the pen meanwhile. */
     var duringRedraw: ((page: Int) -> Unit)? = null
 
-    /** Five pages to start with; adding and removing pages changes it. */
-    override var pageCount = 5
+    /** Five pages to start with, unless a test asks for other; adding and removing pages changes it. */
+    override var pageCount = pages
         private set
 
     /** The pages the app added ([addDottedPage]). A test may mark a page here, as if added in an earlier session. */

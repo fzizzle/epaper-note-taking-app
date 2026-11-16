@@ -260,7 +260,7 @@ class DocumentSessionTest {
         assertEquals(1, journalStrokes(myEdits))
     }
 
-    /** Spec §7.4: changed on disk, nothing unsaved. The new version is opened in its place. */
+    /** Spec §7.4: changed on disk, nothing unsaved. Once the screen holds the pen, the new version is opened in its place. */
     @Test fun aFileChangedWhileOpenWithNothingUnsavedIsOpenedAgain() {
         val s = session()
         s.addStroke(0, dot)
@@ -269,6 +269,8 @@ class DocumentSessionTest {
         val newVersion = FakePdfPages().apply { pageItems[3] = mutableListOf(InkItem("theirs", line)) }
         fake = newVersion
         s.checkFile()
+        assertTrue(events.contains(SessionEvent.ChangedElsewhere))
+        s.reload() // what the screen does once the pen is held
         assertTrue(events.contains(SessionEvent.Reloaded))
         assertTrue(events.none { it is SessionEvent.SavedToCopy })
         assertFalse(myEdits.exists())
@@ -290,6 +292,8 @@ class DocumentSessionTest {
         fake = FakePdfPages()
         s.saveNow()
         assertEquals(0, old.saves)
+        assertTrue(events.contains(SessionEvent.ChangedElsewhere))
+        s.reload()
         assertTrue(events.contains(SessionEvent.Reloaded))
         assertFalse(myEdits.exists())
         assertEquals("edited on the laptop", pdf.readText())
@@ -301,7 +305,134 @@ class DocumentSessionTest {
         identityReads.clear()
         s.checkFile()
         assertTrue(identityReads.isEmpty())
+        assertTrue(events.none { it is SessionEvent.Reloaded || it is SessionEvent.ChangedElsewhere })
+    }
+
+    /** Decision 1: a changed file with nothing unsaved isn't swapped in behind the pen. The screen is asked first. */
+    @Test fun aChangedFileWithNothingUnsavedAsksFirst() {
+        val s = session()
+        pdf.writeText("edited on the laptop")
+        s.checkFile()
+        assertEquals(1, events.count { it == SessionEvent.ChangedElsewhere })
         assertTrue(events.none { it is SessionEvent.Reloaded })
+        assertFalse(fake.closed) // the old version is still the one open
+    }
+
+    /** The file changed, the screen held the pen and asked: the new version is opened, under new page numbers. */
+    private fun reloadOnto(newVersion: FakePdfPages): DocumentSession {
+        val s = session()
+        pdf.writeText("edited on the laptop")
+        s.checkFile()
+        assertTrue(events.contains(SessionEvent.ChangedElsewhere))
+        opening = { newVersion }
+        s.reload()
+        return s
+    }
+
+    @Test fun reloadOpensTheNewVersion() {
+        val old = fake
+        val s = reloadOnto(FakePdfPages(pages = 3))
+        assertTrue(events.contains(SessionEvent.Reloaded))
+        assertTrue(old.closed)
+        assertEquals(1, s.pageNumbering)
+        assertTrue(ChangeJournal.forDocument(journals, pdf).read()!!.base.sameContentAs(FileIdentity.of(pdf)))
+    }
+
+    /** Review focus 2: a stroke written before the pen was held is on the old version's pages, so it goes into a copy of those. */
+    @Test fun aStrokeBeforeTheReloadGoesIntoACopyOfTheOldVersion() {
+        val s = session()
+        pdf.writeText("edited on the laptop")
+        s.checkFile()
+        assertEquals(1, events.count { it == SessionEvent.ChangedElsewhere })
+        s.addStroke(0, dot) // the pen wasn't held yet
+        val newVersion = FakePdfPages()
+        opening = { newVersion }
+        s.reload()
+        assertTrue(events.contains(SessionEvent.NotReloaded))
+        assertTrue(events.none { it is SessionEvent.Reloaded })
+        assertTrue(events.contains(SessionEvent.SavedToCopy(myEdits, CopyReason.CHANGED_WHILE_OPEN)))
+        assertEquals("items=1", myEdits.readText())
+        assertEquals("edited on the laptop", pdf.readText())
+        assertTrue(newVersion.closed)
+    }
+
+    /** A stroke the pen handed over late, read under the old numbers: on a page the new version has, it keeps it. */
+    @Test fun aLateStrokeAfterAReloadKeepsItsPage() {
+        val newVersion = FakePdfPages(pages = 5)
+        val s = reloadOnto(newVersion)
+        fake = newVersion
+        assertEquals(2, (s.addStroke(2, dot, numbering = 0) as AddItems).page)
+        assertEquals(listOf(dot), strokesOn(2))
+    }
+
+    /** Review focus 3: the new version is shorter, and a late stroke from a page it lacks has nowhere to go. Saving goes on. */
+    @Test fun aLateStrokeOnAPageTheNewVersionLacksIsNotRecorded() {
+        val newVersion = FakePdfPages(pages = 3)
+        val s = reloadOnto(newVersion)
+        fake = newVersion
+        assertEquals(null, s.addStroke(4, dot, numbering = 0))
+        assertTrue(events.none { it is SessionEvent.WritingStopped })
+        s.addStroke(0, line)
+        s.saveNow()
+        assertEquals("items=1", pdf.readText())
+        assertEquals(listOf(line), strokesOn(0))
+    }
+
+    /** The new version can't be opened (out of memory, say): the old one stays open and on screen, and the pen comes back. */
+    @Test fun aNewVersionThatCanNotBeOpenedLeavesTheOldOneOnScreen() {
+        val s = session()
+        pdf.writeText("edited on the laptop")
+        s.checkFile()
+        opening = { throw OutOfMemoryError("opening") }
+        s.reload()
+        assertTrue(events.contains(SessionEvent.NotReloaded))
+        assertTrue(events.none { it is SessionEvent.OpenFailed || it is SessionEvent.Reloaded })
+        assertFalse(fake.closed)
+        s.addStroke(1, dot)
+        assertEquals(listOf(dot), strokesOn(1))
+    }
+
+    /** By the time the screen asks, the file is as it was: nothing to open. */
+    @Test fun aReloadOfAFileThatChangedBackAnswersNotReloaded() {
+        val s = session()
+        val modified = pdf.lastModified()
+        pdf.writeText("edited on the laptop")
+        s.checkFile()
+        assertTrue(events.contains(SessionEvent.ChangedElsewhere))
+        pdf.writeText("original")
+        pdf.setLastModified(modified)
+        val newVersion = FakePdfPages()
+        opening = { newVersion }
+        s.reload()
+        assertTrue(events.contains(SessionEvent.NotReloaded))
+        assertTrue(events.none { it is SessionEvent.Reloaded })
+        assertFalse(fake.closed)
+        assertFalse(newVersion.closed) // never opened
+        assertEquals(0, s.pageNumbering)
+    }
+
+    /** Review A9: the old version's ink pass stops at a reload, and the new version is walked once, from page 0. */
+    @Test fun anInkRedrawUnderWayStopsAtAReload() {
+        val calls = mutableListOf<String>()
+        lateinit var s: DocumentSession
+        fake.faultyStrokes += mapOf(0 to 1, 1 to 1, 2 to 1)
+        fake.duringRedraw = { page ->
+            calls += "old $page"
+            // In the middle of the pass: a sync replaces the file, and the screen asks for it.
+            if (page == 1) {
+                pdf.writeText("edited on the laptop")
+                s.checkFile()
+                s.reload()
+            }
+        }
+        val newVersion = FakePdfPages().apply { duringRedraw = { calls += "new $it" } }
+        s = session()
+        opening = { newVersion }
+        scheduler.runDelayed() // the old version's pass, a moment after opening
+        assertTrue(events.contains(SessionEvent.Reloaded))
+        assertEquals(listOf("old 0", "old 1"), calls)
+        scheduler.runDelayed() // the new version's pass
+        assertEquals(listOf("old 0", "old 1") + (0 until 5).map { "new $it" }, calls)
     }
 
     /** The copy can't be saved (the folder went with the file, say): told, tried again, and nothing lost meanwhile. */
