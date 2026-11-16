@@ -469,7 +469,9 @@ class WritingActivity : Activity() {
                     // (dropAllRenderings), so reading the two one after the other is enough.
                     PageLook.applyTo(bitmap, contrast, darkTextAsBlack)
                     runOnUiThread { pages.pageRendered(page, width, bitmap) }
-                } catch (e: Exception) {
+                } catch (e: Throwable) {
+                    // Throwable, not Exception: running out of memory for one picture must still reach
+                    // renderFailed, or that page at that width is never asked for again and stays grey.
                     Log.w(TAG, "render failed page=$page", e)
                     runOnUiThread { pages.renderFailed(page, width) }
                 }
@@ -487,7 +489,7 @@ class WritingActivity : Activity() {
                     PageLook.applyTo(bitmap, contrast, darkTextAsBlack)
                     Log.i(TAG, "region rendered page=$page ${bitmap.width}x${bitmap.height} ms=${SystemClock.uptimeMillis() - started}")
                     runOnUiThread { pages.regionRendered(page, part, token, version, bitmap) }
-                } catch (e: Exception) {
+                } catch (e: Throwable) {
                     // The scaled-up page stays on show; the next zoom or move asks again.
                     Log.w(TAG, "region render failed page=$page", e)
                     runOnUiThread { pages.regionFailed(token) }
@@ -1965,7 +1967,7 @@ class WritingActivity : Activity() {
                 val png = ByteArrayOutputStream().also { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
                 bitmap.recycle()
                 picture.store(pdfFile, png)
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 Log.w(TAG, "the Continue picture couldn't be made", e) // the row then shows the name alone
             }
         }
