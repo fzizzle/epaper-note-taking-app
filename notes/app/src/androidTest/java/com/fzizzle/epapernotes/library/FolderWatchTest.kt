@@ -127,6 +127,22 @@ class FolderWatchTest {
     }
 
     /**
+     * Review C3: the folder on show can be passed as a child too (entered while its parent's
+     * listing was still arriving). Android shares one watch per folder, so dropping it as a
+     * child mustn't stop the watch on the folder itself.
+     */
+    @Test fun theFolderOnShowIsNotAlsoWatchedAsAChild() {
+        val child = File(scratch, "Week 2").apply { mkdirs() }
+        Thread.sleep(1000)
+        watch.watchChildren(listOf(scratch, child))
+        watch.watchChildren(listOf(child))
+        calls.set(0)
+        addPdf("a.pdf")
+        Thread.sleep(1000)
+        assertEquals(1, calls.get())
+    }
+
+    /**
      * A small folder shown opened out has its PDFs on screen, not just a count: a file copied
      * straight into it (not through a temporary name) is only whole when its writer closes
      * it, and one overwritten in place gives no other sign at all. Both must be noticed.

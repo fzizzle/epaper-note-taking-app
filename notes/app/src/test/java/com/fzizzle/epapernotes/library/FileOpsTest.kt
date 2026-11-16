@@ -15,6 +15,7 @@ import com.fzizzle.epapernotes.storage.SafeSave
 import java.io.File
 import java.io.IOException
 import java.nio.file.Files
+import java.text.Normalizer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -411,6 +412,84 @@ class FileOpsTest {
         File(root, ".other.pdf.pnotes-rename").writeText("stranded")
         assertEquals(FileOps.Result.Done, ops.rename(a, "Week 1"))
         assertEquals(setOf("Week 1.pdf", "other.pdf"), root.list()!!.toSet())
+    }
+
+    // Review C1: "already taken" is the disk's answer, not a comparison of names.
+
+    /** An accent can be stored two ways (as Mac sync tools do): the disk may hold the name though no listed name matches it. */
+    @Test fun aNameTheDiskAlreadyHoldsIsNeverReplaced() {
+        var moved = false
+        val folding = FileOps(root, journals, pages, onDisk = { it.name == "Résumé.pdf" || it.exists() }, moveOnDisk = { _, _ -> moved = true; true })
+        val other = pdf("Other.pdf")
+
+        assertEquals(FileOps.Result.Refused("There's already a 'Résumé.pdf' here."), folding.rename(other, "Résumé"))
+
+        assertFalse(moved)
+        assertTrue(other.exists())
+    }
+
+    /** The name was free when asked, but a sync app put a file there while the rename waited for a save. */
+    @Test fun aFileArrivingWhileWaitingForASaveIsNotReplaced() {
+        val a = pdf("Lecture.pdf")
+        val session = DocumentSession(a, journals, open = { FakePdfPages() }, scheduler = FakeScheduler(), events = {})
+        session.start()
+        session.addStroke(0, dot)
+        val arrived = File(root, "Week 1.pdf")
+        val closer = Thread {
+            Thread.sleep(300)
+            arrived.writeText("synced")
+            session.close()
+        }
+        closer.start()
+
+        val result = ops.rename(a, "Week 1")
+        closer.join()
+
+        assertEquals(FileOps.Result.Refused("There's already a 'Week 1.pdf' here."), result)
+        assertEquals("synced", arrived.readText())
+        assertTrue(a.exists())
+    }
+
+    /** The folder holds "Résumé.pdf" with its accents stored apart; the one moved in has them stored whole. */
+    @Test fun aMoveOntoANameTheDiskHoldsIsRefused() {
+        val physics = File(root, "Physics").apply { mkdir() }
+        val there = File(physics, "Re\u0301sume\u0301.pdf").apply { writeText("already there") }
+        val folding = FileOps(root, journals, pages, onDisk = { File(it.parentFile, Normalizer.normalize(it.name, Normalizer.Form.NFD)).exists() })
+        val a = pdf("R\u00e9sum\u00e9.pdf")
+
+        assertEquals(FileOps.Result.Refused("There's already a 'R\u00e9sum\u00e9.pdf' in 'Physics'."), folding.move(a, physics))
+
+        assertEquals("already there", there.readText())
+        assertEquals(listOf(there.name), physics.list()!!.toList())
+        assertTrue(a.exists())
+    }
+
+    /** Review C2: a file renamed to a deleted file's name mustn't take on that file's leftover writing. */
+    @Test fun aLeftoverJournalAtTheNewNameIsSetAsideForAFileWithNone() {
+        val gone = pdf("Week 2.pdf")
+        val leftover = ChangeJournal.forDocument(journals, gone).apply {
+            start(FileIdentity.of(gone))
+            append(AddItems(0, listOf(InkItem("i1", dot))))
+        }
+        val writing = leftover.file.readText()
+        assertTrue(gone.delete()) // outside the app
+        val a = pdf("Week 3.pdf")
+
+        assertEquals(FileOps.Result.Done, ops.rename(a, "Week 2"))
+
+        assertNull(ChangeJournal.forDocument(journals, gone).read())
+        val setAside = journals.listFiles()!!.filter { it.name.startsWith(leftover.file.name + ".kept-") }
+        assertEquals(listOf(writing), setAside.map { it.readText() })
+    }
+
+    /** A stranded case-only rename isn't put back while the disk says its name is taken. */
+    @Test fun aStrandedFileIsNotPutBackOverAFileTheDiskHolds() {
+        val stranded = File(root, ".Résumé.pdf.pnotes-rename").apply { writeText("stranded") }
+
+        assertNull(StrandedRename.recover(root, onDisk = { it.name == "Résumé.pdf" || it.exists() }))
+
+        assertEquals("stranded", stranded.readText())
+        assertEquals(listOf(stranded.name), root.list()!!.toList())
     }
 
     @Test fun aFreshAttemptIsWrittenBesideTheOriginal() {

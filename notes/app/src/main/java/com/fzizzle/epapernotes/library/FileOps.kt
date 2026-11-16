@@ -42,6 +42,12 @@ class FileOps(
     private val sessionWaitMs: Long = SESSION_WAIT_MS,
     /** The disk rename. Tests replace it to make the disk refuse, which a read-only folder can't when tests run as root. */
     private val moveOnDisk: (File, File) -> Boolean = { from, to -> from.renameTo(to) },
+    /**
+     * Whether the disk holds a file at this path. The disk decides whether two names are the
+     * same file (it may ignore case, or how an accent is stored), not a comparison of text.
+     * Tests replace it.
+     */
+    private val onDisk: (File) -> Boolean = File::exists,
 ) {
     private val root = root.normal()
 
@@ -66,7 +72,7 @@ class FileOps(
     fun rename(target: File, newName: String): Result {
         val from = target.normal()
         targetProblem(from)?.let { return Result.Refused(it) }
-        StrandedRename.recover(from.parentFile!!)?.let { log("recovered $it") }
+        StrandedRename.recover(from.parentFile!!, onDisk)?.let { log("recovered $it") }
         val typed = newName.trim()
         nameProblem(typed)?.let { return Result.Refused(it) }
         val keepsPdf = from.isFile && from.extension.equals("pdf", ignoreCase = true) && !typed.endsWith(".pdf", ignoreCase = true)
@@ -77,7 +83,7 @@ class FileOps(
         if (File(from.parentFile, StrandedRename.hiddenName(from.name)).exists()) {
             return Result.Refused("'${from.name}' can't change case just now: a leftover '${StrandedRename.hiddenName(from.name)}' is beside it. Remove that first.")
         }
-        return carry(from, File(from.parentFile, name), failed = "'${from.name}' couldn't be renamed.")
+        return carry(from, File(from.parentFile, name), where = "here", failed = "'${from.name}' couldn't be renamed.")
     }
 
     fun move(target: File, into: File): Result {
@@ -85,12 +91,12 @@ class FileOps(
         val folder = into.normal()
         targetProblem(from)?.let { return Result.Refused(it) }
         if (!isFolderInLibrary(folder)) return Result.Refused("That folder isn't in the library.")
-        StrandedRename.recover(folder)?.let { log("recovered $it") }
+        StrandedRename.recover(folder, onDisk)?.let { log("recovered $it") }
         // File.startsWith compares whole names, so "Physics Lab" isn't inside "Physics".
         if (folder.startsWith(from)) return Result.Refused("A folder can't go inside itself.")
         if (folder == from.parentFile) return Result.Done
         if (isTaken(folder, from.name, except = null)) return Result.Refused("There's already a '${from.name}' in '${folder.name}'.")
-        return carry(from, File(folder, from.name), failed = "'${from.name}' couldn't be moved there.")
+        return carry(from, File(folder, from.name), where = "in '${folder.name}'", failed = "'${from.name}' couldn't be moved there.")
     }
 
     /** Deletes the real file, or the folder and everything in it, with the app's data for each PDF. */
@@ -138,24 +144,30 @@ class FileOps(
         // dropped, so the copy opens at its start. Its journal is set aside, as a rename does,
         // so that writing is never put onto the clean copy, and never lost either.
         lastPages.remove(to.path)
-        val journal = ChangeJournal.journalFileFor(journalDir, to)
-        for (old in liveJournalFilesOf(to)) {
-            if (!old.renameTo(keptName(journal))) log("couldn't set aside ${old.name}")
-        }
+        setAsideJournalsAt(to)
         return Result.Made(to)
     }
 
     /** How many PDFs are in [folder] and all its subfolders, for the delete question. */
     fun pdfCountInside(folder: File): Int = pdfsAt(folder.normal()).size
 
-    /** Rename or move [from] to [to] on disk, then the app's data for every PDF it holds. */
-    private fun carry(from: File, to: File, failed: String): Result {
+    /**
+     * Rename or move [from] to [to] on disk, then the app's data for every PDF it holds.
+     * [where] finishes "There's already a 'X' ...".
+     */
+    private fun carry(from: File, to: File, where: String, failed: String): Result {
         val pdfs = pdfsAt(from)
         waitForSessions(pdfs)?.let { return Result.Refused(it) }
+        // Asked again after the wait, which can be long, and of the disk: a file may have arrived
+        // meanwhile, or be there under a name spelt differently. renameTo would replace it.
+        if (onDisk(to) && !isSameFile(from, to)) return Result.Refused("There's already a '${to.name}' $where.")
         // No copy-and-delete fallback: renameTo fails across storage devices, and that's refused.
         if (!moveKeepingCase(from, to)) return Result.Refused(failed)
         for (pdf in pdfs) {
             val moved = if (pdf == from) to else File(to, pdf.relativeTo(from).path)
+            // A journal already at the new path is from a file that's gone from it: its writing
+            // isn't this file's, whether or not this file has a journal of its own.
+            setAsideJournalsAt(moved)
             moveJournals(pdf, moved)
             lastPages.move(pdf.path, moved.path)
         }
@@ -166,9 +178,11 @@ class FileOps(
      * A memory card ignores case, and through Android's storage layer a rename that only
      * changes case ("lecture.pdf" to "Lecture.pdf") reports success yet changes nothing. So
      * that one goes by a hidden name in between, and is put back if the second step fails.
+     * So does any rename the disk says is to the same file (an accent stored another way).
      */
     private fun moveKeepingCase(from: File, to: File): Boolean {
-        if (from.parentFile != to.parentFile || from.name == to.name || !from.name.equals(to.name, ignoreCase = true)) {
+        val sameFile = from.name.equals(to.name, ignoreCase = true) || isSameFile(from, to)
+        if (from.parentFile != to.parentFile || from.name == to.name || !sameFile) {
             return moveOnDisk(from, to)
         }
         val between = File(from.parentFile, StrandedRename.hiddenName(from.name))
@@ -186,18 +200,14 @@ class FileOps(
     }
 
     /**
-     * Each of [pdf]'s journal files goes to the same name for [moved]. A journal already there
-     * belongs to a file that's gone from that path (the name was free on disk). It's set aside
-     * rather than overwritten, so ours, with the writing for this file, takes its place.
+     * Each of [pdf]'s journal files goes to the same name for [moved], after [setAsideJournalsAt]
+     * has cleared the way. Should one still be there, ours goes beside it, never over it.
      */
     private fun moveJournals(pdf: File, moved: File) {
         val oldName = ChangeJournal.journalFileFor(journalDir, pdf).name
         val newJournal = ChangeJournal.journalFileFor(journalDir, moved)
         for (file in journalFilesOf(pdf)) {
             var dest = File(journalDir, newJournal.name + file.name.removePrefix(oldName))
-            if (dest == newJournal && dest.exists() && !dest.renameTo(keptName(newJournal))) {
-                log("couldn't set aside ${dest.name}")
-            }
             if (dest.exists()) dest = keptName(newJournal)
             if (!file.renameTo(dest)) log("couldn't move journal ${file.name} to ${dest.name}; it stays under its old name")
         }
@@ -217,6 +227,18 @@ class FileOps(
     private fun liveJournalFilesOf(pdf: File): List<File> {
         val kept = ChangeJournal.journalFileFor(journalDir, pdf).name + ".kept-"
         return journalFilesOf(pdf).filterNot { it.name.startsWith(kept) }
+    }
+
+    /**
+     * A journal and `.new` at [pdf]'s path belong to an earlier file of that name, now gone
+     * (nothing is ever put over a file on disk). They're set aside as `.kept-`, never put onto
+     * the file now taking that name, and never lost either.
+     */
+    private fun setAsideJournalsAt(pdf: File) {
+        val journal = ChangeJournal.journalFileFor(journalDir, pdf)
+        for (old in liveJournalFilesOf(pdf)) {
+            if (!old.renameTo(keptName(journal))) log("couldn't set aside ${old.name}")
+        }
     }
 
     /** A name as DocumentSession sets journals aside. */
@@ -282,6 +304,13 @@ class FileOps(
 
     private fun isLink(file: File) = Files.isSymbolicLink(file.toPath())
 
+    /** Whether the disk says [a] and [b] are one file. False when either can't be found. */
+    private fun isSameFile(a: File, b: File) = try {
+        Files.isSameFile(a.toPath(), b.toPath())
+    } catch (e: Exception) {
+        false
+    }
+
     private fun File.normal() = absoluteFile.normalize()
 
     // System.err reaches logcat on the tablet, and keeps this file free of Android code.
@@ -304,15 +333,16 @@ object StrandedRename {
 
     fun hiddenName(name: String) = ".$name$SUFFIX"
 
-    /** Puts back what is stranded in [folder]; returns the name it restored, or null. */
-    fun recover(folder: File): String? {
+    /** Puts back what is stranded in [folder]; returns the name it restored, or null. [onDisk] as FileOps'. */
+    fun recover(folder: File, onDisk: (File) -> Boolean = File::exists): String? {
         val children = folder.listFiles() ?: return null
         var restored: String? = null
         for (stranded in children) {
             val n = stranded.name
             if (!n.startsWith(".") || !n.endsWith(SUFFIX) || n.length <= 1 + SUFFIX.length) continue
             val original = n.substring(1, n.length - SUFFIX.length)
-            if (children.any { it.name.equals(original, ignoreCase = true) }) continue
+            // The disk decides too: it may hold the name spelt another way (see FileOps' onDisk).
+            if (children.any { it.name.equals(original, ignoreCase = true) } || onDisk(File(folder, original))) continue
             if (stranded.renameTo(File(folder, original))) {
                 System.err.println("FileOps: put ${stranded.name} back as $original")
                 restored = original

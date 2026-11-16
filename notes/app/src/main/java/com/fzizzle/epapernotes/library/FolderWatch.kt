@@ -64,9 +64,12 @@ class FolderWatch(private val onChange: () -> Unit) {
      * Also watches [folders] (subfolders of the one on show, at most [MAX_CHILDREN]) for files
      * arriving, leaving or being renamed, replacing the last set. Folders already watched keep
      * their watch. Main thread.
+     *
+     * The folder on show is left out, though a listing that arrived late may pass it: Android
+     * keeps one watch per folder, so stopping it as a child would stop [watch]'s too.
      */
     fun watchChildren(folders: List<File>) {
-        val wanted = folders.take(MAX_CHILDREN).toSet()
+        val wanted = folders.filter { it != watching }.take(MAX_CHILDREN).toSet()
         (children.keys - wanted).forEach { children.remove(it)?.stopWatching() }
         for (folder in wanted) {
             if (folder in children) continue
