@@ -2,6 +2,21 @@
 
 What was found while debugging on the tablet: causes, measurements and the tricks that got them. Newest first. Bugs and to-dos themselves live in [TODO.md](../../TODO.md).
 
+## 2026-11-16: a "(my edits)" copy after Android clears the app, and a case-only rename on the tablet's own storage
+
+Final review. Debug build, scratch folder `/sdcard/Documents/JotScratch/`, `library.xml` backed up and restored byte for byte, scratch files and their journal removed.
+
+**Rebuilt screen (review B1).** Leaving for another app doesn't clear Jot from memory on this tablet, and `always_finish_activities` does nothing on this ROM, so the process was killed instead. Opened a copy of the 125-page "PWT test copy.pdf" by the path hook, snipped and pasted with `input stylus motionevent` (works while fast-ink is off for the tool), pushed a 3-page PDF over the file with `adb push`, pasted again. The save went into `scratch (my edits 2026-11-16).pdf` and the strip showed that name. Then Home, `adb shell am kill com.fzizzle.epapernotes` (no process left), `KEYCODE_APP_SWITCH` and a tap on Jot's card:
+
+```
+ActivityManager: Start proc 23211:com.fzizzle.epapernotes/u0a405 for next-top-activity {…/…ui.WritingActivity}
+Notes: written pages n=7 of 125 ms=6
+```
+
+The rebuilt screen opened the 125-page copy, not the 3-page original its intent named; the screenshot shows the copy's name in the strip and both pasted snips. Side note: MediaProvider logged `Database update failed while renaming …/.scratch (my edits 2026-11-16).pdf.pnotes-tmp`; the copy was written whole all the same.
+
+**Case-only rename on internal storage (review C, `RemovableVolumeTest.renameChangingOnlyCase`).** The same steps in a scratch folder under `/sdcard/Documents/JotScratch/` (a throwaway test class, not kept): `Files.isSameFile` says `lecture.pdf` and `Lecture.pdf` are one file there (both `dev=53,ino=69457`), the rename returns `Done` and the folder holds only `Lecture.pdf`. So the rename is not refused on the tablet's own storage.
+
 ## 2026-11-16: a snip over ink, and what drawing in runs costs
 
 Question (review D2, decision 4): on screen, pen ink showed on top of a snip pasted over it, because `PdfFile.drawWithSolidInk` drew all solid ink after everything else. Now the annotations go in runs, in the page's order: something that isn't ink and comes after solid ink ends a run. Does the usual page (pen ink only) draw as fast as before?

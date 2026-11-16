@@ -5,16 +5,21 @@ For the fixes of 2026-11-16 (review rows B1 to B7, C1 to C3, D1 and D2). Use a c
 ## 1. Undo after dark mode
 
 1. Open the scratch PDF and write a word.
-2. Pull the notification shade down and switch dark mode on, then off again. Go back to Jot.
+2. Pull the notification shade down and switch dark mode on, then off again (or ask Claude to switch it over adb: the tablet's own dark-mode switch may not be the one Android uses). Go back to Jot.
    - **Expected:** the page stays as it was. The word is still there, and undo still takes it away.
 
 ## 2. Coming back to a "(my edits)" copy
 
 1. Do C1 in [TESTING-conflicts.md](TESTING-conflicts.md) until the strip shows the "(my edits …)" name.
-2. Leave Jot for another app (the browser, say) for a few minutes. Come back.
-   - **Expected:** the "(my edits …)" copy is still the file on screen, with all your writing. It is not the changed original.
+2. Press Home, and tell Claude. Claude clears Jot from memory over adb, as Android does when it needs the room.
+3. Open the Recents screen and tap Jot.
+   - **Expected:** the "(my edits …)" copy is on screen, with all your writing. It is not the changed original.
+
+Claude also checked this over adb on 2026-11-16, with pasted snips instead of handwriting: the copy came back.
 
 ## 3. A keyboard or page-turner
+
+Skip this if you have neither.
 
 1. Open the scratch PDF, write a word, then connect a Bluetooth keyboard or page-turner.
    - **Expected:** the page stays as it is. No restart, and undo still takes the word away.
@@ -49,7 +54,7 @@ For the fixes of 2026-11-16 (review rows B1 to B7, C1 to C3, D1 and D2). Use a c
 
 1. In a scratch folder, put two PDFs: one called "Resume.pdf", and one with an accented name, "Résumé.pdf" (typed from the Mac, if you can).
 2. Rename or move one onto the other's name, written in another case ("RESUME.pdf") or with the accent the other way.
-   - **Expected:** Jot says the name is taken. Neither file is replaced.
+   - **Expected:** no file is replaced or lost. Tell me whether Jot refused, or made a second file that looks the same.
 
 ## 8. A very long name
 

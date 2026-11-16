@@ -7,8 +7,8 @@ import com.fzizzle.epapernotes.ink.Item
 import com.fzizzle.epapernotes.ink.transformed
 
 /**
- * Nothing is saved beside the page: the journal only holds what lies on a page, so a moved or
- * pasted item that stuck out past the edge would be cut off when saved (review B4).
+ * Nothing is saved beside the page: a moved or pasted item past the edge would be saved there,
+ * where it can't be seen or picked up again (review B4, decision 1).
  */
 object KeepOnPage {
     /**

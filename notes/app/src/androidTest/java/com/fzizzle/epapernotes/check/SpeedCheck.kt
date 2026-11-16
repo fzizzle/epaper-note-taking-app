@@ -126,7 +126,7 @@ class SpeedCheck {
                 log("decode $FULL_PAGE_STROKES stroke texts alone: $decodeMs ms")
 
                 // Drawing the full page, pen ink only: the case PdfFile.drawWithSolidInk must keep fast
-                // (137 ms on 2026-11-10). The checksum shows whether a change to the drawing changed a pixel.
+                // (128–131 ms, debug build, 2026-11-16). The checksum shows whether a change to the drawing changed a pixel.
                 val picture = pdf.render(0, FITTED_WIDTH_PX)
                 val pixels = IntArray(picture.width * picture.height).also { picture.getPixels(it, 0, picture.width, 0, 0, picture.width, picture.height) }
                 picture.recycle()

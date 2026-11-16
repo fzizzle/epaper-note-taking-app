@@ -22,6 +22,7 @@ A read-through of the whole app for bugs, with suggestions: [findings](docs/supe
   - [x] A rename or move never replaces a file; a moved file never inherits another's writing; the folder watch (Task 6).
   - [x] A snip over handwriting hides it on screen too (Task 7).
   - [x] Very long file names can be saved (Task 8).
+  - Known gap: if a sync changes the file in the seconds after you leave a document, and Android then clears Jot from memory, Jot may reopen the original instead of the "(my edits)" copy. Nothing is lost (the copy has the writing), but new writing would go into the original. Fixing it needs a small design change: ask first.
 - [ ] **[Improvements](docs/superpowers/plans/2026-11-16-improvements.md)** (rows E1–E8), each its own task, ending in an owner checklist.
   - [ ] The page is remembered at each turn (Task 1); tiles carry their name as text (Task 2); the Onyx SDK download is checked (Task 3).
   - [ ] Back lets go first (Task 4).
