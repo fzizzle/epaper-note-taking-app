@@ -3,6 +3,7 @@ package com.fzizzle.epapernotes.storage
 import java.io.File
 import java.time.LocalDateTime
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -57,5 +58,22 @@ class CopyNamesTest {
         val original = tmp.newFile("W.pdf")
         tmp.newFile("W (attempt 2).pdf")
         assertEquals(File(tmp.root, "W (attempt 3).pdf"), CopyNames.attempt(original))
+    }
+
+    private fun long() = File(tmp.root, "é".repeat(125) + ".pdf")
+
+    @Test fun myEditsOfAVeryLongNameFits() {
+        val name = CopyNames.myEdits(long(), now).name
+        assertTrue(name.toByteArray().size <= 255)
+        assertTrue(name.endsWith(" (my edits 2026-11-09).pdf"))
+        assertTrue(name.startsWith("éééé"))
+        assertTrue(name.removeSuffix(" (my edits 2026-11-09).pdf").all { it == 'é' })
+    }
+
+    @Test fun anAttemptOfAVeryLongNameFits() {
+        val name = CopyNames.attempt(long()) { false }.name
+        assertTrue(name.toByteArray().size <= 255)
+        assertTrue(name.endsWith(" (attempt 2).pdf"))
+        assertTrue(name.startsWith("éééé"))
     }
 }

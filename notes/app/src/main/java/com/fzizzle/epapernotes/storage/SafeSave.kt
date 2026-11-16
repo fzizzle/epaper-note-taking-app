@@ -6,6 +6,7 @@ import java.nio.channels.FileChannel
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
+import java.security.MessageDigest
 
 /**
  * Replaces a file without ever leaving it half-written.
@@ -21,8 +22,24 @@ object SafeSave {
 
     private const val SUFFIX = ".pnotes-tmp"
 
-    /** `.<name>.pnotes-tmp` in the same folder. Same folder so the final move is a rename, never a copy. */
-    fun tempFileFor(target: File): File = File(target.absoluteFile.parentFile, ".${target.name}$SUFFIX")
+    /** The longest file name the storage takes, in UTF-8 bytes. */
+    const val MAX_NAME_BYTES = 255
+
+    /** True if [name] is short enough to be a file name. */
+    fun fitsName(name: String): Boolean = name.toByteArray(Charsets.UTF_8).size <= MAX_NAME_BYTES
+
+    /**
+     * `.<name>.pnotes-tmp` in the same folder. Same folder so the final move is a rename, never a copy.
+     * When that would be too long a name, it is `.<32 hex digits of the name's sha256>.pnotes-tmp`.
+     */
+    fun tempFileFor(target: File): File {
+        val plain = ".${target.name}$SUFFIX"
+        val name = if (fitsName(plain)) plain else {
+            val digest = MessageDigest.getInstance("SHA-256").digest(target.name.toByteArray(Charsets.UTF_8))
+            ".${digest.joinToString("") { "%02x".format(it) }.take(32)}$SUFFIX"
+        }
+        return File(target.absoluteFile.parentFile, name)
+    }
 
     fun isTempFile(name: String): Boolean = name.startsWith(".") && name.endsWith(SUFFIX)
 
