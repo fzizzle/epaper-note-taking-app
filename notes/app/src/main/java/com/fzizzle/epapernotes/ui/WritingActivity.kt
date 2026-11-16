@@ -1604,11 +1604,22 @@ class WritingActivity : Activity() {
      * Holds the pen as for a page change, then asks the session to open the file's new version:
      * opened under a live pen, a stroke written on the old pages could land on the new ones.
      * With the pen down or fingers on the page, it waits and tries again, so a stroke in
-     * progress is never cut. In the background it's dropped: coming back looks at the file again.
+     * progress is never cut. It waits too while a lifted stroke's points are still to come
+     * ([PenInput.strokeComing]): Onyx reports the lift before it hands them over, and a stroke
+     * recorded after the reload would be put on the new version's page of that number. (The
+     * session's renumbering, DocumentSession.reload, is the second line of defence: a stroke
+     * from a page the new version lacks isn't recorded there.) Page changes don't wait for
+     * this: their renumbering moves a late stroke to its own page. In the background it's
+     * dropped: coming back looks at the file again.
      */
     private fun holdForReload() {
         if (!resumed) {
             reloadWanted = false
+            return
+        }
+        if (pen.strokeComing) {
+            Log.i(TAG, "reload: refused, a lifted stroke is still to be handed over")
+            handler.postDelayed(retryReload, RELOAD_RETRY_MS)
             return
         }
         if (holdForPageChange("reload")) session.reload() else handler.postDelayed(retryReload, RELOAD_RETRY_MS)

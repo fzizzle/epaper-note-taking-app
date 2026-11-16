@@ -875,7 +875,8 @@ class DocumentSession(
      *
      * Opened: page numbers go up by one ([pageNumbering]), as after a page change, so a stroke
      * the pen hands over late, read under the old numbers, keeps its page if the new version
-     * has it, and isn't recorded if not.
+     * has it, and isn't recorded if not. The screen asks only once a lifted stroke has been
+     * handed over, so this is the second line of defence, for one that comes later still.
      */
     fun reload() {
         scheduler.post {
