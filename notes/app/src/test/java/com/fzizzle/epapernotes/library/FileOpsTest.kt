@@ -297,7 +297,8 @@ class FileOpsTest {
         val a = pdf("Lecture.pdf")
         val events = mutableListOf<SessionEvent>()
         val fake = FakePdfPages(wasRepaired = true)
-        val session = DocumentSession(a, journals, open = { fake }, scheduler = FakeScheduler(), events = { events += it })
+        // The copy is opened once to check it, and a copy is clean even when the original was repaired.
+        val session = DocumentSession(a, journals, open = { if (it == a) fake else FakePdfPages() }, scheduler = FakeScheduler(), events = { events += it })
         session.start()
         session.addStroke(0, dot)
         session.saveRepairedToCopy()

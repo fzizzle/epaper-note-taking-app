@@ -31,7 +31,8 @@ class DocumentSessionTest {
     private val events = mutableListOf<SessionEvent>()
     private var fake = FakePdfPages()
     /** How the session opens the PDF. A test can make it fail. */
-    private var opening: (File) -> PdfPages = { fake }
+    private var opening: (File) -> PdfPages = { f -> if (isACopy(f)) FakePdfPages(pages = fake.pageCount) else fake }
+    private fun isACopy(f: File) = "(my edits" in f.name
     /** Runs at each event after it's noted, so a test can make one fail. */
     private var onEvent: (SessionEvent) -> Unit = {}
     /** Every file whose identity the session read (each read goes through the whole file). */
@@ -479,6 +480,45 @@ class DocumentSessionTest {
         assertEquals("items=1", myEdits.readText())
         assertEquals(1, events.count { it == SessionEvent.SavedToCopy(myEdits, CopyReason.CHANGED_WHILE_OPEN) })
         assertEquals("edited on the laptop", pdf.readText())
+    }
+
+    /** Review A4 / decision 2: a copy MuPDF had to repair isn't trusted. It goes, the writing stays where it was. */
+    @Test fun aCopyThatDoesNotOpenCleanIsNotTrusted() {
+        val s = session()
+        s.addStroke(0, dot)
+        pdf.writeText("edited on the laptop")
+        opening = { f -> if (isACopy(f)) FakePdfPages(wasRepaired = true, pages = fake.pageCount) else fake }
+        s.saveNow()
+        assertEquals(1, events.count { it is SessionEvent.SaveFailed })
+        assertEquals(emptyList<File>(), myEditsCopies())
+        assertEquals(pdf, s.file)
+        assertEquals(1, journalStrokes())
+    }
+
+    @Test fun aCopyWithTheWrongPageCountIsNotTrusted() {
+        val s = session()
+        s.addStroke(0, dot)
+        pdf.writeText("edited on the laptop")
+        opening = { f -> if (isACopy(f)) FakePdfPages(pages = 2) else fake }
+        s.saveNow()
+        assertEquals(1, events.count { it is SessionEvent.SaveFailed })
+        assertEquals(emptyList<File>(), myEditsCopies())
+        assertEquals(pdf, s.file)
+        assertEquals(1, journalStrokes())
+    }
+
+    @Test fun aCopyThatOpensCleanIsUsed() {
+        val s = session()
+        s.addStroke(0, dot)
+        pdf.writeText("edited on the laptop")
+        val checked = mutableListOf<FakePdfPages>()
+        opening = { f -> if (isACopy(f)) FakePdfPages(pages = fake.pageCount).also { checked += it } else fake }
+        s.saveNow()
+        assertEquals(1, checked.size) // one extra open, on the copy
+        assertTrue(checked.single().closed)
+        assertFalse(fake.closed)
+        assertEquals(listOf(myEdits), myEditsCopies())
+        assertEquals(myEdits, s.file)
     }
 
     /** Review A1: a failed move into the copy leaves the journal as it was, so writing after it survives a kill. */

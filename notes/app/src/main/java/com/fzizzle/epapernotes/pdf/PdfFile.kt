@@ -26,6 +26,7 @@ import com.fzizzle.epapernotes.ink.Box
 import com.fzizzle.epapernotes.ink.InkItem
 import com.fzizzle.epapernotes.ink.Item
 import java.io.File
+import java.io.IOException
 
 /**
  * One open PDF. This is the only class in the app that talks to MuPDF, so the rest of the
@@ -552,11 +553,22 @@ class PdfFile private constructor(private val doc: PDFDocument) : PdfPages {
         /** The private key, in a page's dictionary, that marks a page the app added ([addDottedPage]). */
         private const val ADDED_PAGE_KEY = "PNotesAdded"
 
+        /** Files up to this size are opened from memory (see [open]). Bigger ones open by path. */
+        const val IN_MEMORY_LIMIT_BYTES = 64L * 1024 * 1024
+
         fun open(file: File): PdfFile {
             val opened = try {
-                Document.openDocument(file.path)
+                // A file of a reasonable size is read whole, so nothing that happens to it
+                // afterwards can reach the open document. MuPDF reads an open file as it
+                // goes, and a file overwritten in place (a USB copy) gave it another file's
+                // pages: a "(my edits)" copy then held only 3 of 40 pages and opened clean
+                // (findings log, 2026-11-16). Costs the file's size in memory, no time.
+                if (file.length() <= IN_MEMORY_LIMIT_BYTES) Document.openDocument(file.readBytes(), "pdf")
+                else Document.openDocument(file.path)
             } catch (e: RuntimeException) {
                 throw PdfOpenException("Can't open ${file.name}: it may be damaged or not a PDF.", e)
+            } catch (e: IOException) {
+                throw PdfOpenException("Can't read ${file.name}.", e)
             }
             if (opened.needsPassword()) {
                 opened.destroy()

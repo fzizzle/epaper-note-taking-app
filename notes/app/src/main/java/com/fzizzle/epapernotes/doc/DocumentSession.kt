@@ -1086,6 +1086,7 @@ class DocumentSession(
         val copy = CopyNames.myEdits(file, clock())
         SafeSave.createNew(copy) { p.saveTo(it) }
         try {
+            checkWhole(copy, p)
             switchTo(copy)
         } catch (e: Throwable) {
             copy.delete()
@@ -1098,6 +1099,24 @@ class DocumentSession(
         waitingForRepairDecision = false
         events(SessionEvent.SavedToCopy(copy, why, notPlaced))
         return copy
+    }
+
+    /**
+     * The copy is opened once before anything relies on it: the journal that holds its
+     * writing is cleared only when the copy is known to open without repair and to have the
+     * pages of [p], the document it was saved from. A file overwritten in place under an open
+     * document could otherwise give a copy that opens fine with other pages (findings log,
+     * 2026-11-16). Costs one more open.
+     */
+    private fun checkWhole(copy: File, p: PdfPages) {
+        val reopened = open(copy)
+        try {
+            if (reopened.wasRepaired || reopened.pageCount != p.pageCount) {
+                throw IOException("the copy of ${file.name} didn't come out whole")
+            }
+        } finally {
+            reopened.close()
+        }
     }
 
     /**
