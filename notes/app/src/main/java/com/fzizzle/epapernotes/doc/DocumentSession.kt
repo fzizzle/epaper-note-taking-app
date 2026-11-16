@@ -1070,7 +1070,8 @@ class DocumentSession(
         synchronized(lock) {
             try {
                 journal.rewrite(known!!, unsaved)
-            } catch (e: IOException) {
+            } catch (e: Throwable) {
+                // Throwable: the caller must still tell the owner and try again, whatever fails here.
                 System.err.println("DocumentSession: the journal couldn't be rewritten: $e")
                 tellOwner = !journalBroken
                 journalBroken = true
