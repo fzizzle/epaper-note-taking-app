@@ -8,6 +8,7 @@ import com.fzizzle.epapernotes.ink.Item
 import com.fzizzle.epapernotes.ink.Stroke
 import com.fzizzle.epapernotes.ink.StrokeKind
 import com.fzizzle.epapernotes.ink.StrokePoint
+import com.fzizzle.epapernotes.storage.CopyNames
 import com.fzizzle.epapernotes.storage.FileIdentity
 import java.io.File
 import java.time.LocalDateTime
@@ -316,6 +317,97 @@ class DocumentSessionTest {
         scheduler.runDelayed() // the retry
         assertEquals("items=1", myEdits.readText())
         assertEquals("edited on the laptop", pdf.readText())
+    }
+
+    private val sessionClock = LocalDateTime.of(2026, 11, 9, 14, 5)
+
+    /** As [breakTheJournal], for [file]'s journal: a full tablet, so it can't be started. */
+    private fun breakTheJournalOf(file: File): File {
+        val journalFile = ChangeJournal.forDocument(journals, file).file
+        journalFile.delete()
+        assertTrue(journalFile.mkdir())
+        return journalFile
+    }
+
+    /** Every "(my edits …)" copy beside the file. */
+    private fun myEditsCopies() = pdf.parentFile!!.listFiles()!!.filter { "(my edits" in it.name }
+
+    /** Review A1: the copy is made, its journal can't be. No copy is left behind, and the retry makes just one. */
+    @Test fun aCopyWhoseJournalCantBeStartedLeavesNoCopyBehind() {
+        val s = session()
+        s.addStroke(0, dot)
+        pdf.writeText("edited on the laptop")
+        val broken = breakTheJournalOf(CopyNames.myEdits(pdf, sessionClock))
+        s.saveNow()
+        assertEquals(1, events.count { it is SessionEvent.SaveFailed })
+        assertEquals(emptyList<File>(), myEditsCopies())
+        assertEquals(pdf, s.file)
+        broken.delete() // room again
+        scheduler.runDelayed() // the retry
+        assertEquals(listOf(myEdits), myEditsCopies())
+        assertEquals("items=1", myEdits.readText())
+        assertEquals(1, events.count { it == SessionEvent.SavedToCopy(myEdits, CopyReason.CHANGED_WHILE_OPEN) })
+        assertEquals("edited on the laptop", pdf.readText())
+    }
+
+    /** Review A1: a failed move into the copy leaves the journal as it was, so writing after it survives a kill. */
+    @Test fun strokesAfterAFailedSwitchSurviveAKill() {
+        val s = session()
+        s.addStroke(0, dot)
+        pdf.writeText("edited on the laptop")
+        val broken = breakTheJournalOf(CopyNames.myEdits(pdf, sessionClock))
+        s.saveNow()
+        assertEquals(1, events.count { it is SessionEvent.SaveFailed })
+        s.addStroke(1, line)
+        broken.delete() // room again; then the app is killed
+        reopenAfterKill()
+        assertTrue(events.contains(SessionEvent.SavedToCopy(myEdits, CopyReason.RESCUED)))
+        assertEquals(listOf(myEdits), myEditsCopies())
+        assertEquals("items=2", myEdits.readText())
+    }
+
+    /** A rescue whose copy can't get a journal goes the way any failed rescue goes: set aside, the file opened plain. */
+    @Test fun aRescueWhoseJournalCantBeStartedOpensTheFilePlain() {
+        ChangeJournal.forDocument(journals, pdf).apply { start(otherVersion); append(AddItems(0, listOf(InkItem("a", dot)))) }
+        breakTheJournalOf(CopyNames.myEdits(pdf, sessionClock))
+        val s = session()
+        assertTrue(events.none { it is SessionEvent.OpenFailed })
+        assertEquals(1, events.count { it is SessionEvent.EarlierWritingKept })
+        assertEquals(emptyList<File>(), myEditsCopies())
+        assertEquals(pdf, s.file)
+    }
+
+    /** Review A7: a session that moves into a copy, then into a second one, frees both when it closes. */
+    @Test fun aSessionThatMovedTwiceFreesBothCopies() {
+        val s = session()
+        s.addStroke(0, dot)
+        pdf.writeText("edited on the laptop")
+        s.saveNow()
+        assertEquals(myEdits, s.file)
+        myEdits.writeText("edited on the laptop too")
+        s.addStroke(0, line)
+        s.saveNow()
+        assertEquals(2, myEditsCopies().size)
+        s.close()
+        assertFalse(DocumentSession.anyOpenIn(pdf.parentFile!!))
+    }
+
+    /** Review A8: a file that arrives at the damaged file's copy's name meanwhile is never replaced. */
+    @Test fun aDamagedFilesCopyNeverReplacesAFileThatArrived() {
+        fake = FakePdfPages(wasRepaired = true)
+        val s = session()
+        s.addStroke(0, dot)
+        fake.duringSave = { fake.duringSave = null; myEdits.writeText("from the laptop") }
+        s.saveRepairedToCopy()
+        assertEquals("from the laptop", myEdits.readText())
+        assertTrue(events.any { it is SessionEvent.SaveFailed })
+        assertEquals(pdf, s.file)
+        s.saveRepairedToCopy() // the owner asks again
+        val next = File(pdf.parentFile, "Lecture (my edits 2026-11-09 14-05).pdf")
+        assertEquals("items=1", next.readText())
+        assertEquals("from the laptop", myEdits.readText())
+        assertTrue(events.contains(SessionEvent.SavedToCopy(next, CopyReason.DAMAGED)))
+        assertEquals("original", pdf.readText())
     }
 
     @Test fun failedSaveKeepsJournalAndRetries() {
