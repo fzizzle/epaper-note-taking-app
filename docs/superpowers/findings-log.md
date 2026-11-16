@@ -19,6 +19,7 @@ Question (review D2, decision 4): on screen, pen ink showed on top of a snip pas
 - Every pixel is the same: the checksums (1,500 strokes −1799003082, 300 strokes 1349238510) match in every run, before and after.
 - A page with a snip over its ink costs one more MuPDF pass and one more solid-ink pass per snip that ends a run; not measured, as such pages are rare.
 - `AndroidDrawDevice(bitmap, x, y, false)` draws over what the picture holds; the three-argument one clears it to white first.
+- Review fix: at first any snip after pen ink ended a run, so writing, pasting a figure elsewhere, then highlighting the writing turned the pen olive (`ff000000` became `ff655d17`). Now a snip ends a run only when it lies over some of the run's pen strokes (each stroke's box, looked up only when a snip follows ink). After the fix: 1,500 strokes 128, 130, 129 ms (127–133), checksums unchanged.
 
 ## 2026-11-16: which other windows take focus from the writing screen
 

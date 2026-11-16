@@ -408,6 +408,18 @@ class PdfFileItemsTest {
         assertEquals(penAlone, pdf.render(0, 600).at(middle))
     }
 
+    /** Write, paste a figure elsewhere on the page, then highlight the earlier writing: the pen stays on top. */
+    @Test fun aSnipElsewhereLeavesHighlighterOverPenInkAsBefore() = PdfFile.open(TestPdfs.blank(dir)).use { pdf ->
+        pdf.apply(AddItems(0, listOf(ink("pen", across))))
+        val middle = pdf.middleOfTheStroke()
+        val penAlone = pdf.render(0, 600).at(middle)
+        assertTrue(isDark(penAlone))
+        pdf.apply(AddItems(0, listOf(ImageItem("figure", Box(100f, 650f, 300f, 750f), 0, whitePng(40, 20))))) // far above the stroke
+        pdf.apply(AddItems(0, listOf(ink("marker", across.copy(kind = StrokeKind.HIGHLIGHTER)))))
+        val now = pdf.render(0, 600).at(middle)
+        assertEquals("${Integer.toHexString(penAlone)} became ${Integer.toHexString(now)}", penAlone, now)
+    }
+
     private fun whitePng(width: Int, height: Int): ByteArray {
         val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.WHITE) }
         return ByteArrayOutputStream().also { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
