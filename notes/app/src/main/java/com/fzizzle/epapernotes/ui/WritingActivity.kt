@@ -1931,6 +1931,12 @@ class WritingActivity : Activity() {
         @Suppress("DEPRECATION") super.onBackPressed()
     }
 
+    /** Logged only, to learn which other windows (shade, menus) take focus from the page. */
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        Log.i(TAG, "focus=$hasFocus fast-ink=${pen.drawsInk} dialog=$dialogOpen")
+    }
+
     override fun onPause() {
         super.onPause()
         resumed = false
