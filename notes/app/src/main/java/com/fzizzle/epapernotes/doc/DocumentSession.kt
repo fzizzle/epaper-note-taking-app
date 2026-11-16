@@ -108,6 +108,13 @@ class DocumentSession(
 
     // Worker thread only.
     private var pages: PdfPages? = null
+    /**
+     * How many pages the document on screen has, as the session knows it: taken when a PDF is
+     * opened, and moved by the session's own page adds and removes. Never read from the open
+     * PDF later, because a file overwritten in place under a PDF opened by path changes what
+     * that PDF counts (findings log, 2026-11-16), and a copy of it would then match.
+     */
+    private var knownPageCount = 0
     private var applied = 0 // how many of `unsaved` are in `pages`: always the first ones, in order
     private var applyFailed = false // the PDF no longer matches the journal, so it's never saved
     private var inkCheckNs = 0L // time spent looking for (and redrawing) old faulty ink since opening, for the log
@@ -214,6 +221,7 @@ class DocumentSession(
                 "pdf=${(totalNs - identityNs - journalNs) / 1_000_000}",
         )
         pages = opened
+        knownPageCount = opened.pageCount
         known = identity
         if (toRescue != null) {
             try {
@@ -489,6 +497,7 @@ class DocumentSession(
     fun addPageAfter(page: Int) = changePages(
         "added",
         page,
+        pageCountChange = +1,
         newNumber = { if (it > page) it + 1 else it },
         change = { it.addDottedPage(page) },
         showPage = { page + 1 },
@@ -502,6 +511,7 @@ class DocumentSession(
     fun removeAddedPage(page: Int) = changePages(
         "removed",
         page,
+        pageCountChange = -1,
         newNumber = { if (it < page) it else if (it > page) it - 1 else null },
         refuse = { p ->
             when {
@@ -545,6 +555,7 @@ class DocumentSession(
     private fun changePages(
         what: String,
         page: Int,
+        pageCountChange: Int,
         newNumber: (Int) -> Int?,
         refuse: (PdfPages) -> String? = { null },
         change: (PdfPages) -> Unit,
@@ -581,6 +592,7 @@ class DocumentSession(
                         "save=${(totalNs - checkNs - changeNs) / 1_000_000} $what=$saved",
                 )
                 if (saved) {
+                    knownPageCount += pageCountChange
                     events(SessionEvent.HistoryChanged(canUndo = false, canRedo = false))
                     events(SessionEvent.PagesRenumbered(showPage(p)))
                 } else {
@@ -619,6 +631,7 @@ class DocumentSession(
             return
         }
         pages = reopened
+        knownPageCount = reopened.pageCount
         synchronized(lock) { applied = 0 }
         applyPending()
         checkRepair(reopened)
@@ -942,6 +955,7 @@ class DocumentSession(
         }
         // At once: the journal and the page numbers are the new version's now, and so must the PDF be.
         pages = opened
+        knownPageCount = opened.pageCount
         applied = 0
         known = now
         inkRedrawn = false
@@ -1086,7 +1100,7 @@ class DocumentSession(
         val copy = CopyNames.myEdits(file, clock())
         SafeSave.createNew(copy) { p.saveTo(it) }
         try {
-            checkWhole(copy, p)
+            checkWhole(copy)
             switchTo(copy)
         } catch (e: Throwable) {
             copy.delete()
@@ -1104,14 +1118,18 @@ class DocumentSession(
     /**
      * The copy is opened once before anything relies on it: the journal that holds its
      * writing is cleared only when the copy is known to open without repair and to have the
-     * pages of [p], the document it was saved from. A file overwritten in place under an open
-     * document could otherwise give a copy that opens fine with other pages (findings log,
-     * 2026-11-16). Costs one more open.
+     * pages the session knows the document has ([knownPageCount]). Not the open PDF's own
+     * count: for a PDF opened by path, a file overwritten in place under it changes that count
+     * too, and a copy with the other file's pages would match it. What this catches: a repaired
+     * copy, and a copy whose page count differs from the one the session knew. What it can't:
+     * a file replaced after opening by one with the same page count. (The writing screen reads
+     * files up to 64 MB into memory, so nothing can change those under the PDF; this is the
+     * check for bigger ones.) Costs one more open.
      */
-    private fun checkWhole(copy: File, p: PdfPages) {
+    private fun checkWhole(copy: File) {
         val reopened = open(copy)
         try {
-            if (reopened.wasRepaired || reopened.pageCount != p.pageCount) {
+            if (reopened.wasRepaired || reopened.pageCount != knownPageCount) {
                 throw IOException("the copy of ${file.name} didn't come out whole")
             }
         } finally {

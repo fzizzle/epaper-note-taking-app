@@ -553,17 +553,26 @@ class PdfFile private constructor(private val doc: PDFDocument) : PdfPages {
         /** The private key, in a page's dictionary, that marks a page the app added ([addDottedPage]). */
         private const val ADDED_PAGE_KEY = "PNotesAdded"
 
-        /** Files up to this size are opened from memory (see [open]). Bigger ones open by path. */
+        /**
+         * Files up to this size can be opened from memory (see [open]). Bigger ones open by
+         * path: the file's size in memory is too much to give for a rare fault, and the
+         * Note Air has little to spare. The cost, measured on the 14 MB lecture deck: about
+         * 13.7 MB more native memory while open, open 11-12 ms -> 26 ms (the file's read),
+         * first page unchanged.
+         */
         const val IN_MEMORY_LIMIT_BYTES = 64L * 1024 * 1024
 
-        fun open(file: File): PdfFile {
+        /**
+         * Opens [file]. With [inMemory], a file up to [IN_MEMORY_LIMIT_BYTES] is read whole,
+         * so nothing that happens to it afterwards can reach the open document. MuPDF reads
+         * an open file as it goes, and a file overwritten in place (a USB copy) gave it
+         * another file's pages: a "(my edits)" copy then held 3 of 40 pages and opened clean
+         * (findings log, 2026-11-16). Only the writing screen's document asks for this; the
+         * library's thumbnails and facts open by path, as they are short-lived and unmeasured.
+         */
+        fun open(file: File, inMemory: Boolean = false): PdfFile {
             val opened = try {
-                // A file of a reasonable size is read whole, so nothing that happens to it
-                // afterwards can reach the open document. MuPDF reads an open file as it
-                // goes, and a file overwritten in place (a USB copy) gave it another file's
-                // pages: a "(my edits)" copy then held only 3 of 40 pages and opened clean
-                // (findings log, 2026-11-16). Costs the file's size in memory, no time.
-                if (file.length() <= IN_MEMORY_LIMIT_BYTES) Document.openDocument(file.readBytes(), "pdf")
+                if (inMemory && file.length() <= IN_MEMORY_LIMIT_BYTES) Document.openDocument(file.readBytes(), "pdf")
                 else Document.openDocument(file.path)
             } catch (e: RuntimeException) {
                 throw PdfOpenException("Can't open ${file.name}: it may be damaged or not a PDF.", e)

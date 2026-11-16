@@ -31,6 +31,11 @@ class FakePdfPages(override var wasRepaired: Boolean = false, private val saveDe
     override var pageCount = pages
         private set
 
+    /** The file under this document was overwritten by a shorter one: the document itself now counts [count] pages. */
+    fun loseAllButPages(count: Int) {
+        pageCount = count
+    }
+
     /** The pages the app added ([addDottedPage]). A test may mark a page here, as if added in an earlier session. */
     val addedPages = mutableSetOf<Int>()
 

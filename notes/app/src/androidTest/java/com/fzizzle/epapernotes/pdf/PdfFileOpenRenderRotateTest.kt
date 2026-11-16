@@ -19,18 +19,22 @@ class PdfFileOpenRenderRotateTest {
 
     @Test fun rendersAtRequestedWidth() = PdfFile.open(TestPdfs.blank(dir)).use { assertEquals(1860, it.render(0, 1860).width) }
 
-    /**
-     * A file up to [PdfFile.IN_MEMORY_LIMIT_BYTES] is read whole when opened, so the open
-     * document holds no handle on it (that is what keeps a file changed underneath out of
-     * reach), and closing leaves none behind either.
-     */
+    /** Closing lets go of the file at once, not whenever the garbage collector runs. */
     @Test fun closeReleasesTheFile() {
         val file = TestPdfs.blank(dir)
-        fun held() = File("/proc/self/fd").listFiles().orEmpty().count {
-            try { it.canonicalPath == file.canonicalPath } catch (e: java.io.IOException) { false }
-        }
-        PdfFile.open(file).use { assertEquals(0, held()) }
-        assertEquals(0, held())
+        PdfFile.open(file).use { assertEquals(1, held(file)) }
+        assertEquals(0, held(file))
+    }
+
+    /** Opened from memory, the document holds no handle on the file at all. */
+    @Test fun inMemoryHoldsNoHandle() {
+        val file = TestPdfs.blank(dir)
+        PdfFile.open(file, inMemory = true).use { assertEquals(0, held(file)) }
+        assertEquals(0, held(file))
+    }
+
+    private fun held(file: File) = File("/proc/self/fd").listFiles().orEmpty().count {
+        try { it.canonicalPath == file.canonicalPath } catch (e: java.io.IOException) { false }
     }
 
     @Test fun garbageFileFailsCleanly() {

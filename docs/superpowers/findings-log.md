@@ -12,11 +12,12 @@ Question (review A3): what does MuPDF do when the file under an open document is
 | same overwrite, then `render(30, 600)` | no error: a blank page, `pageCount` of the open document now 3 | A's page 30, identical to a render before the overwrite |
 | B moved over A with `ATOMIC_MOVE` (as Syncthing does), stroke, `saveTo(copy)` | copy of 40 pages, not repaired, stroke on page 0 | the same |
 
-- The fault is real: MuPDF reads the open file as it goes, so an overwrite in place changes the document under the app. The copy opened clean, with someone else's 3 pages and the owner's writing on page 0. The page count check (decision 2) catches this one, but a file of the same page count with other content would pass it.
-- Decision 3 was therefore needed and is built: `PdfFile.open` reads files of up to 64 MB into memory (`IN_MEMORY_LIMIT_BYTES`). All three cases give A whole.
+- The fault is real: MuPDF reads the open file as it goes, so an overwrite in place changes the document under the app, including what it counts: the open document itself said 3 pages after the overwrite. The copy opened clean, with someone else's 3 pages and the owner's writing on page 0.
+- So a page count read from the open document is no check against this: the copy matches it. The session compares a copy with the count it holds itself (taken at opening, on reload and on opening again, moved by its own page adds and removes). That catches this overwrite when the other file has another page count, and a repaired copy. It does not catch an overwrite by a file with the same page count.
+- Decision 3 was therefore needed and is built: `PdfFile.open(file, inMemory = true)` reads files of up to 64 MB into memory (`IN_MEMORY_LIMIT_BYTES`). Only the writing screen's document asks for it; the library's thumbnails and facts open by path as before. All three cases give A whole when opened that way.
 - A rename leaves the old file alone (the open handle follows the old file), so it was never the problem.
 - Cost, on the 14 MB lecture deck (125 pages, `SpeedCheck`, two runs each): open 11 and 12 ms before, 26 ms after (the read of the file; the fingerprint, which also reads it, takes 14 ms); first page 202 and 214 ms before, 173 and 195 ms after (no change); reopen and read strokes the same. Memory (native heap allocated, after opening and drawing page 1): 19.2 MB before, 32.9 MB after, 13.7 MB more: the file's size. After closing, both are back to 16.3 MB. The Java heap does not grow: the bytes are copied into MuPDF and let go.
-- Side effect: an open document holds no file handle, so `closeReleasesTheFile` now asserts none is held while open. Files over 64 MB still open by path and keep the old exposure (the copy check above still stops a copy with a different page count or a repair).
+- Files over 64 MB still open by path and keep the exposure: for them the session's own page count and the repair check are the only protection, and a same-page-count overwrite gets through.
 
 ## 2026-11-13: opened-out folders and thumbnails
 

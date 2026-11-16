@@ -441,7 +441,7 @@ class WritingActivity : Activity() {
         session = DocumentSession(
             pdf = File(path),
             journalDir = File(filesDir, "journals"),
-            open = { PdfFile.open(it) },
+            open = { PdfFile.open(it, inMemory = true) }, // the open document can't be changed under us
             scheduler = WorkerScheduler(),
             events = { e ->
                 // On the worker. After leaving, this is how a check sees the last save land.

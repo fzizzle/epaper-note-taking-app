@@ -507,6 +507,31 @@ class DocumentSessionTest {
         assertEquals(1, journalStrokes())
     }
 
+    /** The fault itself: a PDF opened by path counts the overwriting file's pages, and so does the copy saved from it. */
+    @Test fun aCopyMatchingTheOpenDocumentsChangedCountIsNotTrusted() {
+        val s = session() // opened with 5 pages
+        s.addStroke(0, dot)
+        pdf.writeText("overwritten by a shorter file")
+        fake.loseAllButPages(2) // the open document now says 2; the copy saved from it has 2
+        s.saveNow()
+        assertEquals(1, events.count { it is SessionEvent.SaveFailed })
+        assertEquals(emptyList<File>(), myEditsCopies())
+        assertEquals(pdf, s.file)
+        assertEquals(1, journalStrokes())
+    }
+
+    /** The session's own page changes move the count it checks against. */
+    @Test fun aCopyAfterAnAddedPageIsTrustedWithOneMorePage() {
+        val s = session()
+        s.addPageAfter(0)
+        events.clear()
+        s.addStroke(0, dot)
+        pdf.writeText("edited on the laptop")
+        s.saveNow()
+        assertTrue(events.none { it is SessionEvent.SaveFailed })
+        assertEquals(listOf(myEdits), myEditsCopies())
+    }
+
     @Test fun aCopyThatOpensCleanIsUsed() {
         val s = session()
         s.addStroke(0, dot)

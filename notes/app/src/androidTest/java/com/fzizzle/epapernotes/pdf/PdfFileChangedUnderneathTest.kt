@@ -81,7 +81,7 @@ class PdfFileChangedUnderneathTest {
         val a = freshA()
         val b = withText(3, "deckB")
         val copy = File(dir, "copy-inplace-saved.pdf").also { it.delete() }
-        PdfFile.open(a).use { pdf ->
+        PdfFile.open(a, inMemory = true).use { pdf ->
             pdf.render(0, 600).recycle()
             val before = a.length()
             overwriteInPlace(a, b)
@@ -106,8 +106,8 @@ class PdfFileChangedUnderneathTest {
     @Test fun overwrittenInPlaceThenDrawn() {
         val a = freshA()
         val b = withText(3, "deckB")
-        val expected = PdfFile.open(a).use { p -> hash(p.render(30, 600)) }
-        PdfFile.open(a).use { pdf ->
+        val expected = PdfFile.open(a, inMemory = true).use { p -> hash(p.render(30, 600)) }
+        PdfFile.open(a, inMemory = true).use { pdf ->
             pdf.render(0, 600).recycle()
             overwriteInPlace(a, b)
             try {
@@ -131,7 +131,7 @@ class PdfFileChangedUnderneathTest {
         val beside = File(dir, "beside-${a.name}").also { it.delete() }
         b.copyTo(beside)
         val copy = File(dir, "copy-rename-saved.pdf").also { it.delete() }
-        PdfFile.open(a).use { pdf ->
+        PdfFile.open(a, inMemory = true).use { pdf ->
             pdf.render(0, 600).recycle()
             Files.move(beside.toPath(), a.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
             pdf.stroke()
