@@ -44,6 +44,7 @@ import com.fzizzle.epapernotes.tools.PenButton
 import com.fzizzle.epapernotes.tools.TapSelect
 import com.fzizzle.epapernotes.tools.Tool
 import com.fzizzle.epapernotes.tools.duplicateOf
+import com.fzizzle.epapernotes.tools.onPage
 import com.fzizzle.epapernotes.tools.ToolState
 import com.fzizzle.epapernotes.tools.liveLine
 import com.fzizzle.epapernotes.tools.placedOn
@@ -1159,7 +1160,9 @@ class WritingActivity : Activity() {
         override fun moved(pdfTransform: Affine) {
             val page = selectedPage
             val before = selected
-            val after = before.map { it.transformed(pdfTransform, pdfTransform.uniformScale()) }
+            // Kept on the page: what lies beside it wouldn't be saved.
+            val size = pageSizes[page]
+            val after = onPage(before.map { it.transformed(pdfTransform, pdfTransform.uniformScale()) }, pdfToDisplay[page], size.w, size.h)
             val done = recordFromScreen(ReplaceItems(page, before, after)) as? ReplaceItems ?: return
             Log.i(TAG, "moved page=$page items=${done.after.size} scale=${pdfTransform.uniformScale()}")
             setSelection(page, done.after, notShownYet = true)
@@ -1206,7 +1209,9 @@ class WritingActivity : Activity() {
             val clip = toolState.clipboard ?: return
             val page = pages.viewport?.page ?: return
             toolState.pasteArmed = false
-            val done = recordFromScreen(AddItems(page, clip.placedOn(displayToPdf[page], at))) as? AddItems
+            val size = pageSizes[page]
+            val placed = onPage(clip.placedOn(displayToPdf[page], at), pdfToDisplay[page], size.w, size.h)
+            val done = recordFromScreen(AddItems(page, placed)) as? AddItems
             Log.i(TAG, "pasted page=$page items=${done?.items?.size ?: 0}")
             if (done != null) setSelection(page, done.items, notShownYet = true) else toolStateChanged()
         }
