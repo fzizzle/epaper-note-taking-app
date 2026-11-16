@@ -908,6 +908,10 @@ class WritingActivity : Activity() {
      * Onyx's ink stays on screen, and the page view keeps its own copy of the stroke for
      * whenever it redraws ([write]). Redrawing here used to pause fast-ink and cut off the next
      * stroke (owner's first writing session).
+     *
+     * Ink must be recorded before this returns, never posted for later: a reload of a changed
+     * file waits only until this returns (PenInput.strokeComing), so a stroke recorded after
+     * that could land on the new version's pages.
      */
     private fun onPenStroke(points: List<FloatArray>) {
         val (page, screenToPdf, numberedUnder) = strokeMapping ?: penMapping ?: return

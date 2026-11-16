@@ -66,6 +66,32 @@ class StrokeHandoverTest {
         assertFalse(h.coming(1_000 + StrokeHandover.WAIT_MS))
     }
 
+    /**
+     * Final review 3: the points have come and are being recorded, but recording waits on the
+     * session (a save holding it, say) past the wait. The stroke is still coming until it's
+     * recorded: only points that never arrive stop counting.
+     */
+    @Test fun pointsBeingRecordedKeepComingPastTheWait() {
+        val h = StrokeHandover()
+        h.begun()
+        h.lifted(1_000)
+        h.receiving()
+        assertTrue(h.coming(1_000 + StrokeHandover.WAIT_MS + 5_000))
+        h.handedOver()
+        assertFalse(h.coming(1_000 + StrokeHandover.WAIT_MS + 5_000))
+    }
+
+    /** A new stroke's points haven't come yet: the last one's being received doesn't carry over. */
+    @Test fun aNewStrokeStartsWithItsPointsNotYetReceived() {
+        val h = StrokeHandover()
+        h.begun()
+        h.receiving()
+        h.handedOver()
+        h.begun()
+        h.lifted(1_000)
+        assertFalse(h.coming(1_000 + StrokeHandover.WAIT_MS))
+    }
+
     @Test fun aNewStrokeComesAfterAnOldOneTimedOut() {
         val h = StrokeHandover()
         h.begun()

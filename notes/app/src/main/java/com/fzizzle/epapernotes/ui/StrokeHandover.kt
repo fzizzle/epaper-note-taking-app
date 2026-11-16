@@ -7,7 +7,8 @@ package com.fzizzle.epapernotes.ui
  * opened in that gap, the new version would get a stroke written on the old one's pages.
  *
  * Points that never come (a stroke Onyx keeps for a shortcut, or one a pause cut short) stop
- * counting [WAIT_MS] after the lift or the cut, so they can't hold a reload off for ever.
+ * counting [WAIT_MS] after the lift or the cut, so they can't hold a reload off for ever. Points
+ * that have come ([receiving]) count until they're recorded, however long that takes.
  *
  * Plain arithmetic on times in milliseconds, so it's tested on the laptop. Written on Onyx's
  * thread ([cut] on the UI thread), read on the UI thread.
@@ -15,16 +16,28 @@ package com.fzizzle.epapernotes.ui
 class StrokeHandover {
     @Volatile private var begun = false
     @Volatile private var liftedAt = NOT_LIFTED
+    @Volatile private var received = false
 
     /** The pen came down: a stroke is on its way. */
     fun begun() {
         liftedAt = NOT_LIFTED
+        received = false
         begun = true
     }
 
     /** The pen lifted; the points may still be to come. */
     fun lifted(nowMs: Long) {
         liftedAt = nowMs
+    }
+
+    /**
+     * The points have arrived and are being recorded. From here the stroke counts until it's
+     * recorded ([handedOver]), however long that takes: recording can wait on the session (a
+     * save holding it, say) for more than [WAIT_MS], and a reload let in meanwhile would open
+     * the new version under a stroke written on the old one.
+     */
+    fun receiving() {
+        received = true
     }
 
     /** The points have been handed over, and recorded. */
@@ -42,6 +55,7 @@ class StrokeHandover {
 
     fun coming(nowMs: Long): Boolean {
         if (!begun) return false
+        if (received) return true
         val lifted = liftedAt
         return lifted == NOT_LIFTED || nowMs - lifted < WAIT_MS
     }

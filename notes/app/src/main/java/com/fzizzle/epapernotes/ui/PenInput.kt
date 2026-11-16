@@ -184,6 +184,7 @@ class PenInput(
         // Comes after onEndRawDrawing: the stroke is only with the app once this returns.
         override fun onRawDrawingTouchPointListReceived(list: TouchPointList?) {
             try {
+                handover.receiving() // from here it's waited for until recorded, however long that takes
                 val points = list?.points ?: return
                 onStroke(points.map { floatArrayOf(it.x, it.y, it.pressure) })
             } finally {
@@ -220,6 +221,7 @@ class PenInput(
         override fun onRawErasingTouchPointMoveReceived(p: TouchPoint?) = Unit
         override fun onRawErasingTouchPointListReceived(list: TouchPointList?) {
             try {
+                handover.receiving() // from here it's waited for until recorded, however long that takes
                 val points = list?.points ?: return
                 onEraseTrail(points.map { floatArrayOf(it.x, it.y, it.pressure) })
             } finally {

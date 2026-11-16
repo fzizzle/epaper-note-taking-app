@@ -393,6 +393,30 @@ class DocumentSessionTest {
         assertEquals(listOf(dot), strokesOn(1))
     }
 
+    /**
+     * Final review 6: the new version opens, but reading its page count fails (memory running
+     * out, say). The journal must stay on the old version, which stays on screen: moved onto the
+     * new one, a stroke on the old pages and a kill would replay it onto the new version's pages.
+     */
+    @Test fun aReloadThatFailsMidwayLeavesTheJournalOnTheOldVersion() {
+        val s = session()
+        val oldIdentity = FileIdentity.of(pdf)
+        pdf.writeText("edited on the laptop")
+        s.checkFile()
+        val newVersion = FakePdfPages()
+        val failing = object : PdfPages by newVersion {
+            override val pageCount: Int get() = throw OutOfMemoryError("counting pages")
+        }
+        opening = { failing }
+        s.reload()
+        assertEquals(1, events.count { it == SessionEvent.NotReloaded })
+        assertTrue(events.none { it is SessionEvent.Reloaded })
+        assertTrue(newVersion.closed)
+        assertFalse(fake.closed)
+        assertEquals(0, s.pageNumbering)
+        assertTrue(ChangeJournal.forDocument(journals, pdf).read()!!.base.sameContentAs(oldIdentity))
+    }
+
     /** By the time the screen asks, the file is as it was: nothing to open. */
     @Test fun aReloadOfAFileThatChangedBackAnswersNotReloaded() {
         val s = session()
@@ -482,7 +506,7 @@ class DocumentSessionTest {
         assertEquals("edited on the laptop", pdf.readText())
     }
 
-    /** Review A4 / decision 2: a copy MuPDF had to repair isn't trusted. It goes, the writing stays where it was. */
+    /** Review A3 / decision 2: a copy MuPDF had to repair isn't trusted. It goes, the writing stays where it was. */
     @Test fun aCopyThatDoesNotOpenCleanIsNotTrusted() {
         val s = session()
         s.addStroke(0, dot)
@@ -728,6 +752,23 @@ class DocumentSessionTest {
         val s = session()
         assertTrue(events.contains(SessionEvent.SavedToCopy(myEdits, CopyReason.RESCUED)))
         assertEquals(myEdits, s.file)
+    }
+
+    /**
+     * Final review 1: reading the page to see whether the writing is already there fails (an
+     * annotation MuPDF can't read, or memory running out). That counts as "not there": the
+     * writing goes into a copy, and the file still opens, now and every time after.
+     */
+    @Test fun aPageThatCanNotBeReadForTheAlreadyThereCheckStillGetsACopy() {
+        ChangeJournal.forDocument(journals, pdf).apply { start(otherVersion); append(AddItems(0, listOf(InkItem("a", dot)))) }
+        var reads = 0
+        fake.duringItems = { if (reads++ == 0) throw OutOfMemoryError("reading page 0") }
+        val s = session()
+        assertTrue(events.none { it is SessionEvent.OpenFailed })
+        assertTrue(events.contains(SessionEvent.SavedToCopy(myEdits, CopyReason.RESCUED)))
+        assertEquals("items=1", myEdits.readText())
+        assertEquals(myEdits, s.file)
+        assertEquals("original", pdf.readText())
     }
 
     /** An erase among the writing is not "already there": it still goes into a copy. */

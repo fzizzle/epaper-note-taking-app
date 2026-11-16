@@ -252,6 +252,11 @@ class DocumentSession(
      * A change on a page the file no longer has can't be placed: the journal is kept aside
      * for it, and the owner is told how many. If anything fails, the journal is set aside
      * whole and the file is opened plain, as before this existed.
+     *
+     * Two outcomes make no copy (owner's decision 4, 2026-11-16), and the file opens as it is:
+     * - nothing can be placed: the journal is set aside, with its message;
+     * - everything placeable is already in the file (it was saved, and the journal never heard):
+     *   no message either, unless some changes were on pages the file lost, which are set aside.
      */
     private fun rescueIntoCopy(opened: PdfPages, earlier: List<Change>) {
         val placeable = earlier.filter { change -> change.pages.all { it in 0 until opened.pageCount } }
@@ -264,15 +269,7 @@ class DocumentSession(
             }
             return
         }
-        val inTheFile = placeable.all { it is AddItems } && run {
-            val held = mutableMapOf<Int, Set<String>>()
-            placeable.all { change ->
-                change as AddItems
-                val ids = held.getOrPut(change.page) { opened.items(change.page).map { it.id }.toSet() }
-                change.items.all { it.id in ids }
-            }
-        }
-        if (inTheFile) {
+        if (alreadyInTheFile(opened, placeable)) {
             synchronized(lock) {
                 // Changes on pages the file lost can't be placed: they stay in a kept journal.
                 if (notPlaced > 0) setAside()
@@ -296,6 +293,27 @@ class DocumentSession(
             }
             // The open PDF may hold part of the writing: start again from the file.
             openAgainFromTheFile()
+        }
+    }
+
+    /**
+     * Worker thread only. Whether [changes] are all additions the file already holds, item for
+     * item. A page that can't be read (an annotation MuPDF can't decode, memory running out)
+     * counts as "not there": the copy is then made, and its own failure handling takes over.
+     * Thrown on, it would fail the opening, and every opening after, the journal never changing.
+     */
+    private fun alreadyInTheFile(opened: PdfPages, changes: List<Change>): Boolean {
+        if (changes.any { it !is AddItems }) return false
+        val idsOnPage = mutableMapOf<Int, Set<String>>()
+        return try {
+            changes.all { change ->
+                change as AddItems
+                val ids = idsOnPage.getOrPut(change.page) { opened.items(change.page).map { it.id }.toSet() }
+                change.items.all { it.id in ids }
+            }
+        } catch (t: Throwable) { // out of memory too
+            System.err.println("DocumentSession: couldn't look for earlier writing in the file: $t")
+            false
         }
     }
 
@@ -950,24 +968,37 @@ class DocumentSession(
             return
         }
         var journalFailed = false
-        val swap = synchronized(lock) {
-            if (unsaved.isNotEmpty()) return@synchronized false
-            try {
-                journal.rewrite(now, emptyList())
-                journalBroken = false
-            } catch (e: Throwable) { // anything: the swap goes on, and the journal counts as broken
-                System.err.println("DocumentSession: the journal couldn't be rewritten: $e")
-                journalFailed = !journalBroken
-                journalBroken = true
-            }
-            undoable.clear()
-            redoable.clear()
+        val newCount: Int
+        val swap: Boolean
+        try {
+            // Worked out before the journal moves to the new version: once it has, nothing may
+            // fail before the swap below, or the journal would be on the new version while the
+            // old one stays open, and a stroke on it and a kill would replay onto the new pages.
+            newCount = opened.pageCount
             // The new version's pages are other pages: a change read under the old numbers keeps
             // its page if the new version has one by that number, and goes nowhere if not.
-            val newCount = opened.pageCount
-            pageChanges += { if (it < newCount) it else null }
-            pageNumbering++
-            true
+            val toNewNumbers: (Int) -> Int? = { if (it < newCount) it else null }
+            swap = synchronized(lock) {
+                if (unsaved.isNotEmpty()) return@synchronized false
+                pageChanges += toNewNumbers // first: if even this fails, nothing has changed
+                pageNumbering++
+                undoable.clear()
+                redoable.clear()
+                // Last, and it throws nothing: from here the swap below always happens.
+                try {
+                    journal.rewrite(now, emptyList())
+                    journalBroken = false
+                } catch (e: Throwable) { // anything: the swap goes on, and the journal counts as broken
+                    System.err.println("DocumentSession: the journal couldn't be rewritten: $e")
+                    journalFailed = !journalBroken
+                    journalBroken = true
+                }
+                true
+            }
+        } catch (t: Throwable) {
+            // Never swapped in, so nothing else will close the new version. [reload] answers.
+            runCatching { opened.close() }
+            throw t
         }
         if (!swap) {
             runCatching { opened.close() }
@@ -980,7 +1011,7 @@ class DocumentSession(
         }
         // At once: the journal and the page numbers are the new version's now, and so must the PDF be.
         pages = opened
-        knownPageCount = opened.pageCount
+        knownPageCount = newCount
         applied = 0
         known = now
         inkRedrawn = false
