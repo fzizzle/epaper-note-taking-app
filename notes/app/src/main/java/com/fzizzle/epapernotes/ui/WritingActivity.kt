@@ -242,7 +242,13 @@ class WritingActivity : Activity() {
 
     /** The page last on show: turning it lets go of the selection and an armed paste. */
     private var shownPage = -1
-    private var dialogOpen = false
+    /**
+     * How many menus, pads and questions are open. A count, not a flag: the damaged-file question
+     * can come from the session while a menu or the page pad is open, and the first of the two to
+     * close must not turn fast-ink back on under the other.
+     */
+    private var windowsOpen = 0
+    private val dialogOpen get() = windowsOpen > 0
 
     /**
      * True from asking the session to add or remove a page until the pages are laid out again
@@ -1141,10 +1147,10 @@ class WritingActivity : Activity() {
             Log.i(TAG, "paste by long-press")
             selectionListener.pasteAt(at)
         }
-        dialogOpen = true
+        windowsOpen++
         pausePenAndRedraw()
         popup.setOnDismissListener {
-            dialogOpen = false
+            windowsOpen = (windowsOpen - 1).coerceAtLeast(0)
             handler.removeCallbacks(resumeFastInk)
             handler.postDelayed(resumeFastInk, SHOW_PAUSE_MS)
         }
@@ -1371,12 +1377,12 @@ class WritingActivity : Activity() {
         if (pageChangeUnderWay) return
         val v = pages.viewport ?: return
         // Fast-ink would freeze the pad on screen, so it's off while the pad is open.
-        dialogOpen = true
+        windowsOpen++
         pausePenAndRedraw()
         showPagePad(
             this, current = v.page, pageCount = pageCount,
             onDismiss = {
-                dialogOpen = false
+                windowsOpen = (windowsOpen - 1).coerceAtLeast(0)
                 // After the usual pause, not at once: the screen must first draw the page without
                 // the pad, or fast-ink would freeze bits of it (or the old page) on the panel.
                 handler.removeCallbacks(resumeFastInk)
@@ -1436,10 +1442,10 @@ class WritingActivity : Activity() {
                 true
             }
         menu.menu.setGroupDividerEnabled(true)
-        dialogOpen = true
+        windowsOpen++
         pausePenAndRedraw()
         menu.setOnDismissListener {
-            dialogOpen = false
+            windowsOpen = (windowsOpen - 1).coerceAtLeast(0)
             // After the usual pause, as for "Go to page".
             handler.removeCallbacks(resumeFastInk)
             handler.postDelayed(resumeFastInk, SHOW_PAUSE_MS)
@@ -1495,10 +1501,10 @@ class WritingActivity : Activity() {
             .setNegativeButton("Leave them", null)
             .create()
         // As for the other questions: fast-ink would freeze it on screen.
-        dialogOpen = true
+        windowsOpen++
         pausePenAndRedraw()
         dialog.setOnDismissListener {
-            dialogOpen = false
+            windowsOpen = (windowsOpen - 1).coerceAtLeast(0)
             handler.removeCallbacks(resumeFastInk)
             handler.postDelayed(resumeFastInk, SHOW_PAUSE_MS)
         }
@@ -1572,10 +1578,10 @@ class WritingActivity : Activity() {
             }
             .setNegativeButton("Cancel", null)
             .create()
-        dialogOpen = true
+        windowsOpen++
         pausePenAndRedraw()
         dialog.setOnDismissListener {
-            dialogOpen = false
+            windowsOpen = (windowsOpen - 1).coerceAtLeast(0)
             if (!removing) {
                 Log.i(TAG, "page ${page + 1} kept")
                 releasePageChangeHold()
@@ -2149,10 +2155,10 @@ class WritingActivity : Activity() {
             .setPositiveButton("OK", null)
             .create()
         // As for "Go to page": fast-ink would freeze the message on screen.
-        dialogOpen = true
+        windowsOpen++
         pausePenAndRedraw()
         dialog.setOnDismissListener {
-            dialogOpen = false
+            windowsOpen = (windowsOpen - 1).coerceAtLeast(0)
             handler.removeCallbacks(resumeFastInk)
             handler.postDelayed(resumeFastInk, SHOW_PAUSE_MS)
         }
@@ -2170,10 +2176,10 @@ class WritingActivity : Activity() {
             .create()
         // As for "Go to page": fast-ink would freeze the question on screen, and pen taps on its
         // buttons would mark the page underneath.
-        dialogOpen = true
+        windowsOpen++
         pausePenAndRedraw()
         dialog.setOnDismissListener {
-            dialogOpen = false
+            windowsOpen = (windowsOpen - 1).coerceAtLeast(0)
             handler.removeCallbacks(resumeFastInk)
             handler.postDelayed(resumeFastInk, SHOW_PAUSE_MS)
         }
