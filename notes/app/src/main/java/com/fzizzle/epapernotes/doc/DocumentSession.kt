@@ -256,6 +256,30 @@ class DocumentSession(
     private fun rescueIntoCopy(opened: PdfPages, earlier: List<Change>) {
         val placeable = earlier.filter { change -> change.pages.all { it in 0 until opened.pageCount } }
         val notPlaced = earlier.size - placeable.size
+        // Nothing to put in a copy: no copy is made, and the open file is left as it is.
+        if (placeable.isEmpty()) {
+            synchronized(lock) {
+                setAside()
+                journal.start(known!!)
+            }
+            return
+        }
+        val inTheFile = placeable.all { it is AddItems } && run {
+            val held = mutableMapOf<Int, Set<String>>()
+            placeable.all { change ->
+                change as AddItems
+                val ids = held.getOrPut(change.page) { opened.items(change.page).map { it.id }.toSet() }
+                change.items.all { it.id in ids }
+            }
+        }
+        if (inTheFile) {
+            synchronized(lock) {
+                // Changes on pages the file lost can't be placed: they stay in a kept journal.
+                if (notPlaced > 0) setAside()
+                journal.start(known!!)
+            }
+            return
+        }
         var keptAside = false
         try {
             placeable.forEach(opened::apply)

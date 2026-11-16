@@ -679,6 +679,67 @@ class DocumentSessionTest {
         assertEquals(2, ChangeJournal(kept).read()!!.changes.size)
     }
 
+    /** Writing that fits nowhere in the file makes no copy: it is kept aside and the file opens plain. */
+    @Test fun earlierWritingThatFitsNowhereMakesNoCopy() {
+        ChangeJournal.forDocument(journals, pdf).apply { start(otherVersion); append(AddItems(45, listOf(InkItem("a", dot)))) }
+        val s = session()
+        assertEquals(1, events.count { it is SessionEvent.EarlierWritingKept })
+        assertTrue(events.none { it is SessionEvent.SavedToCopy })
+        assertFalse(myEdits.exists())
+        assertEquals(pdf, s.file)
+        s.addStroke(0, dot)
+        s.saveNow()
+        assertEquals("items=1", pdf.readText())
+    }
+
+    /** Writing the file already holds needs no copy, and nothing is kept aside. */
+    @Test fun earlierWritingAlreadyInTheFileMakesNoCopy() {
+        val a = InkItem("a", dot)
+        val b = InkItem("b", line)
+        fake.pageItems[0] = mutableListOf(a, b)
+        ChangeJournal.forDocument(journals, pdf).apply { start(otherVersion); append(AddItems(0, listOf(a, b))) }
+        val s = session()
+        assertTrue(events.none { it is SessionEvent.SavedToCopy || it is SessionEvent.EarlierWritingKept })
+        assertFalse(myEdits.exists())
+        assertEquals(pdf, s.file)
+        assertEquals(0, journalStrokes(pdf))
+        assertEquals(FileIdentity.of(pdf), ChangeJournal.forDocument(journals, pdf).read()!!.base)
+    }
+
+    /** As above, but some of the writing is on pages the file lost: that part is kept aside, once. */
+    @Test fun earlierWritingAlreadyInTheFileButPartlyOnMissingPagesIsKeptAside() {
+        val a = InkItem("a", dot)
+        fake.pageItems[0] = mutableListOf(a)
+        ChangeJournal.forDocument(journals, pdf).apply { start(otherVersion); append(AddItems(0, listOf(a))); append(AddItems(7, listOf(InkItem("b", line)))) }
+        val s = session()
+        assertEquals(1, events.count { it is SessionEvent.EarlierWritingKept })
+        assertTrue(events.none { it is SessionEvent.SavedToCopy })
+        assertFalse(myEdits.exists())
+        assertEquals(pdf, s.file)
+        val kept = events.filterIsInstance<SessionEvent.EarlierWritingKept>().single().journal
+        assertEquals(2, ChangeJournal(kept).read()!!.changes.size)
+    }
+
+    /** Only some of the writing is in the file: the rest still goes into a copy. */
+    @Test fun earlierWritingPartlyInTheFileStillGoesIntoACopy() {
+        val a = InkItem("a", dot)
+        fake.pageItems[0] = mutableListOf(a)
+        ChangeJournal.forDocument(journals, pdf).apply { start(otherVersion); append(AddItems(0, listOf(a, InkItem("b", line)))) }
+        val s = session()
+        assertTrue(events.contains(SessionEvent.SavedToCopy(myEdits, CopyReason.RESCUED)))
+        assertEquals(myEdits, s.file)
+    }
+
+    /** An erase among the writing is not "already there": it still goes into a copy. */
+    @Test fun anEraseAmongEarlierWritingStillGoesIntoACopy() {
+        val a = InkItem("a", dot)
+        fake.pageItems[0] = mutableListOf(a)
+        ChangeJournal.forDocument(journals, pdf).apply { start(otherVersion); append(AddItems(0, listOf(a))); append(RemoveItems(0, listOf(a))) }
+        val s = session()
+        assertTrue(events.contains(SessionEvent.SavedToCopy(myEdits, CopyReason.RESCUED)))
+        assertEquals(myEdits, s.file)
+    }
+
     /** A rescue that fails leaves the file plain and open, with the writing set aside whole, as before rescues existed. */
     @Test fun aRescueThatFailsSetsTheWritingAside() {
         ChangeJournal.forDocument(journals, pdf).apply { start(otherVersion); append(AddItems(0, listOf(InkItem("a", dot)))) }
