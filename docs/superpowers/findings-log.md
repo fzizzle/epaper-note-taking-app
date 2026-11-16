@@ -2,6 +2,24 @@
 
 What was found while debugging on the tablet: causes, measurements and the tricks that got them. Newest first. Bugs and to-dos themselves live in [TODO.md](../../TODO.md).
 
+## 2026-11-16: a snip over ink, and what drawing in runs costs
+
+Question (review D2, decision 4): on screen, pen ink showed on top of a snip pasted over it, because `PdfFile.drawWithSolidInk` drew all solid ink after everything else. Now the annotations go in runs, in the page's order: something that isn't ink and comes after solid ink ends a run. Does the usual page (pen ink only) draw as fast as before?
+
+`SpeedCheck.addingStrokesToAFullPage` now also draws its 1,500-stroke page at width 1742 (five draws, median) and logs a checksum of its pixels. Debug build, before and after alike; each cell is the medians of three runs (all fifteen draws in brackets).
+
+| Page | Before | After |
+|---|---|---|
+| 1,500 pen strokes, width 1742 | 130, 129, 128 ms (127–132) | 130, 129, 128 ms (128–133) |
+| 300 pen strokes, width 1742 (`renderingAnInkedPage`) | 52, 53, 52 ms (50–53) | 53, 53, 52 ms (50–53) |
+| 300 pen strokes, width 2790 | 108, 109, 108 ms (108–110) | 112, 111, 111 ms (111–113) |
+| The same two pages, before and after interleaved twice (six runs each) | 1,500: 128–131 ms; 300 at 2790: 111–112 ms | 1,500: 127–131 ms; 300 at 2790: 109–110 ms |
+
+- No change: the first width-2790 gap reversed when the builds were installed in turns, so it was the tablet drifting, not the code. The 2026-11-10 figure of 137 ms for the 1,500-stroke page wasn't from `SpeedCheck`; 128–131 ms is today's number for the same kind of page.
+- Every pixel is the same: the checksums (1,500 strokes −1799003082, 300 strokes 1349238510) match in every run, before and after.
+- A page with a snip over its ink costs one more MuPDF pass and one more solid-ink pass per snip that ends a run; not measured, as such pages are rare.
+- `AndroidDrawDevice(bitmap, x, y, false)` draws over what the picture holds; the three-argument one clears it to white first.
+
 ## 2026-11-16: which other windows take focus from the writing screen
 
 Question (review B5): when the notification shade or a menu is in front of the page, does the page lose window focus, so fast-ink could be switched off there? `WritingActivity.onWindowFocusChanged` now logs `focus=... fast-ink=... dialog=...` (tag `Notes`; log only, nothing changes). Debug build on the tablet, scratch PDF open, fast-ink on unless noted:
