@@ -389,6 +389,29 @@ class ChangeJournalTest {
         assertEquals(listOf(add(0, dot), AddItems(1, listOf(snip)), RemoveItems(1, listOf(snip))), next.read()!!.changes)
     }
 
+    /** The same for the notes: one written after a cut-short line must not be joined to it. */
+    @Test fun aSavingNoteAfterACutShortLineIsNotJoinedToIt() {
+        val j = journal()
+        j.start(base)
+        j.append(add(0, dot))
+        j.file.appendText("add 0 12") // no newline: cut short
+        j.markSaving(base, 1)
+        val read = j.read()!!
+        assertEquals(listOf(add(0, dot)), read.changes)
+        assertEquals(PendingSave(base, 1), read.pendingSave)
+    }
+
+    @Test fun aRenumberingNoteAfterACutShortLineIsNotJoinedToIt() {
+        val j = journal()
+        j.start(base)
+        j.append(add(0, dot))
+        j.file.appendText("add 0 12") // no newline: cut short
+        j.markRenumbering()
+        val read = j.read()!!
+        assertEquals(listOf(add(0, dot)), read.changes)
+        assertTrue(read.renumbering)
+    }
+
     /** Every mention of a picture read back is the same bytes in memory, not a copy each. */
     @Test fun aPictureReadBackIsHeldOnce() {
         val j = journal()

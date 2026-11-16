@@ -863,6 +863,7 @@ class DocumentSession(
             // Throwable, not Exception: running out of memory while saving must be told and
             // tried again like any other failure. Nothing lost: the changes are still in
             // memory and in the journal. Try again later.
+            if (newPageNumber != null && !swapped) dropRenumberingNote()
             events(SessionEvent.SaveFailed(e.message ?: "The file couldn't be saved."))
             scheduler.postDelayed(AUTOSAVE, RETRY_DELAY_MS) { save() }
             return swapped
@@ -1053,6 +1054,26 @@ class DocumentSession(
                 System.err.println("DocumentSession: the journal couldn't be written: $e")
                 journalBroken = true
                 tellOwner = true
+            }
+        }
+        if (tellOwner) events(SessionEvent.JournalFailed)
+    }
+
+    /**
+     * Worker thread only. A page change's save failed, so the file is still the old one and the
+     * changes still have its page numbers: the journal's `renumbering` note, written just
+     * before the swap, would make the next opening set them aside instead of replaying them.
+     * A rewrite drops notes, so the journal is rewritten with what's unsaved.
+     */
+    private fun dropRenumberingNote() {
+        var tellOwner = false
+        synchronized(lock) {
+            try {
+                journal.rewrite(known!!, unsaved)
+            } catch (e: IOException) {
+                System.err.println("DocumentSession: the journal couldn't be rewritten: $e")
+                tellOwner = !journalBroken
+                journalBroken = true
             }
         }
         if (tellOwner) events(SessionEvent.JournalFailed)

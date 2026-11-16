@@ -168,25 +168,53 @@ class ChangeJournal(val file: File) {
     /**
      * Which pictures the file holds, read from the file. Used when this object can't be sure
      * (see [written]).
-     *
-     * A cut-short last line is cut off first. It doesn't count anyway (see the class comment),
-     * and only a write that failed partway, with the app still running, leaves one that gets
-     * here. What's written next would be joined onto it, and if that were a picture's line,
-     * the picture would be spoiled while every later mention counted on it.
      */
     private fun picturesInFile(): MutableSet<String> {
         val names = HashSet<String>()
         if (!file.exists()) return names
-        val bytes = file.readBytes()
-        val whole = bytes.lastIndexOf('\n'.code.toByte()) + 1
-        if (whole < bytes.size) {
-            RandomAccessFile(file, "rw").use {
-                it.setLength(whole.toLong())
-                it.fd.sync()
+        dropCutShortTail()
+        file.readText().lineSequence().forEach { line -> pictureOn(line)?.let { names += it.first } }
+        return names
+    }
+
+    /**
+     * Cuts a cut-short last line off the file, and syncs. It doesn't count anyway (see the
+     * class comment), and only a write that failed partway, with the app still running, leaves
+     * one. What's written next would be joined onto it: if that were a picture's line, the
+     * picture would be spoiled while every later mention counted on it, and a note would be
+     * lost the same way.
+     *
+     * Only the end of the file is read: the notes are written at every save, and the file can
+     * be megabytes. Usually the last byte is a newline and that is all that's looked at.
+     */
+    private fun dropCutShortTail() {
+        if (!file.exists()) return
+        RandomAccessFile(file, "rw").use { f ->
+            val size = f.length()
+            var end = size // the file up to here has no newline after the part still to look at
+            val block = ByteArray(BLOCK)
+            while (end > 0) {
+                val start = maxOf(0L, end - block.size)
+                val n = (end - start).toInt()
+                f.seek(start)
+                f.readFully(block, 0, n)
+                for (i in n - 1 downTo 0) {
+                    if (block[i] != '\n'.code.toByte()) continue
+                    val whole = start + i + 1
+                    if (whole < size) {
+                        f.setLength(whole)
+                        f.fd.sync()
+                    }
+                    return
+                }
+                end = start
+            }
+            // No newline at all: nothing in the file is a whole line.
+            if (size > 0) {
+                f.setLength(0)
+                f.fd.sync()
             }
         }
-        String(bytes, 0, whole, Charsets.UTF_8).lineSequence().forEach { line -> pictureOn(line)?.let { names += it.first } }
-        return names
     }
 
     /**
@@ -209,6 +237,7 @@ class ChangeJournal(val file: File) {
      * first [count] changes of this journal. Returns only once it's on the storage chip.
      */
     fun markSaving(result: FileIdentity, count: Int) {
+        dropCutShortTail()
         write("$SAVING ${result.encode()} $count\n")
     }
 
@@ -217,6 +246,7 @@ class ChangeJournal(val file: File) {
      * numbers. Returns only once it's on the storage chip.
      */
     fun markRenumbering() {
+        dropCutShortTail()
         write("$RENUMBERING\n")
     }
 
@@ -296,6 +326,7 @@ class ChangeJournal(val file: File) {
         private const val SAVING = "saving"
         private const val RENUMBERING = "renumbering"
         private const val PICTURE = "img"
+        private const val BLOCK = 8192
 
         private fun sha256(bytes: ByteArray): String =
             MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }

@@ -1610,6 +1610,29 @@ class DocumentSessionTest {
     }
 
     /**
+     * The renumbering note goes in just before the swap. If the swap then fails, the file is
+     * still the old one, so the note must not stay: it would make the next opening keep the
+     * stroke aside instead of replaying it.
+     */
+    @Test fun aPageChangeThatCouldNotBeSavedLeavesNoRenumberingNote() {
+        val s = session()
+        s.addStroke(1, dot)
+        reopenFreshFromTheFile()
+        // The swap can't happen: the file's name is taken by a folder that isn't empty. This
+        // is after the note is written (and after the file was found unchanged).
+        fake.duringSave = {
+            pdf.delete()
+            pdf.mkdir()
+            File(pdf, "x").writeText("x")
+        }
+        s.addPageAfter(0)
+        assertEquals(1, pageNotChanged().size)
+        val contents = ChangeJournal.forDocument(journals, pdf).read()!!
+        assertFalse(contents.renumbering)
+        assertEquals(listOf(dot), contents.changes.map { ((it as AddItems).items[0] as InkItem).stroke })
+    }
+
+    /**
      * Killed after the new PDF (with the page) is in place, before the journal hears of it. Its
      * changes have the old page numbers, so they're never replayed onto the new file: they're
      * kept aside, as for any file changed since.
