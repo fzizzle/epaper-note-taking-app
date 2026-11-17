@@ -11,6 +11,13 @@ class TileNamesTest {
         TileNames.labels(listOf("BSA Degree of Hyperstaticity — answer key", "BSA Degree of Hyperstaticity — workbook")),
     )
 
+    /** Search results: whole names, though they share a start up to a dash. */
+    @Test fun unshortenedNamesStayWhole() {
+        val pdfs = listOf("Thermo - week 1", "Thermo - week 2").map { PdfEntry(java.io.File("/l/$it.pdf"), it, 0, 0) }
+        assertEquals(pdfs.map { null to it.name }, pdfs.map { TileNames.shown(pdfs, shorten = false)[it] })
+        assertEquals(listOf("week 1", "week 2"), pdfs.map { TileNames.shown(pdfs, shorten = true)[it]!!.second })
+    }
+
     @Test fun numberedNamesAreLeftWhole() = same("Lecture 1", "Lecture 2", "Lecture 10")
 
     @Test fun aSinglePdfKeepsItsName() = same("X — workbook")

@@ -153,6 +153,8 @@ Tasks 1 to 3 need no decision: they change nothing you see.
 
 ### Task 8: Search by name (review E6; decision 5)
 
+> **Replaced (2026-11-17)** by the [library search design](../specs/2026-11-17-library-search-design.md): the owner asked for a search that stays fast in a huge library, which a walk of the card per search doesn't. Don't build this task; build that design's plan.
+
 **Files:**
 - Create: `main/library/NameSearch.kt`, `test/library/NameSearchTest.kt`
 - Modify: `main/ui/StripButton.kt` (`Glyph.SEARCH`), `main/ui/LibraryActivity.kt` (the top row, a search state, `onBackPressed`), `main/ui/LibraryTiles.kt` (`BreadcrumbBar`, to show the search's title)

@@ -94,11 +94,14 @@ class LibraryAdapter(
     /** The PDFs' tile names: a heading for one shown in place of its small folder, and its name without the part shared with its neighbours (TileNames). */
     private var pdfLabels: Map<PdfEntry, Pair<String?, String>> = emptyMap()
 
-    /** [dropPictures]: refresh, so tiles waiting for a new thumbnail show the grey page meanwhile. */
-    fun show(entries: List<Entry>, thumbnails: Boolean, dropPictures: Boolean = false, listView: Boolean = this.listView) {
+    /**
+     * [dropPictures]: refresh, so tiles waiting for a new thumbnail show the grey page meanwhile.
+     * [shortNames] false: whole names, for search results (TileNames.shown).
+     */
+    fun show(entries: List<Entry>, thumbnails: Boolean, dropPictures: Boolean = false, listView: Boolean = this.listView, shortNames: Boolean = true) {
         this.entries = entries
         this.listView = listView
-        pdfLabels = TileNames.grouped(entries.filterIsInstance<PdfEntry>())
+        pdfLabels = TileNames.shown(entries.filterIsInstance<PdfEntry>(), shortNames)
         this.thumbnails = thumbnails
         if (dropPictures) pictures++
         notifyDataSetChanged()
@@ -398,10 +401,20 @@ class TileView(context: Context) : View(context), LibraryItemView {
 
 /**
  * The top bar's path, `Documents › Year 2 › Physics` (decision 4): tap a part to go up to it.
- * A path too long for the bar scrolls so the folder on show stays in view.
+ * A path too long for the bar scrolls so the folder on show stays in view. While search results
+ * show, it holds one line of text instead ([showText]).
  */
 class BreadcrumbBar(context: Context, private val onTap: (File) -> Unit) : HorizontalScrollView(context) {
     private val parts = LinearLayout(context).apply { gravity = Gravity.CENTER_VERTICAL }
+
+    /** The folder last given to [show]: where a tap on [showText]'s text leads. */
+    private var folder: File? = null
+
+    /** What [showText] put up, or null while the path shows. */
+    private var shownText: String? = null
+
+    /** True while [showText]'s text is up instead of the path. */
+    val showingText: Boolean get() = shownText != null
 
     init {
         isHorizontalScrollBarEnabled = false
@@ -410,6 +423,8 @@ class BreadcrumbBar(context: Context, private val onTap: (File) -> Unit) : Horiz
     }
 
     fun show(root: File, folder: File) {
+        this.folder = folder
+        shownText = null
         parts.removeAllViews()
         val path = Breadcrumb.parts(root, folder)
         path.forEachIndexed { i, (name, target) ->
@@ -430,5 +445,26 @@ class BreadcrumbBar(context: Context, private val onTap: (File) -> Unit) : Horiz
             }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.MATCH_PARENT))
         }
         post { fullScroll(FOCUS_RIGHT) }
+    }
+
+    /**
+     * One part, [text], in place of the path (`Search: "recall"`). Tapped, it calls [onTap] with
+     * the folder last given to [show]. The same text again changes nothing, so nothing redraws.
+     */
+    fun showText(text: String) {
+        if (text == shownText) return
+        shownText = text
+        parts.removeAllViews()
+        parts.addView(TextView(context).apply {
+            this.text = text
+            textSize = 20f
+            setTextColor(Color.BLACK)
+            gravity = Gravity.CENTER_VERTICAL
+            val pad = LibraryLook.dp(context, 10)
+            setPadding(pad, 0, pad, 0)
+            background = LibraryLook.pressedFeedback()
+            setOnClickListener { folder?.let(onTap) }
+        }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.MATCH_PARENT))
+        post { fullScroll(FOCUS_LEFT) }
     }
 }

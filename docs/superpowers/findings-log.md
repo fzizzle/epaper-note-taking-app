@@ -2,6 +2,20 @@
 
 What was found while debugging on the tablet: causes, measurements and the tricks that got them. Newest first. Bugs and to-dos themselves live in [TODO.md](../../TODO.md).
 
+## 2026-11-17: what a search of the library would cost, and whether Android's file database can be trusted
+
+For the [library search design](specs/2026-11-17-library-search-design.md). Release build on the tablet, untouched. All reads over `adb shell` (which goes through Android's storage layer, as Jot does); the owner's `Workbooks` only read. The scratch folders on the card (`jot-ms-test`, `.jot-mtime-test`) were removed afterwards.
+
+**Reading the card.** The library on the card: 107 folders, 198 PDFs. `find . -name "*.pdf"` over it: 0.44 s the first time, then 0.17–0.19 s (three runs). About 4 ms per folder cold, 1.7 ms warm, so a walk of 5,000 folders would take 10–20 s.
+
+**Folder times on the card.** In a scratch folder on the card, read with `stat -c %Y`: adding a file, renaming one and deleting one each moved the time of the folder they were in; none moved its parent's; appending to a file moved nothing. Times are whole seconds. Only writes made on the tablet were tried, not a card written in a laptop.
+
+**MediaStore.** `content query --uri content://media/3331-3031/file --projection _data --where "_data LIKE '/storage/3331-3031/Workbooks/%.pdf'"` returned 196 rows; the card holds 198. Missing: `ML Machine Learning/Decision Boundaries on Two Features/… — workbook.pdf` and `… — workbook (attempt 2).pdf` (Jot's fresh attempt, 2026-11-13). Couldn't be reproduced: in a scratch folder a new file, a rename, a hidden temp moved into place, and a move over an existing file were all in MediaStore within 2 s. Cause unknown; the 2026-11-16 entry above saw MediaProvider log `Database update failed while renaming …pnotes-tmp` once. Shell trick: `content query` needs the `--where` in double quotes inside the `adb shell "…"` string, with the `LIKE` pattern in single quotes, or it fails with "Invalid token".
+
+**SQLite on Android** (from the web, not measured): the system's SQLite has FTS3/FTS4, not FTS5; FTS5 (and its trigram tokenizer) needs a bundled SQLite.
+
+**Search timings** (library search, branch `library-search`). The 20,000-name search on the tablet took a median of 24 ms (34, 27, 24, 23, 23 ms; 5,336 found; `NameIndexDbTest.twentyThousandNamesAnswerInUnder100Ms`). On the real-size scratch library (10 folders) a full check took 100 ms, then 42 ms on Refresh. The huge-library timings (first build, no-change check, folder listing during a check) are not measured yet, because the tablet dropped off adb about 1,000 files into making the files. Making files on the card ran at about 45 s per 1,000.
+
 ## 2026-11-16: a "(my edits)" copy after Android clears the app, and a case-only rename on the tablet's own storage
 
 Final review. Debug build, scratch folder `/sdcard/Documents/JotScratch/`, `library.xml` backed up and restored byte for byte, scratch files and their journal removed.

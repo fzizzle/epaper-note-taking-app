@@ -18,7 +18,8 @@ import android.view.View
  * button while it's pressed, is drawn inverted (black tile, white mark), which reads at a
  * glance on e-ink. The eraser, lasso and snip show what they leave or take: a tilted block, a
  * dashed loop, a dashed rectangle. Paste is inverted too while it's armed. The library's top bar
- * reuses the strip with refresh (a circling arrow) and new folder (a folder with a plus). On
+ * reuses the strip with search (a magnifier), refresh (a circling arrow) and new folder (a folder
+ * with a plus). On
  * the last page › becomes a page with a plus: add a page after it.
  *
  * On the writing strip's island ([onIsland] set) there are no frames: the outlined capsule groups
@@ -26,7 +27,7 @@ import android.view.View
  */
 class StripButton(context: Context, glyph: Glyph, description: String) : View(context) {
 
-    enum class Glyph { BACK, PREVIOUS, NEXT, PEN, HIGHLIGHTER, ERASER, LASSO, SNIP, UNDO, REDO, PASTE, MENU, REFRESH, NEW_FOLDER, LIST, TILES, FIT, ADD_PAGE }
+    enum class Glyph { BACK, PREVIOUS, NEXT, PEN, HIGHLIGHTER, ERASER, LASSO, SNIP, UNDO, REDO, PASTE, MENU, SEARCH, REFRESH, NEW_FOLDER, LIST, TILES, FIT, ADD_PAGE }
 
     /** The mark drawn. A button that switches between two things shows the other one's mark. */
     var glyph: Glyph = glyph
@@ -264,6 +265,18 @@ class StripButton(context: Context, glyph: Glyph, description: String) : View(co
                 // ⋯
                 ink.style = Paint.Style.FILL
                 for (i in -1..1) canvas.drawCircle(cx + i * s * 0.2f, cy, s * 0.055f, ink)
+            }
+            Glyph.SEARCH -> {
+                // A magnifier: a ring up and to the left, and a short handle down to the right.
+                ink.style = Paint.Style.STROKE
+                ink.strokeWidth = s * 0.07f
+                val r = s * 0.15f
+                val gx = cx - s * 0.06f
+                val gy = cy - s * 0.06f
+                canvas.drawCircle(gx, gy, r, ink)
+                val edge = r * 0.7071f // where the ring meets the handle, at 45°
+                ink.strokeWidth = s * 0.09f
+                canvas.drawLine(gx + edge, gy + edge, cx + s * 0.25f, cy + s * 0.25f, ink)
             }
             Glyph.REFRESH -> {
                 // A circle with a gap at the top, and an arrowhead where it ends, pointing on round.

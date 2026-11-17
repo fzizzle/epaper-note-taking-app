@@ -107,8 +107,10 @@ class RowView(context: Context) : View(context), LibraryItemView {
         if (detail.isNotEmpty()) {
             val hasBar = marks.progress != null
             val textY = if (hasBar) cy - barHeight else cy - (detailPaint.ascent() + detailPaint.descent()) / 2
-            canvas.drawText(detail, right, textY, detailPaint)
-            nameRight = right - maxOf(detailPaint.measureText(detail), if (hasBar) barWidth else 0f) - pad
+            // A search result's folder path can be long: it keeps its end, the folder the PDF is in.
+            val shown = shortenedFromStart(detail, width * DETAIL_SHARE, detailPaint::measureText)
+            canvas.drawText(shown, right, textY, detailPaint)
+            nameRight = right - maxOf(detailPaint.measureText(shown), if (hasBar) barWidth else 0f) - pad
             marks.progress?.let { progress ->
                 val top = cy + barHeight
                 line.style = Paint.Style.FILL
@@ -132,6 +134,11 @@ class RowView(context: Context) : View(context), LibraryItemView {
         line.style = Paint.Style.FILL
         line.color = LibraryLook.RULE
         canvas.drawRect(pad, height - 1f, width - pad, height.toFloat(), line)
+    }
+
+    private companion object {
+        /** The most of the row's width the right-hand words take. */
+        const val DETAIL_SHARE = 0.45f
     }
 
     private fun drawFolderMark(canvas: Canvas, left: Float, cy: Float) {
@@ -167,3 +174,26 @@ class RowView(context: Context) : View(context), LibraryItemView {
         canvas.drawPath(path, line)
     }
 }
+
+/**
+ * [detail] if it fits in [room], else shortened from its start: whole folders first
+ * ("… › Topic"), then, if even the last folder is too wide, letters.
+ */
+internal fun shortenedFromStart(detail: String, room: Float, width: (String) -> Float): String {
+    if (width(detail) <= room) return detail
+    val parts = detail.split(FOLDER_SEPARATOR)
+    for (i in 1 until parts.size) {
+        val shorter = ELLIPSIS + FOLDER_SEPARATOR + parts.drop(i).joinToString(FOLDER_SEPARATOR)
+        if (width(shorter) <= room) return shorter
+    }
+    // Letters from the end, as many as fit after the "…".
+    val last = parts.last()
+    for (start in 1..last.length) {
+        val shorter = ELLIPSIS + last.substring(start)
+        if (width(shorter) <= room) return shorter
+    }
+    return ELLIPSIS
+}
+
+private const val FOLDER_SEPARATOR = " › "
+private const val ELLIPSIS = "…"

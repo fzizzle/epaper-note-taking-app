@@ -29,7 +29,13 @@ A read-through of the whole app for bugs, with suggestions: [findings](docs/supe
   - [ ] The first-run folder choice (Task 5).
   - [ ] Deleted files are kept for 30 days and can be put back (Task 6).
   - [ ] "Open with Jot" (Task 7).
-  - [ ] Search by name (Task 8) and an order setting (Task 9).
+  - [x] Search by name (Task 8): the [library search plan](docs/superpowers/plans/2026-11-17-library-search.md), from the [design](docs/superpowers/specs/2026-11-17-library-search-design.md) (a saved name index, so it stays fast in a huge library).
+    - [ ] Run the tablet tests `ui.NameIndexTest` and `ui.NameIndexDbTest` once more: the final review's fixes (2026-11-17) were made while the tablet was disconnected, so their two new tests have only been compiled.
+    - [ ] Run `check/SearchCheck` on the tablet (about 20 minutes) and put the numbers in the findings log; if a folder listing is over 1.5× slower during a check, ask the owner (design anti-goal 3).
+    - [ ] Delete the scratch folders left on the SD card: `adb shell rm -rf /storage/3331-3031/jot-search-scratch /storage/3331-3031/jot-search-scratch-big`.
+    - [ ] Owner checklist: notes/TESTING-search.md.
+  - [ ] An order setting (Task 9).
+  - [ ] Later: search the text inside PDFs, built on the same index (design §9). Not designed beyond that.
 - Publishing on the Play Store was looked into the same day and is **not planned**: [what it would take](docs/superpowers/play-store-findings.md).
 
 ## Owner feedback (2026-11-10)

@@ -1346,6 +1346,9 @@ class DocumentSession(
             return openSessions.keys.any { File(it).parentFile == dir }
         }
 
+        /** True while any session is open or still closing: the name index's check waits then, so saves and page reads come first. */
+        fun anyOpen(): Boolean = openSessions.isNotEmpty()
+
         fun awaitClosed(pdf: File, timeoutMs: Long): Boolean {
             val closing = openSessions[pdf.absolutePath] ?: return true
             return try {
