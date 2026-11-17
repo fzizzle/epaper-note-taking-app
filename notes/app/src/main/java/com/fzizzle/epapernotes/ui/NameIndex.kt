@@ -17,6 +17,7 @@ import com.fzizzle.epapernotes.library.IndexCheck
 import com.fzizzle.epapernotes.library.IndexDisk
 import com.fzizzle.epapernotes.library.Matches
 import com.fzizzle.epapernotes.library.NameMatch
+import com.fzizzle.epapernotes.library.SearchPreview
 import com.fzizzle.epapernotes.library.Volumes
 import java.io.File
 import java.util.concurrent.CompletableFuture
@@ -230,6 +231,21 @@ class NameIndex internal constructor(
                     deliver(onAnswer, answer)
                 }
             }
+        }
+    }
+
+    /**
+     * The first [SearchPreview.LIMIT] matches of [query] as the index holds them, for the preview
+     * under the search box: one answer, on the main thread. The card isn't checked (Search does
+     * that), so typing never reads it; only whether the library folder is there.
+     */
+    fun preview(query: String, onAnswer: (SearchAnswer) -> Unit) {
+        onReader {
+            if (!root.isDirectory) {
+                deliver(onAnswer, SearchAnswer(query, NOTHING, Note.NONE, rootMissing = true))
+                return@onReader
+            }
+            deliver(onAnswer, found(query, Note.NONE))
         }
     }
 

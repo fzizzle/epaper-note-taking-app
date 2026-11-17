@@ -37,7 +37,7 @@ class RowView(context: Context) : View(context), LibraryItemView {
     private var marks = TileMarks.NONE
 
     private val pad = LibraryLook.dp(context, 12).toFloat()
-    private val rowHeight = LibraryLook.dp(context, 56)
+    private val rowHeight = LibraryLook.dp(context, ROW_HEIGHT_DP)
     private val markSide = LibraryLook.dp(context, 26).toFloat()
     private val barWidth = LibraryLook.dp(context, 96).toFloat()
     private val barHeight = LibraryLook.dp(context, 3).toFloat()
@@ -194,6 +194,9 @@ internal fun shortenedFromStart(detail: String, room: Float, width: (String) -> 
     }
     return ELLIPSIS
 }
+
+/** A list row's height, in dp. */
+internal const val ROW_HEIGHT_DP = 56
 
 private const val FOLDER_SEPARATOR = " › "
 private const val ELLIPSIS = "…"

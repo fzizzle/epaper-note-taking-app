@@ -671,10 +671,21 @@ class LibraryActivity : Activity() {
         emptyNote.visibility = if (visible) View.VISIBLE else View.GONE
     }
 
-    /** The search button: asks for the words, the last ones filled in and selected. */
+    /**
+     * The search button: asks for the words, the last ones filled in and selected, with the
+     * first few matches previewed under the box as they're typed.
+     */
     private fun askToSearch() {
-        if (root == null) return
-        changes.askForText("Search", lastQuery, "Search") { typed ->
+        val root = root ?: return
+        val preview = { field: android.widget.EditText, close: () -> Unit ->
+            SearchPreviewView(this, field, root, ask = { query, onAnswer -> index?.preview(query, onAnswer) }) { pdf, query ->
+                if (!tapAllowed()) return@SearchPreviewView
+                close()
+                lastQuery = query
+                openResult(pdf, fromPreview = true)
+            }
+        }
+        changes.askForText("Search", lastQuery, "Search", below = preview) { typed ->
             // Nothing but spaces matches nothing: nothing happens.
             if (NameMatch.words(typed).isEmpty()) return@askForText
             lastQuery = typed
@@ -998,8 +1009,9 @@ class LibraryActivity : Activity() {
     /**
      * A result is opened only if its file is still there (the index may be behind the card).
      * Looked for on [disk], never the screen's thread; a second tap meanwhile does nothing.
+     * [fromPreview]: tapped under the search box, with no results on screen to search again.
      */
-    private fun openResult(pdf: File) {
+    private fun openResult(pdf: File, fromPreview: Boolean = false) {
         if (opening || checkingResult) return
         val root = root ?: return
         checkingResult = true
@@ -1011,6 +1023,8 @@ class LibraryActivity : Activity() {
                 if (isDestroyed) return@post
                 when {
                     there -> open(pdf)
+                    // From the preview: the folder's listing says the card is out.
+                    !rootThere && fromPreview -> list()
                     // The card is out, not the file gone: searched again, which answers with the card-out note.
                     !rootThere -> search?.let { runSearch(it.query, fresh = false) }
                     else -> resultGone(pdf)
