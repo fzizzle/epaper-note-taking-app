@@ -29,7 +29,9 @@ A read-through of the whole app for bugs, with suggestions: [findings](docs/supe
   - [ ] The first-run folder choice (Task 5).
   - [ ] Deleted files are kept for 30 days and can be put back (Task 6).
   - [ ] "Open with Jot" (Task 7).
-  - [ ] Search by name (Task 8) and an order setting (Task 9).
+  - [ ] Search by name (Task 8): replaced by the [library search design](docs/superpowers/specs/2026-11-17-library-search-design.md) (a saved name index, so it stays fast in a huge library). Plan not written yet.
+  - [ ] An order setting (Task 9).
+  - [ ] Later: search the text inside PDFs, built on the same index (design §9). Not designed beyond that.
 - Publishing on the Play Store was looked into the same day and is **not planned**: [what it would take](docs/superpowers/play-store-findings.md).
 
 ## Owner feedback (2026-11-10)
