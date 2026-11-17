@@ -94,11 +94,14 @@ class LibraryAdapter(
     /** The PDFs' tile names: a heading for one shown in place of its small folder, and its name without the part shared with its neighbours (TileNames). */
     private var pdfLabels: Map<PdfEntry, Pair<String?, String>> = emptyMap()
 
-    /** [dropPictures]: refresh, so tiles waiting for a new thumbnail show the grey page meanwhile. */
-    fun show(entries: List<Entry>, thumbnails: Boolean, dropPictures: Boolean = false, listView: Boolean = this.listView) {
+    /**
+     * [dropPictures]: refresh, so tiles waiting for a new thumbnail show the grey page meanwhile.
+     * [shortNames] false: whole names, for search results (TileNames.shown).
+     */
+    fun show(entries: List<Entry>, thumbnails: Boolean, dropPictures: Boolean = false, listView: Boolean = this.listView, shortNames: Boolean = true) {
         this.entries = entries
         this.listView = listView
-        pdfLabels = TileNames.grouped(entries.filterIsInstance<PdfEntry>())
+        pdfLabels = TileNames.shown(entries.filterIsInstance<PdfEntry>(), shortNames)
         this.thumbnails = thumbnails
         if (dropPictures) pictures++
         notifyDataSetChanged()

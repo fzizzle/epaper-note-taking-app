@@ -192,6 +192,10 @@ class LibraryActivity : Activity() {
     private var folderScroll = 0
     /** The line between the strip and the grid while results show: a check still running, or how many were left out. */
     private lateinit var noteLine: TextView
+    /** [noteLine] above the grid: redrawn as one when both change. */
+    private lateinit var resultsArea: View
+    /** A tapped result's file is being looked for on [disk]: further taps wait for it. */
+    private var checkingResult = false
 
     /** A memory card going in may have been changed in a laptop: when the library is on it, everything is read again. */
     private val cardIn = object : BroadcastReceiver() {
@@ -483,11 +487,16 @@ class LibraryActivity : Activity() {
             courseRule = View(this@LibraryActivity).apply { setBackgroundColor(LibraryLook.RULE) }
             addView(courseRule, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, RULE_PX))
             addView(continueRow)
-            addView(noteLine)
-            addView(FrameLayout(this@LibraryActivity).apply {
-                addView(grid)
-                addView(emptyNote)
-            }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+            // The note line and the grid in one view, so a single panel update covers both.
+            resultsArea = LinearLayout(this@LibraryActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(noteLine)
+                addView(FrameLayout(this@LibraryActivity).apply {
+                    addView(grid)
+                    addView(emptyNote)
+                }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+            }
+            addView(resultsArea, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
         }
     }
 
@@ -638,7 +647,8 @@ class LibraryActivity : Activity() {
         if (changed || adapter.listView != prefs.listView) {
             adapter.show(entries, thumbnails = thumbnails != null, dropPictures = redrawTiles, listView = prefs.listView)
             if (fromResults && sameFolder) grid.setSelection(folderScroll)
-            PanelRefresh.gentle(grid)
+            // From results the note line goes too: one update over both.
+            PanelRefresh.gentle(if (fromResults) resultsArea else grid)
         }
         // Back from a document (decision 7): its tile is brought into view if it isn't, and
         // marked until the next touch, so the eye finds its place again.
@@ -739,18 +749,17 @@ class LibraryActivity : Activity() {
             grid.numColumns = columnsFor(resources.configuration)
             // The mark on a tile just come back from goes with the folder (cameBackFrom marks a row below).
             adapter.markedFile = null
-            adapter.show(entries, thumbnails = false, listView = true)
+            adapter.show(entries, thumbnails = false, listView = true, shortNames = false)
             if (scrollToTop) grid.setSelection(0)
-            PanelRefresh.gentle(grid)
             showEmptyNote(if (answer.rootMissing) rootMissingText(shownFolder ?: root) else "Nothing found.", answer.rootMissing, hits.isEmpty())
         }
         // Kept up, even empty, while results show: changing its words then never moves the grid.
         if (noteLine.visibility != View.VISIBLE) noteLine.visibility = View.VISIBLE
         val note = SearchNote.text(answer.note, hits.size, answer.matches.total)
-        if (noteLine.text.toString() != note) {
-            noteLine.text = note
-            PanelRefresh.line(noteLine)
-        }
+        val noteChanged = noteLine.text.toString() != note
+        if (noteChanged) noteLine.text = note
+        // One panel update: the list with the note line over it (one view holds both), or the line alone.
+        if (redraw) PanelRefresh.gentle(resultsArea) else if (noteChanged) PanelRefresh.line(noteLine)
         // Back from a document opened from the results: its row is marked, as a folder's tile is.
         if (cameBackFrom != null) {
             val at = adapter.entries.indexOfFirst { it.file == cameBackFrom }
@@ -998,7 +1007,24 @@ class LibraryActivity : Activity() {
         if (!tapAllowed()) return
         when (entry) {
             is FolderEntry -> goTo(entry.file)
-            is PdfEntry -> if (search != null && !entry.file.isFile) resultGone(entry.file) else open(entry.file)
+            is PdfEntry -> if (search != null) openResult(entry.file) else open(entry.file)
+        }
+    }
+
+    /**
+     * A result is opened only if its file is still there (the index may be behind the card).
+     * Looked for on [disk], never the screen's thread; a second tap meanwhile does nothing.
+     */
+    private fun openResult(pdf: File) {
+        if (opening || checkingResult) return
+        checkingResult = true
+        disk.execute {
+            val there = pdf.isFile
+            main.post {
+                checkingResult = false
+                if (isDestroyed) return@post
+                if (there) open(pdf) else resultGone(pdf)
+            }
         }
     }
 

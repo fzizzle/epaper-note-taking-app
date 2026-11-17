@@ -20,6 +20,13 @@ object TileNames {
             together.zip(labels(together.map { it.name })).map { (pdf, label) -> pdf to (group?.name to label) }
         }.toMap()
 
+    /**
+     * [grouped], or with [shorten] false each PDF's whole name and no heading: search results
+     * come from many folders, and the start they share is often the very words searched for.
+     */
+    fun shown(pdfs: List<PdfEntry>, shorten: Boolean): Map<PdfEntry, Pair<String?, String>> =
+        if (shorten) grouped(pdfs) else pdfs.associateWith { null to it.name }
+
     /** One label per name, in the same order. Either every name is shortened or none is. */
     fun labels(names: List<String>): List<String> {
         if (names.size < 2) return names
