@@ -2,10 +2,13 @@ package com.fzizzle.epapernotes.library
 
 import com.fzizzle.epapernotes.storage.SafeSave
 import java.io.File
+import java.io.IOException
 import java.nio.file.Files
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeFalse
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -173,6 +176,43 @@ class IndexCheckTest {
         builtLibrary()
         val paths = store.paths()
         assertEquals(CheckResult.RootMissing, check(CardOutDisk(readsBefore = 2), batch = 50).run(full = true))
+        assertEquals(paths, store.paths())
+        assertEquals(5, store.pdfs().size)
+    }
+
+    /** [FileIndexDisk], except that listing the folder at [failing] fails as a flaky card would. */
+    private inner class FailingDisk(private val failing: String) : IndexDisk {
+        private val inner = FileIndexDisk()
+        override fun timeOf(folder: File) = inner.timeOf(folder)
+        override fun read(folder: File) =
+            if (pathOf(folder) == failing) throw IOException("I/O error") else inner.read(folder)
+    }
+
+    /** An unreadable folder is not a deleted one: the error stops the check with that folder's rows as they were. */
+    @Test fun aReadErrorStopsTheCheckAndDropsNothing() {
+        builtLibrary()
+        val paths = store.paths()
+        val pdfs = store.pdfs()
+        val before = store.folder("Course/Topic")
+        assertThrows(IOException::class.java) { check(FailingDisk("Course/Topic")).run(full = true) }
+        assertThrows(IOException::class.java) { check(FailingDisk("Course/Topic")).reread(listOf(dir("Course/Topic"))) }
+        assertEquals(paths, store.paths())
+        assertEquals(pdfs, store.pdfs())
+        assertEquals(before, store.folder("Course/Topic"))
+    }
+
+    /** The same through the real disk: a folder that can't be listed (permission denied) is thrown, not dropped. */
+    @Test fun aFolderThatCantBeListedIsNotDropped() {
+        builtLibrary()
+        val paths = store.paths()
+        val locked = dir("Course/Topic")
+        assertTrue(locked.setReadable(false))
+        try {
+            assumeFalse("running as a user who can read anything", locked.list() != null)
+            assertThrows(IOException::class.java) { check().run(full = true) }
+        } finally {
+            locked.setReadable(true)
+        }
         assertEquals(paths, store.paths())
         assertEquals(5, store.pdfs().size)
     }

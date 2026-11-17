@@ -1,10 +1,11 @@
 package com.fzizzle.epapernotes.library
 
 import java.io.File
-import java.io.IOException
 import java.nio.file.DirectoryIteratorException
 import java.nio.file.Files
 import java.nio.file.LinkOption
+import java.nio.file.NoSuchFileException
+import java.nio.file.NotDirectoryException
 import java.nio.file.Path
 import java.nio.file.attribute.BasicFileAttributes
 
@@ -12,6 +13,9 @@ import java.nio.file.attribute.BasicFileAttributes
  * The card as the index check reads it. A listing reads each entry's kind, size and time in one
  * call. The same names as the library are left out (hidden, temporary, not a PDF), and so are
  * links: the index never follows one, so it can't loop or reach outside the library.
+ *
+ * Null means only "not there" or "not a folder". Any other error (a flaky card, permission
+ * denied) is thrown: the check must stop then, not take an unreadable folder for a deleted one.
  */
 class FileIndexDisk : IndexDisk {
     // Follows a link: only the library folder itself can be reached through one, since listings
@@ -29,6 +33,7 @@ class FileIndexDisk : IndexDisk {
                 for (entry in entries) {
                     val name = entry.fileName.toString()
                     if (FolderListing.isHidden(name)) continue
+                    // Gone since the listing named it: as if it hadn't been there.
                     val about = attributes(entry, LinkOption.NOFOLLOW_LINKS) ?: continue
                     when {
                         about.isDirectory -> folders += name
@@ -37,19 +42,21 @@ class FileIndexDisk : IndexDisk {
                     }
                 }
             }
-        } catch (e: IOException) {
+        } catch (e: NoSuchFileException) {
+            return null
+        } catch (e: NotDirectoryException) {
             return null
         } catch (e: DirectoryIteratorException) {
-            return null
+            throw e.cause ?: e // an error partway through the listing: not a sign the folder is gone
         }
         return DiskFolder(time, folders, pdfs)
     }
 
-    /** Null when the entry is gone (or can't be read) by the time it's asked about. */
+    /** Null when the entry isn't there; any other error is thrown. */
     private fun attributes(path: Path, vararg options: LinkOption): BasicFileAttributes? =
         try {
             Files.readAttributes(path, BasicFileAttributes::class.java, *options)
-        } catch (e: IOException) {
+        } catch (e: NoSuchFileException) {
             null
         }
 }

@@ -23,7 +23,10 @@ data class DiskFolder(val time: Long, val folders: List<String>, val pdfs: List<
  */
 data class KnownFolder(val time: Long, val readAt: Long, val folders: List<String>)
 
-/** What the check reads from the card. Null when [folder] is not there or is not a folder. */
+/**
+ * What the check reads from the card. Null only when [folder] is not there or is not a folder;
+ * any other error is thrown, so an unreadable folder is never taken for a deleted one.
+ */
 interface IndexDisk {
     fun timeOf(folder: File): Long?
 

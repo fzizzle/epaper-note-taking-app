@@ -10,6 +10,9 @@ import java.io.File
  *
  * Store writes go [batch] folders at a time; between batches the check waits while [pause]
  * says so (a document is open).
+ *
+ * A read error from [disk] (a flaky card, say) is thrown out of [run] and [reread] as it is: the
+ * check stops there, having put or dropped nothing for that folder, and its caller logs it.
  */
 class IndexCheck(
     private val root: File,
