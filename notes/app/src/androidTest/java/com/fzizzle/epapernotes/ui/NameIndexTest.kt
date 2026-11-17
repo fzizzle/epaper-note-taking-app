@@ -225,10 +225,10 @@ class NameIndexTest {
         index.answers("week").next()
         index.close()
         val deadline = System.currentTimeMillis() + 5000
-        while (liveIndexThreads() > 0 && System.currentTimeMillis() < deadline) Thread.sleep(50)
-        assertEquals(0, liveIndexThreads())
+        while (liveIndexThreads(index) > 0 && System.currentTimeMillis() < deadline) Thread.sleep(50)
+        assertEquals(0, liveIndexThreads(index))
     }
 
-    private fun liveIndexThreads() =
-        Thread.getAllStackTraces().keys.count { it.isAlive && it.name.startsWith(NameIndex.THREAD_PREFIX) }
+    private fun liveIndexThreads(index: NameIndex) =
+        Thread.getAllStackTraces().keys.count { it.isAlive && it.name.startsWith(index.threadPrefix + "-") }
 }

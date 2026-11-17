@@ -35,6 +35,8 @@ class LibraryChanges(
     private val prefs: LibraryPrefs,
     /** Re-reads the folder, then calls its argument once the new listing is on screen. */
     private val afterwards: (done: () -> Unit) -> Unit,
+    /** The folders a change that went through touched, for the name index to re-read. */
+    private val touched: (List<File>) -> Unit = {},
 ) {
     private val main = Handler(Looper.getMainLooper())
 
@@ -49,7 +51,7 @@ class LibraryChanges(
 
     fun askForNewFolder(root: File, here: File) {
         if (busy) return
-        askForText("New folder", "", "Make") { name -> change(root, { it.newFolder(here, name) }) }
+        askForText("New folder", "", "Make") { name -> change(root, listOf(here), { it.newFolder(here, name) }) }
     }
 
     /**
@@ -85,7 +87,7 @@ class LibraryChanges(
         askForText("Rename", entry.name, "Rename") { typed ->
             // As FileOps names it: a PDF keeps its ".pdf".
             val name = typed.trim().let { if (entry is PdfEntry && !it.endsWith(".pdf", ignoreCase = true)) "$it.${entry.file.extension}" else it }
-            change(root, { it.rename(entry.file, typed) }) { lastOpenedMoved(entry.file, File(entry.file.parentFile, name)) }
+            change(root, listOfNotNull(entry.file.parentFile), { it.rename(entry.file, typed) }) { lastOpenedMoved(entry.file, File(entry.file.parentFile, name)) }
         }
     }
 
@@ -93,7 +95,7 @@ class LibraryChanges(
         FolderChooser(
             activity, disk, tops = listOf(FolderChooser.Top(root.name, root)), title = "Move '${entry.file.name}' to…", use = "Move here",
             leaveOut = entry.file.takeIf { entry is FolderEntry },
-        ) { into -> change(root, { it.move(entry.file, into) }) { lastOpenedMoved(entry.file, File(into, entry.file.name)) } }
+        ) { into -> change(root, listOfNotNull(entry.file.parentFile, into), { it.move(entry.file, into) }) { lastOpenedMoved(entry.file, File(into, entry.file.name)) } }
             .show(here)
     }
 
@@ -102,7 +104,7 @@ class LibraryChanges(
      * the original is left as it was, and the copy can be deleted like any other file.
      */
     private fun makeFreshAttempt(root: File, pdf: File) {
-        change(root, { ops ->
+        change(root, listOfNotNull(pdf.parentFile), { ops ->
             ops.freshAttempt(pdf) { from, to ->
                 // createNew: a whole file or nothing, and never over one that arrives meanwhile.
                 PdfFile.open(from).use { it.removeOwnItems(); SafeSave.createNew(to) { t -> it.saveTo(t) } }
@@ -133,7 +135,7 @@ class LibraryChanges(
         AlertDialog.Builder(activity)
             .setMessage(question)
             .setPositiveButton("Delete") { _, _ ->
-                change(root, { it.delete(target) }) {
+                change(root, listOfNotNull(target.parentFile), { it.delete(target) }) {
                     val last = prefs.lastOpened
                     if (last != null && last.startsWith(target)) prefs.lastOpened = null
                 }
@@ -152,7 +154,8 @@ class LibraryChanges(
 
     private fun ops(root: File) = FileOps(root, File(activity.filesDir, "journals"), LastPageStore(activity))
 
-    private fun change(root: File, operation: (FileOps) -> FileOps.Result, onDone: () -> Unit = {}) {
+    /** [folders]: the ones the change touches, handed to [touched] if it goes through. */
+    private fun change(root: File, folders: List<File>, operation: (FileOps) -> FileOps.Result, onDone: () -> Unit = {}) {
         val ops = ops(root)
         running++
         disk.execute {
@@ -168,9 +171,13 @@ class LibraryChanges(
                     return@post
                 }
                 when (result) {
-                    FileOps.Result.Done -> onDone()
+                    FileOps.Result.Done -> {
+                        touched(folders)
+                        onDone()
+                    }
                     is FileOps.Result.Made -> {
                         Toast.makeText(activity, "Made '${result.file.nameWithoutExtension}'.", Toast.LENGTH_LONG).show()
+                        touched(folders)
                         onDone()
                     }
                     is FileOps.Result.Refused -> Toast.makeText(activity, result.reason, Toast.LENGTH_LONG).show()

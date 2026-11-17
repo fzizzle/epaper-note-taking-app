@@ -1,12 +1,16 @@
 package com.fzizzle.epapernotes.ui
 
 import android.app.Activity
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ApplicationInfo
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
+import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
@@ -157,6 +161,17 @@ class LibraryActivity : Activity() {
     private var lastTapAt = 0L
     private var opening = false
     private lateinit var changes: LibraryChanges
+    /** The name index of [root]; kept in step from here (checks, listings, changes). */
+    private var index: NameIndex? = null
+
+    /** A memory card going in may have been changed in a laptop: when the library is on it, everything is read again. */
+    private val cardIn = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val volume = intent.data?.path?.let(::File) ?: return
+            val root = root ?: return
+            if (Volumes.holding(StorageVolumes.mounted(this@LibraryActivity), root)?.directory == volume) index?.check(full = true)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -165,7 +180,7 @@ class LibraryActivity : Activity() {
         lastPages = LastPageStore(this)
         continuePicture = ContinuePicture(cacheDir, prefs)
         adapter = LibraryAdapter({ thumbnails?.bitmapFor(it) }, ::marksFor, ::detailFor)
-        changes = LibraryChanges(this, disk, prefs) { done -> list(then = done) }
+        changes = LibraryChanges(this, disk, prefs, { done -> list(then = done) }) { index?.reread(it) }
         library = buildLibrary()
         // Started from nothing, from the launcher: the one moment "Start in the last document" acts.
         freshStart = savedInstanceState == null && intent?.action == Intent.ACTION_MAIN && intent?.hasCategory(Intent.CATEGORY_LAUNCHER) == true
@@ -195,6 +210,10 @@ class LibraryActivity : Activity() {
     override fun onStart() {
         super.onStart()
         started = true
+        val mounted = IntentFilter(Intent.ACTION_MEDIA_MOUNTED).apply { addDataScheme("file") }
+        // A system broadcast, so exported.
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(cardIn, mounted, Context.RECEIVER_EXPORTED)
+        else registerReceiver(cardIn, mounted)
         shownFolder?.let(watch::watch)
         // The subfolders on screen too, before the listing onResume asks for: a PDF landing in
         // one meanwhile still updates its count. The grid still holds the last entries.
@@ -237,6 +256,8 @@ class LibraryActivity : Activity() {
         }
         val root = prefs.root ?: return chooseFirstRoot()
         startWhereTheSettingSays()
+        index = NameIndex.forRoot(this, root)
+        if (NameIndex.firstCheckDue()) index?.check(full = true)
         if (root != this.root) {
             this.root = root
             folder = prefs.folderOnShow?.takeIf { it.startsWith(root) } ?: root
@@ -259,6 +280,7 @@ class LibraryActivity : Activity() {
     override fun onStop() {
         super.onStop()
         started = false
+        unregisterReceiver(cardIn)
         watch.stop()
         thumbnails?.pause()
         // Put on their tiles now, not dropped: a tile only gets its picture here or when it's
@@ -459,6 +481,8 @@ class LibraryActivity : Activity() {
             }
             // The picture is only read when the row will change.
             val resumePicture = if (resume != null && resume != shownContinue) continuePicture.load(resume.file) else null
+            // Re-read by the index on its own thread, so this folder's names are current for a search.
+            index?.reread(listOf(shown))
             Log.i(TAG, "library listed ${shown.path} n=${entries.size} ms=${SystemClock.uptimeMillis() - start}")
             // The thumbnails of the tiles about to be shown, from the cache (a couple of
             // milliseconds each), so the folder is drawn once, with its pictures, rather than
@@ -742,6 +766,7 @@ class LibraryActivity : Activity() {
         root = chosen
         folder = chosen
         shownFolder = null // the breadcrumb starts somewhere new
+        index = NameIndex.forRoot(this, chosen)
         list()
     }
 
@@ -756,6 +781,7 @@ class LibraryActivity : Activity() {
             val (onScreen, rest) = adapter.entries.filterIsInstance<PdfEntry>().partition { it in showing }
             loader.redraw(onScreen, rest)
         }
+        index?.check(full = true)
         list(redrawTiles = true)
     }
 

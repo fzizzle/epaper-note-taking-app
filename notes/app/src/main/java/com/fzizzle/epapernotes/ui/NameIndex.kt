@@ -21,6 +21,7 @@ import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.ThreadFactory
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -74,8 +75,11 @@ class NameIndex internal constructor(
         )
     }
 
-    private val indexThread = Executors.newSingleThreadExecutor(threads("$THREAD_PREFIX-check", background = true))
-    private val readerThread = ScheduledThreadPoolExecutor(1, threads("$THREAD_PREFIX-search", background = false)).apply {
+    /** Names this instance's threads, so a test can count its own among those of the process. */
+    internal val threadPrefix = "$THREAD_PREFIX-${serial.incrementAndGet()}"
+
+    private val indexThread = Executors.newSingleThreadExecutor(threads("$threadPrefix-check", background = true))
+    private val readerThread = ScheduledThreadPoolExecutor(1, threads("$threadPrefix-search", background = false)).apply {
         // A search's wait that hasn't ended by the close is dropped with it.
         executeExistingDelayedTasksAfterShutdownPolicy = false
     }
@@ -171,6 +175,7 @@ class NameIndex internal constructor(
                     // bring up to date: that check reads everything, and a reread now would read
                     // the whole library twice.
                     if (store.folder("") == null) return@execute
+                    Log.i("Notes", "index reread n=${folders.size}")
                     checker.reread(folders)
                     // A reread cut short by a card taken out may have left a new subfolder unread.
                     if (disk.timeOf(root) == null) nextMustBeFull = true
@@ -288,6 +293,11 @@ class NameIndex internal constructor(
         private val NOTHING = Matches(0, emptyList())
 
         private var shared: NameIndex? = null
+        private val serial = AtomicInteger()
+        private val firstCheckTaken = AtomicBoolean()
+
+        /** True once per process: the library's first showing, which re-reads everything (the card may have been in a laptop meanwhile). */
+        fun firstCheckDue(): Boolean = !firstCheckTaken.getAndSet(true)
 
         /** The index for [root]: the same one while the library folder stays, a new one (the old closed) when it changes. */
         @Synchronized fun forRoot(context: Context, root: File): NameIndex {
