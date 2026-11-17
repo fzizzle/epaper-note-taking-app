@@ -123,7 +123,9 @@ A later search of the words inside PDFs would use the same button and results, a
 - Results gain a page number and open at that page.
 - FTS4 matches whole words and word starts (`recall`, `rec*`), not the middle of words.
 
-Nothing of this is built now: no table, no setting, no hook. The PDF rows' stable ids and their size and time are already there for other reasons.
+Nothing of this is built now: no table, no setting, no hook. The PDF rows' size and time are already there for other reasons.
+
+Not yet true (found in the final review): the PDF rows' ids are not stable. Each re-read of a folder deletes its PDF rows and inserts them again (`NameIndexDb.put`), so the ids change every time, against §7.1. Before the text search can key its table by them, `put` must update rows in place (same folder and file name keep their row), in a new layout version of the index.
 
 ## 10. Checking it
 
@@ -151,3 +153,4 @@ Nothing of this is built now: no table, no setting, no hook. The PDF rows' stabl
 - Made while planning: the check when the library is first shown after Jot starts is a full re-read (§7.2).
 - Made while planning: "Showing 200 of N" goes in the note line above the results, not in a row (§6).
 - Made while planning: the note line is updated with `EpdController.invalidate(<that view>, UpdateMode.GU)` (`PanelRefresh.line`) (§11).
+- Found in the final review, not changed: the PDF rows' ids are not kept while the file keeps its path, as §7.1 says; they change at each re-read of the folder. Nothing uses them yet; §9 says what the text search must change first.
