@@ -7,6 +7,7 @@ import com.fzizzle.epapernotes.library.DiskFolder
 import com.fzizzle.epapernotes.library.FileIndexDisk
 import com.fzizzle.epapernotes.library.Hit
 import com.fzizzle.epapernotes.library.IndexDisk
+import com.fzizzle.epapernotes.library.SearchPreview
 import java.io.File
 import java.io.IOException
 import java.util.concurrent.LinkedBlockingQueue
@@ -116,6 +117,42 @@ class NameIndexTest {
         assertEquals(NameIndex.Note.NONE, answer.note)
         assertEquals(listOf(Hit("A/B", "Week 3 notes.pdf")), answer.matches.hits)
         assertTrue(answers.noMore())
+    }
+
+    /** Asks for a preview of [query] and gives its one answer. */
+    private fun NameIndex.previewed(query: String): NameIndex.SearchAnswer {
+        val queue = LinkedBlockingQueue<NameIndex.SearchAnswer>()
+        preview(query) { queue.put(it) }
+        return queue.next()
+    }
+
+    @Test fun aPreviewAnswersFromTheIndexWithoutCheckingTheCard() {
+        threePdfs()
+        val index = index()
+        index.startCheck(true).get(10, TimeUnit.SECONDS)
+        val added = pdf("A/B/Week 3 notes.pdf")
+        val folder = added.parentFile!!
+        folder.setLastModified(folder.lastModified() + 5000)
+        val answer = index.previewed("week")
+        assertEquals(NameIndex.Note.NONE, answer.note)
+        assertFalse(answer.rootMissing)
+        // Not checked first: the PDF added since the last check isn't in it yet.
+        assertEquals(listOf(Hit("", "Thermo Week 2 answers.pdf"), Hit("A", "Week 10.pdf")), answer.matches.hits)
+        assertEquals(2, answer.matches.total)
+    }
+
+    @Test fun aPreviewHoldsAsManyAsSearchShowsAndCountsTheRest() {
+        for (i in 1..205) pdf("Week $i.pdf")
+        val index = index()
+        index.startCheck(true).get(10, TimeUnit.SECONDS)
+        val answer = index.previewed("week")
+        assertEquals(205, answer.matches.total)
+        assertEquals((1..SearchPreview.LIMIT).map { Hit("", "Week $it.pdf") }, answer.matches.hits)
+    }
+
+    @Test fun aPreviewWithTheCardOutSaysSo() {
+        val index = index(r = File(root, "not-there"))
+        assertTrue(index.previewed("week").rootMissing)
     }
 
     private fun sixtyFolders() {

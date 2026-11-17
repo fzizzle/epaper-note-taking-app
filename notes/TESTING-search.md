@@ -42,7 +42,26 @@ Tick each box when it works. Write down what you saw when it doesn't.
 13. [ ] **S13. Speed.** Use the library as you normally do: open folders, scroll, Refresh.
     - **Expected:** nothing slower than before. Tell me anything that is.
 
+## 5. Preview while typing
+
+14. [ ] **P1. Matches as you type.** Tap the magnifier and type a few letters of a PDF's name, then stop.
+    - **Expected:** within about half a second, the matching PDFs show under the box, each with its folder, 5 rows at a time. With more than 5, a scroll bar is on the right (it doesn't fade) and the box scrolls through them all, up to 200. Past 200, the line under the box says "Showing 200 of …".
+15. [ ] **P2. One letter.** Clear the box and type a single letter.
+    - **Expected:** nothing previewed. A second letter brings the preview.
+16. [ ] **P3. Nothing there.** Type something no PDF has in its name.
+    - **Expected:** "Nothing found." under the box.
+17. [ ] **P4. Tap a match.** Tap one of the previewed PDFs.
+    - **Expected:** the dialog closes and that PDF opens. Back returns to the library folder you were in. The magnifier then has your typed words filled in.
+18. [ ] **P5. Search still works.** Type, then press Search.
+    - **Expected:** the full results list, as before.
+19. [ ] **P6. Refreshes.** Type quickly, pause, type again, delete letters.
+    - **Expected:** no flashing; only the preview area under the box updates, once per pause, not at every key. The dialog doesn't jump or change size.
+20. [ ] **P7. Last search filled in.** Search for something, go Back, tap the magnifier again.
+    - **Expected:** the old words are there, selected, with their matches already previewed.
+
 ## Questions
+
+- Are 5 preview rows right, and is the pause before they show too long or too short?
 
 - Are 200 results enough, or did you want more?
 - Did you wait on "Checking for changes…" long enough to notice?

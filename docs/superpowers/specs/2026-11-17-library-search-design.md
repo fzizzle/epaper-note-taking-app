@@ -20,7 +20,7 @@ Searching **names** is what gets built now. Searching the **text inside the PDFs
 
 - Searching folder names (owner, 2026-11-17: file names only). A result still shows its folder.
 - Searching inside PDFs, or handwriting (spec §3). Text inside PDFs is §9, for later.
-- Search as you type. Every key would refresh the e-ink panel.
+- Search as you type. Every key would refresh the e-ink panel. (Changed 2026-11-17, owner: a preview under the search box, 5 rows tall and scrolling through up to 200 matches, after a 0.3 s pause in typing, read from the index only; the full results still come with Search. See `library/SearchPreview`.)
 - Using the index for anything else now (the thumbnail draw-ahead walk, folder counts). It could later.
 - Search limited to the folder on show.
 

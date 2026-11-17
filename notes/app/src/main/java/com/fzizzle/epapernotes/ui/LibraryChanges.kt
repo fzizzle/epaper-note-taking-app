@@ -9,7 +9,7 @@ import android.util.Log
 import android.view.View
 import android.view.WindowManager
 import android.widget.EditText
-import android.widget.FrameLayout
+import android.widget.LinearLayout
 import android.widget.PopupMenu
 import android.widget.Toast
 import com.fzizzle.epapernotes.library.Entry
@@ -187,8 +187,17 @@ class LibraryChanges(
         }
     }
 
-    /** The library's text dialog: [start] filled in and selected, so typing replaces it. Also the search's. */
-    internal fun askForText(title: String, start: String, action: String, onEntered: (String) -> Unit) {
+    /**
+     * The library's text dialog: [start] filled in and selected, so typing replaces it. Also the
+     * search's. [below]: a view under the box (the search preview), given the box and a way to close the dialog.
+     */
+    internal fun askForText(
+        title: String,
+        start: String,
+        action: String,
+        below: ((field: EditText, close: () -> Unit) -> View)? = null,
+        onEntered: (String) -> Unit,
+    ) {
         val field = EditText(activity).apply {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
             textSize = 22f
@@ -197,9 +206,16 @@ class LibraryChanges(
             setSelectAllOnFocus(true)
         }
         val pad = LibraryLook.dp(activity, 20)
-        val dialog = AlertDialog.Builder(activity)
+        var dialog: AlertDialog? = null
+        val body = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(pad, pad / 2, pad, 0)
+            addView(field)
+            below?.let { addView(it(field) { dialog?.dismiss() }) }
+        }
+        dialog = AlertDialog.Builder(activity)
             .setTitle(title)
-            .setView(FrameLayout(activity).apply { setPadding(pad, pad / 2, pad, 0); addView(field) })
+            .setView(body)
             .setPositiveButton(action) { _, _ -> onEntered(field.text.toString()) }
             .setNegativeButton("Cancel", null)
             .create()
