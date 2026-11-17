@@ -182,6 +182,12 @@ class LibraryActivity : Activity() {
         adapter = LibraryAdapter({ thumbnails?.bitmapFor(it) }, ::marksFor, ::detailFor)
         changes = LibraryChanges(this, disk, prefs, { done -> list(then = done) }) { index?.reread(it) }
         library = buildLibrary()
+        // From create to destroy, not start to stop: a card put back while Jot is in the
+        // background (the usual case, it was in a laptop) must still be seen.
+        val mounted = IntentFilter(Intent.ACTION_MEDIA_MOUNTED).apply { addDataScheme("file") }
+        // A system broadcast, so exported.
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(cardIn, mounted, Context.RECEIVER_EXPORTED)
+        else registerReceiver(cardIn, mounted)
         // Started from nothing, from the launcher: the one moment "Start in the last document" acts.
         freshStart = savedInstanceState == null && intent?.action == Intent.ACTION_MAIN && intent?.hasCategory(Intent.CATEGORY_LAUNCHER) == true
     }
@@ -210,10 +216,6 @@ class LibraryActivity : Activity() {
     override fun onStart() {
         super.onStart()
         started = true
-        val mounted = IntentFilter(Intent.ACTION_MEDIA_MOUNTED).apply { addDataScheme("file") }
-        // A system broadcast, so exported.
-        if (Build.VERSION.SDK_INT >= 33) registerReceiver(cardIn, mounted, Context.RECEIVER_EXPORTED)
-        else registerReceiver(cardIn, mounted)
         shownFolder?.let(watch::watch)
         // The subfolders on screen too, before the listing onResume asks for: a PDF landing in
         // one meanwhile still updates its count. The grid still holds the last entries.
@@ -280,7 +282,6 @@ class LibraryActivity : Activity() {
     override fun onStop() {
         super.onStop()
         started = false
-        unregisterReceiver(cardIn)
         watch.stop()
         thumbnails?.pause()
         // Put on their tiles now, not dropped: a tile only gets its picture here or when it's
@@ -292,6 +293,7 @@ class LibraryActivity : Activity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        unregisterReceiver(cardIn)
         watch.stop()
         thumbnails?.stop()
         disk.shutdown() // a rename or move in hand still finishes
@@ -442,6 +444,8 @@ class LibraryActivity : Activity() {
         val firstShown = if (wanted == shownFolder) grid.firstVisiblePosition else 0
         val loader = thumbnails
         val ask = ++listed
+        // Read here, on the main thread: the disk thread must not read the var.
+        val index = index
         val last = prefs.lastOpened
         // Watched before it's read (review 2.10): a file landing while it's read still re-lists.
         if (started && wanted != watch.watching) watch.watch(wanted)
