@@ -6,7 +6,6 @@ import java.io.IOException
 import java.nio.file.Files
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeFalse
 import org.junit.Rule
@@ -35,7 +34,11 @@ class IndexCheckTest {
 
     private var disk = CountingDisk()
 
-    private fun check(useDisk: IndexDisk = disk, batch: Int = 50) = IndexCheck(lib, store, useDisk, { now }, batch = batch)
+    /** The folders the check said it couldn't read. */
+    private val errors = mutableListOf<File>()
+
+    private fun check(useDisk: IndexDisk = disk, batch: Int = 50) =
+        IndexCheck(lib, store, useDisk, { now }, batch = batch, onError = { folder, _ -> errors += folder })
 
     private fun pdf(path: String) = File(lib, path).apply { parentFile.mkdirs(); writeText("x") }
 
@@ -181,40 +184,68 @@ class IndexCheckTest {
     }
 
     /** [FileIndexDisk], except that listing the folder at [failing] fails as a flaky card would. */
-    private inner class FailingDisk(private val failing: String) : IndexDisk {
+    /** [FileIndexDisk], except that the folder at [failing] can't be listed, as on a flaky card; with [timeToo], nor can its time be read. */
+    private inner class FailingDisk(private val failing: String, private val timeToo: Boolean = false) : IndexDisk {
         private val inner = FileIndexDisk()
-        override fun timeOf(folder: File) = inner.timeOf(folder)
+        override fun timeOf(folder: File) =
+            if (timeToo && pathOf(folder) == failing) throw IOException("I/O error") else inner.timeOf(folder)
         override fun read(folder: File) =
             if (pathOf(folder) == failing) throw IOException("I/O error") else inner.read(folder)
     }
 
-    /** An unreadable folder is not a deleted one: the error stops the check with that folder's rows as they were. */
-    @Test fun aReadErrorStopsTheCheckAndDropsNothing() {
+    /** An unreadable folder is not a deleted one: it and all under it are kept as they were, and the rest is still checked. */
+    @Test fun aFolderThatCantBeReadIsKeptAndTheRestRead() {
         builtLibrary()
-        val paths = store.paths()
-        val pdfs = store.pdfs()
-        val before = store.folder("Course/Topic")
-        assertThrows(IOException::class.java) { check(FailingDisk("Course/Topic")).run(full = true) }
-        assertThrows(IOException::class.java) { check(FailingDisk("Course/Topic")).reread(listOf(dir("Course/Topic"))) }
-        assertEquals(paths, store.paths())
-        assertEquals(pdfs, store.pdfs())
-        assertEquals(before, store.folder("Course/Topic"))
+        pdf("Course/Other/new.pdf")
+        pdf("Course/Week 4.pdf")
+        for (timeToo in listOf(false, true)) {
+            store.complete = false
+            errors.clear()
+            val topic = store.folder("Course/Topic")
+            val deep = store.folder("Course/Topic/Deep")
+            // Listed: the library folder, Course and Course/Other; Course/Topic kept, so Deep isn't visited.
+            assertEquals(CheckResult.Done(3), check(FailingDisk("Course/Topic", timeToo)).run(full = true))
+            assertEquals(listOf(dir("Course/Topic")), errors)
+            assertEquals(topic, store.folder("Course/Topic"))
+            assertEquals(deep, store.folder("Course/Topic/Deep"))
+            assertEquals(Hit("Course/Other", "new.pdf"), find("new").single())
+            assertEquals(listOf(Hit("Course", "Week 1.pdf"), Hit("Course", "Week 4.pdf"), Hit("Course/Topic", "Week 2.pdf")), find("week"))
+            assertEquals(7, store.pdfs().size)
+            // The index may be missing what that folder holds now.
+            assertFalse(store.complete)
+        }
+        assertEquals(CheckResult.Done(5), check().run(full = true))
+        assertTrue(store.complete)
     }
 
-    /** The same through the real disk: a folder that can't be listed (permission denied) is thrown, not dropped. */
-    @Test fun aFolderThatCantBeListedIsNotDropped() {
+    @Test fun rereadKeepsAFolderItCantReadAndReadsTheOthers() {
         builtLibrary()
+        pdf("Course/Other/new.pdf")
+        val topic = store.folder("Course/Topic")
+        check(FailingDisk("Course/Topic")).reread(listOf(dir("Course/Topic"), dir("Course")))
+        assertEquals(listOf(dir("Course/Topic")), errors)
+        assertEquals(topic, store.folder("Course/Topic"))
+        assertTrue("Course/Topic/Deep" in store.paths())
+        assertEquals(Hit("Course/Other", "new.pdf"), find("new").single())
+    }
+
+    /** The same through the real disk: a folder that can't be listed (permission denied). */
+    @Test fun aFolderThatCantBeListedIsKept() {
+        builtLibrary()
+        store.complete = false
         val paths = store.paths()
         val locked = dir("Course/Topic")
         assertTrue(locked.setReadable(false))
         try {
             assumeFalse("running as a user who can read anything", locked.list() != null)
-            assertThrows(IOException::class.java) { check().run(full = true) }
+            assertEquals(CheckResult.Done(2), check().run(full = true))
         } finally {
             locked.setReadable(true)
         }
+        assertEquals(listOf(locked), errors)
         assertEquals(paths, store.paths())
         assertEquals(5, store.pdfs().size)
+        assertFalse(store.complete)
     }
 
     @Test fun hiddenTemporaryAndLinkedAreLeftOut() {
