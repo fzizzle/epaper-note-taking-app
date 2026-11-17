@@ -14,6 +14,8 @@ For the [library search design](specs/2026-11-17-library-search-design.md). Rele
 
 **SQLite on Android** (from the web, not measured): the system's SQLite has FTS3/FTS4, not FTS5; FTS5 (and its trigram tokenizer) needs a bundled SQLite.
 
+**Search timings** (library search, branch `library-search`). The 20,000-name search on the tablet took a median of 24 ms (34, 27, 24, 23, 23 ms; 5,336 found; `NameIndexDbTest.twentyThousandNamesAnswerInUnder100Ms`). On the real-size scratch library (10 folders) a full check took 100 ms, then 42 ms on Refresh. The huge-library timings (first build, no-change check, folder listing during a check) are not measured yet, because the tablet dropped off adb about 1,000 files into making the files. Making files on the card ran at about 45 s per 1,000.
+
 ## 2026-11-16: a "(my edits)" copy after Android clears the app, and a case-only rename on the tablet's own storage
 
 Final review. Debug build, scratch folder `/sdcard/Documents/JotScratch/`, `library.xml` backed up and restored byte for byte, scratch files and their journal removed.

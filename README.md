@@ -48,6 +48,7 @@ The stock Boox Notes app writes well but gets in the way:
 ## What it does
 
 - **Library:** your folders as a thumbnail grid. Rename, move, delete and make folders. Changes made outside the app show up by themselves. Works from the SD card.
+- **Search:** a magnifier in the top row finds PDFs anywhere in the library by the words of their name.
 - **Pen:** fast, pressure-sensitive black ink.
 - **Highlighter:** see-through yellow.
 - **Eraser:** removes a whole stroke.
