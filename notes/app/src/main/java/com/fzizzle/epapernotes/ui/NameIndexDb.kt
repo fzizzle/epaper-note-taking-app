@@ -134,11 +134,13 @@ class NameIndexDb private constructor(private val db: SQLiteDatabase) : IndexSto
         /** The database ready for [root], or null when it can't be opened or was made for something else. */
         private fun tryOpen(file: File, root: File): SQLiteDatabase? {
             val db = try {
-                SQLiteDatabase.openOrCreateDatabase(file, null).also { it.enableWriteAheadLogging() }
+                SQLiteDatabase.openOrCreateDatabase(file, null)
             } catch (_: Exception) {
                 return null
             }
+            // Everything after the opening in here, so a failure closes the connection before the file is deleted.
             try {
+                db.enableWriteAheadLogging()
                 val tables = db.rawQuery("SELECT name FROM sqlite_master WHERE name = 'meta'", null).use { it.count }
                 if (tables == 0) {
                     create(db, root)

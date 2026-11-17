@@ -8,6 +8,7 @@ import com.fzizzle.epapernotes.library.FileIndexDisk
 import com.fzizzle.epapernotes.library.Hit
 import com.fzizzle.epapernotes.library.IndexDisk
 import java.io.File
+import java.io.IOException
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -31,17 +32,21 @@ class NameIndexTest {
     private lateinit var root: File
     private val made = mutableListOf<NameIndex>()
 
-    /** The card, with a pause before each folder time while [delayMs] is set. */
+    /** The card, with a pause before each folder time while [delayMs] is set, and a folder named [unreadable] that can never be read. */
     private class SlowDisk : IndexDisk {
         private val real = FileIndexDisk()
         @Volatile var delayMs = 0L
+        @Volatile var unreadable: String? = null
 
         override fun timeOf(folder: File): Long? {
             if (delayMs > 0) Thread.sleep(delayMs)
             return real.timeOf(folder)
         }
 
-        override fun read(folder: File): DiskFolder? = real.read(folder)
+        override fun read(folder: File): DiskFolder? {
+            if (folder.name == unreadable) throw IOException("a folder that can't be read")
+            return real.read(folder)
+        }
     }
 
     @Before fun setUp() {
@@ -143,6 +148,23 @@ class NameIndexTest {
         assertEquals(60, second.matches.total)
     }
 
+    @Test fun oneUnreadableFolderDoesNotSayStillReadingForGood() {
+        sixtyFolders()
+        val disk = SlowDisk().apply { unreadable = "F1" }
+        val index = index(disk)
+        // A full read that had to keep F1 unread: the index is never marked complete.
+        assertTrue(index.startCheck(true).get(10, TimeUnit.SECONDS) is CheckResult.Done)
+        disk.delayMs = 30
+        val answers = index.answers("week")
+        assertEquals(NameIndex.Note.CHECKING, answers.next().note)
+        assertEquals(NameIndex.Note.NONE, answers.next().note)
+        // A full re-read of that index is still reading the library.
+        index.check(full = true)
+        val again = index.answers("week")
+        assertEquals(NameIndex.Note.STILL_READING, again.next().note)
+        assertEquals(NameIndex.Note.NONE, again.next().note)
+    }
+
     @Test fun aSearchDuringACheckWaitsForThatCheck() {
         sixtyFolders()
         val disk = SlowDisk()
@@ -182,6 +204,26 @@ class NameIndexTest {
         assertTrue(normal !== full)
         assertTrue(normal.get(10, TimeUnit.SECONDS) is CheckResult.Done)
         assertTrue(full.get(10, TimeUnit.SECONDS) is CheckResult.Done)
+        assertEquals(2, index.checksStarted - before)
+    }
+
+    @Test fun aSearchAfterAQueuedFullWaitsForTheFull() {
+        sixtyFolders()
+        val disk = SlowDisk()
+        val index = index(disk)
+        index.startCheck(true).get(10, TimeUnit.SECONDS)
+        val before = index.checksStarted
+        disk.delayMs = 10
+        val normal = index.startCheck(false)
+        // Refresh in results while a normal check runs: the full one is queued, and a search joins it.
+        val full = index.startCheck(true)
+        assertTrue(index.startCheck(false) === full)
+        val answers = index.answers("week")
+        var answer = answers.next()
+        while (answer.note != NameIndex.Note.NONE) answer = answers.next()
+        assertTrue(normal.isDone)
+        assertTrue("the search answered before the full re-read ended", full.isDone)
+        assertEquals(60, answer.matches.total)
         assertEquals(2, index.checksStarted - before)
     }
 

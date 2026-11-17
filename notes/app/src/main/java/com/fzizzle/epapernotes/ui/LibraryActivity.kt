@@ -1,16 +1,12 @@
 package com.fzizzle.epapernotes.ui
 
 import android.app.Activity
-import android.content.BroadcastReceiver
-import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.content.pm.ApplicationInfo
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
-import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
@@ -197,15 +193,6 @@ class LibraryActivity : Activity() {
     /** A tapped result's file is being looked for on [disk]: further taps wait for it. */
     private var checkingResult = false
 
-    /** A memory card going in may have been changed in a laptop: when the library is on it, everything is read again. */
-    private val cardIn = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            val volume = intent.data?.path?.let(::File) ?: return
-            val root = root ?: return
-            if (Volumes.holding(StorageVolumes.mounted(this@LibraryActivity), root)?.directory == volume) index?.check(full = true)
-        }
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         prefs = LibraryPrefs(this)
@@ -215,12 +202,6 @@ class LibraryActivity : Activity() {
         adapter = LibraryAdapter({ thumbnails?.bitmapFor(it) }, ::marksFor, ::detailFor)
         changes = LibraryChanges(this, disk, prefs, { done -> list(then = done) }) { index?.reread(it) }
         library = buildLibrary()
-        // From create to destroy, not start to stop: a card put back while Jot is in the
-        // background (the usual case, it was in a laptop) must still be seen.
-        val mounted = IntentFilter(Intent.ACTION_MEDIA_MOUNTED).apply { addDataScheme("file") }
-        // A system broadcast, so exported.
-        if (Build.VERSION.SDK_INT >= 33) registerReceiver(cardIn, mounted, Context.RECEIVER_EXPORTED)
-        else registerReceiver(cardIn, mounted)
         // Started from nothing, from the launcher: the one moment "Start in the last document" acts.
         freshStart = savedInstanceState == null && intent?.action == Intent.ACTION_MAIN && intent?.hasCategory(Intent.CATEGORY_LAUNCHER) == true
     }
@@ -295,7 +276,9 @@ class LibraryActivity : Activity() {
         // The old index was closed, so a search waiting on it never answers: leave it, as Back does.
         if (newIndex !== index) endSearch()
         index = newIndex
-        if (NameIndex.firstCheckDue()) newIndex.check(full = true)
+        // Not while "Start in the last document" opens one now: the full re-read would start under
+        // its opening. Coming back from it, the next onResume takes it.
+        if (!opening && NameIndex.firstCheckDue()) newIndex.check(full = true)
         if (root != this.root) {
             endSearch()
             this.root = root
@@ -338,7 +321,6 @@ class LibraryActivity : Activity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        unregisterReceiver(cardIn)
         watch.stop()
         thumbnails?.stop()
         disk.shutdown() // a rename or move in hand still finishes
@@ -610,7 +592,8 @@ class LibraryActivity : Activity() {
         resultsOnScreen = null
         resultFolders = emptyMap()
         if (noteLine.visibility != View.GONE) noteLine.visibility = View.GONE
-        if (fromResults) grid.numColumns = columnsFor(resources.configuration)
+        // From results, or the view switched while a search had no answer yet: the folder's columns.
+        if (fromResults || adapter.listView != prefs.listView) grid.numColumns = columnsFor(resources.configuration)
         if (shown != shownFolder) {
             shownFolder = shown
             prefs.folderOnShow = shown
@@ -1006,7 +989,8 @@ class LibraryActivity : Activity() {
     private fun tapped(entry: Entry) {
         if (!tapAllowed()) return
         when (entry) {
-            is FolderEntry -> goTo(entry.file)
+            // A search with no answer yet: the folder is still on show, but the screen is the search's (Back leaves it).
+            is FolderEntry -> if (search == null) goTo(entry.file)
             is PdfEntry -> if (search != null) openResult(entry.file) else open(entry.file)
         }
     }
@@ -1017,13 +1001,20 @@ class LibraryActivity : Activity() {
      */
     private fun openResult(pdf: File) {
         if (opening || checkingResult) return
+        val root = root ?: return
         checkingResult = true
         disk.execute {
+            val rootThere = root.isDirectory
             val there = pdf.isFile
             main.post {
                 checkingResult = false
                 if (isDestroyed) return@post
-                if (there) open(pdf) else resultGone(pdf)
+                when {
+                    there -> open(pdf)
+                    // The card is out, not the file gone: searched again, which answers with the card-out note.
+                    !rootThere -> search?.let { runSearch(it.query, fresh = false) }
+                    else -> resultGone(pdf)
+                }
             }
         }
     }

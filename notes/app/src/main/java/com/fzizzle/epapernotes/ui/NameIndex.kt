@@ -1,6 +1,10 @@
 package com.fzizzle.epapernotes.ui
 
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.Process
@@ -13,6 +17,7 @@ import com.fzizzle.epapernotes.library.IndexCheck
 import com.fzizzle.epapernotes.library.IndexDisk
 import com.fzizzle.epapernotes.library.Matches
 import com.fzizzle.epapernotes.library.NameMatch
+import com.fzizzle.epapernotes.library.Volumes
 import java.io.File
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.Executors
@@ -90,6 +95,9 @@ class NameIndex internal constructor(
     private var runningFull = false // under lock
     private var queuedFull: CompletableFuture<CheckResult?>? = null // under lock
 
+    /** True while the running check reads every folder (asked for full, or the index needs it): only then is "still reading" true. */
+    @Volatile private var readingAll = false
+
     /** Index thread only: the last check or reread ended early, so a new subfolder may be left unread under a parent that looks current. */
     private var nextMustBeFull = false
 
@@ -110,7 +118,9 @@ class NameIndex internal constructor(
     internal fun startCheck(full: Boolean): CompletableFuture<CheckResult?> = synchronized(lock) {
         if (closed) return CompletableFuture.completedFuture(null)
         val now = running ?: return begin(full, CompletableFuture())
-        if (!full || runningFull) return now
+        // A search after Refresh waits for the full re-read the owner asked for, not the check before it.
+        if (!full) return queuedFull ?: now
+        if (runningFull) return now
         queuedFull ?: CompletableFuture<CheckResult?>().also { queuedFull = it }
     }
 
@@ -133,6 +143,7 @@ class NameIndex internal constructor(
                 // An index that has never read the library folder reads everything anyway, so
                 // that first check counts as a full one and the index is then complete.
                 asFull = full || nextMustBeFull || store.folder("") == null
+                readingAll = asFull
                 result = checker.run(asFull)
             } catch (e: Closed) {
                 Log.i("Notes", "index closed: its check stopped")
@@ -148,6 +159,7 @@ class NameIndex internal constructor(
             }
             Log.i("Notes", "index check full=$asFull foldersRead=$read result=$outcome ms=${SystemClock.elapsedRealtime() - start}")
         } finally {
+            readingAll = false
             val next = synchronized(lock) {
                 running = null
                 val queued = queuedFull
@@ -247,9 +259,10 @@ class NameIndex internal constructor(
         }
     }
 
+    /** A normal check is "checking" even on an index never completed: one folder that can't be read keeps it so for good. */
     private fun stillRunningNote(): Note =
         try {
-            if (store.complete) Note.CHECKING else Note.STILL_READING
+            if (readingAll && !store.complete) Note.STILL_READING else Note.CHECKING
         } catch (e: Exception) {
             Log.w("Notes", "name index unreadable", e)
             Note.CHECKING
@@ -292,7 +305,8 @@ class NameIndex internal constructor(
         private const val CLOSE_WAIT_MS = 30_000L
         private val NOTHING = Matches(0, emptyList())
 
-        private var shared: NameIndex? = null
+        @Volatile private var shared: NameIndex? = null
+        private var watchingCards = false // under the companion's lock
         private val serial = AtomicInteger()
         private val firstCheckTaken = AtomicBoolean()
 
@@ -301,6 +315,7 @@ class NameIndex internal constructor(
 
         /** The index for [root]: the same one while the library folder stays, a new one (the old closed) when it changes. */
         @Synchronized fun forRoot(context: Context, root: File): NameIndex {
+            watchForCards(context.applicationContext)
             val old = shared
             if (old != null) {
                 if (old.root == root) return old
@@ -310,6 +325,28 @@ class NameIndex internal constructor(
                 it.openAfter = old?.closedDown
                 shared = it
             }
+        }
+
+        /**
+         * A memory card going in may have been changed in a laptop: when the library is on it,
+         * everything is read again. One receiver for the process, on the application, not the
+         * library screen: the system may destroy that screen and keep Jot running, and a card
+         * put back meanwhile (the usual case) must still be seen.
+         */
+        private fun watchForCards(app: Context) {
+            if (watchingCards) return
+            watchingCards = true
+            val cardIn = object : BroadcastReceiver() {
+                override fun onReceive(context: Context, intent: Intent) {
+                    val volume = intent.data?.path?.let(::File) ?: return
+                    val index = shared ?: return
+                    if (Volumes.holding(StorageVolumes.mounted(app), index.root)?.directory == volume) index.check(full = true)
+                }
+            }
+            val mounted = IntentFilter(Intent.ACTION_MEDIA_MOUNTED).apply { addDataScheme("file") }
+            // A system broadcast, so exported.
+            if (Build.VERSION.SDK_INT >= 33) app.registerReceiver(cardIn, mounted, Context.RECEIVER_EXPORTED)
+            else app.registerReceiver(cardIn, mounted)
         }
 
         private fun threads(name: String, background: Boolean) = ThreadFactory { task ->
