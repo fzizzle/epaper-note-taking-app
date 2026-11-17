@@ -49,7 +49,7 @@ Within option 2, the owner chose to keep the index in **Android's built-in SQLit
 - A tap asks for the text in the library's usual text dialog, action **Search**. The last query is filled in, selected, so a new one replaces it by typing.
 - **Results** are shown as rows, whatever the tiles/list setting: each PDF's name and, as its detail, its folder's path from the library folder (`ML Machine Learning › Confusion-Matrix Metrics`). The breadcrumb reads `Search: "recall"`. They come in natural order of folder path, then name, as the library orders things.
 - **Matching:** every word of the query must be somewhere in the name (the name without `.pdf`), in any order: `week ther` finds "Thermo Week 2 answers". Capitals and accents are ignored. An empty query does nothing.
-- **Many results:** the first 200 are shown, and the last row says "Showing 200 of 1,234. Type more to narrow it."
+- **Many results:** the first 200 are shown, and the note line above the results says "Showing 200 of 1,234. Type more to narrow it." (not a row).
 - **None:** where the empty-folder hint goes, "Nothing found."
 - **Every search checks the card first** (owner, 2026-11-17), so a PDF pushed in a minute ago is found. The search waits up to 1 s for the check. The owner's library checks in about 0.2 s, so results come once and are current.
 - **When the check takes longer** (a huge library), the results from the index are shown at once with a line above them: "Checking for changes…". When the check ends, the search runs again: the line goes with a small update of that line alone (no full-screen refresh), and the list is redrawn only if the results changed.
@@ -86,7 +86,7 @@ It is a cache: if it can't be opened, its layout version is old, or the library 
 
 **When the check runs:**
 
-- When the library is first shown after Jot starts.
+- When the library is first shown after Jot starts: a full re-read, since while Jot wasn't running the card may have been in a laptop.
 - When a memory card goes in (it may have been changed in a laptop): a full re-read.
 - On Refresh: a full re-read.
 - On every search (owner, 2026-11-17), as §6 says. A search asked for while a check is already running doesn't start another; it waits for that one.
@@ -95,7 +95,7 @@ Never on every return from a document or every folder visit: at 5,000 folders a 
 
 **Between checks** the index is told directly:
 
-- **Every folder the library lists** (a visit, a re-list after the folder watch fires) gives the index what it just read: that folder's PDFs, subfolders and time. No extra card reads.
+- **Every folder the library lists** (a visit, a re-list after the folder watch fires) is re-read by the index on its own thread after the listing (one more read, 2-4 ms). The library's listing opens small folders out and doesn't carry folder times, so handing it over would mean changing `FolderListing`.
 - **After a rename, move, delete, new folder or fresh attempt made in Jot**, the folders it touched (where the file was, where it went) are re-read by the index.
 
 ### 7.3 Threads and speed
@@ -135,7 +135,7 @@ Nothing of this is built now: no table, no setting, no hook. The PDF rows' stabl
 
 - Table and column names, indexes, the layout version scheme, batch size.
 - How the card-in event is noticed (a broadcast receiver, or the volume list compared on resume).
-- How the "Checking for changes…" line is updated alone (a partial panel update, as the writing strip's `PenInput.refreshAlone` does), within the library's look.
+- How the "Checking for changes…" line is updated alone with `EpdController.invalidate(<that view>, UpdateMode.GU)` (`PanelRefresh.line`); `PenInput.refreshAlone` no longer exists. It stays within the library's look.
 - Whether the 200-result cap and the 1 s wait need tuning after the tablet timings (report changes).
 
 ## 12. Decisions made by the designer, not the owner
@@ -147,3 +147,7 @@ Nothing of this is built now: no table, no setting, no hook. The PDF rows' stabl
 - Back from a document opened from results returns to the results.
 - The check pauses while a document is open.
 - The results order: folder path, then name.
+- Made while planning: after each listing the index re-reads that one folder itself, instead of being handed what the library read (§7.2).
+- Made while planning: the check when the library is first shown after Jot starts is a full re-read (§7.2).
+- Made while planning: "Showing 200 of N" goes in the note line above the results, not in a row (§6).
+- Made while planning: the note line is updated with `EpdController.invalidate(<that view>, UpdateMode.GU)` (`PanelRefresh.line`) (§11).
