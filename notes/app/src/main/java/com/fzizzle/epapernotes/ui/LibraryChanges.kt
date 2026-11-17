@@ -187,7 +187,8 @@ class LibraryChanges(
         }
     }
 
-    private fun askForText(title: String, start: String, action: String, onEntered: (String) -> Unit) {
+    /** The library's text dialog: [start] filled in and selected, so typing replaces it. Also the search's. */
+    internal fun askForText(title: String, start: String, action: String, onEntered: (String) -> Unit) {
         val field = EditText(activity).apply {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
             textSize = 22f

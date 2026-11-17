@@ -35,9 +35,11 @@ import com.fzizzle.epapernotes.library.Entry
 import com.fzizzle.epapernotes.library.FolderEntry
 import com.fzizzle.epapernotes.library.FolderListing
 import com.fzizzle.epapernotes.library.FolderWatch
+import com.fzizzle.epapernotes.library.Hit
 import com.fzizzle.epapernotes.library.HookPath
 import com.fzizzle.epapernotes.library.LaunchOpen
 import com.fzizzle.epapernotes.library.LibraryWalk
+import com.fzizzle.epapernotes.library.NameMatch
 import com.fzizzle.epapernotes.library.PdfEntry
 import com.fzizzle.epapernotes.library.ThumbnailCache
 import com.fzizzle.epapernotes.library.TileMarks
@@ -49,8 +51,10 @@ import java.util.concurrent.Executors
 
 /**
  * The library (spec §6.1): the folders and PDFs in one folder of the owner's tree, as a grid,
- * with the breadcrumb, refresh, new folder and ⋯ (Settings) in a top bar like the writing strip.
- * Tap a folder to go in, a PDF to write on it; long-press either for Rename, Move, Delete.
+ * with the breadcrumb, search, refresh, new folder and ⋯ (Settings) in a top bar like the writing
+ * strip. Tap a folder to go in, a PDF to write on it; long-press either for Rename, Move, Delete.
+ * Search shows the whole library's PDFs whose names match, as rows, in place of the folder
+ * (design §6), until Back or the breadcrumb.
  *
  * Everything that reads or changes the owner's folders runs on [disk], one background thread,
  * in order; the screen's thread only reads preferences. Thumbnails have a thread of their own
@@ -98,7 +102,7 @@ class LibraryActivity : Activity() {
     /** A list row's right-hand words: where the owner is in a PDF, or its pages if it's unopened; what a folder holds. */
     private fun detailFor(entry: Entry): String = when (entry) {
         is FolderEntry -> folderCountText(entry)
-        is PdfEntry -> pageTexts[entry.file] ?: thumbnails?.factsFor(entry)?.let { if (it.pages == 1) "1 page" else "${it.pages} pages" }.orEmpty()
+        is PdfEntry -> resultFolders[entry.file] ?: pageTexts[entry.file] ?: thumbnails?.factsFor(entry)?.let { if (it.pages == 1) "1 page" else "${it.pages} pages" }.orEmpty()
     }
 
     private lateinit var viewButton: StripButton
@@ -107,6 +111,8 @@ class LibraryActivity : Activity() {
     private fun switchView() {
         prefs.listView = !prefs.listView
         viewButton.glyph = if (prefs.listView) Glyph.TILES else Glyph.LIST
+        // From results: back to the folder, which comes in the new view, in one redraw.
+        if (search != null) return leaveSearch()
         grid.numColumns = columnsFor(resources.configuration)
         adapter.show(adapter.entries, thumbnails = adapter.thumbnails, listView = prefs.listView)
         tilesOnScreenChanged()
@@ -132,6 +138,9 @@ class LibraryActivity : Activity() {
 
     /** A tile's marks, from memory only: its progress from the listing, its writing mark from the thumbnail's facts. */
     private fun marksFor(entry: Entry): TileMarks {
+        // Results carry no marks: progress was read for the folder on show, not for them, and a
+        // writing mark arriving later with a thumbnail's facts would redraw a row by itself.
+        if (resultsOnScreen != null) return TileMarks.NONE
         // At the library folder each course's folder carries its colour; inside a course the line under the strip does.
         val pdf = entry as? PdfEntry
             ?: return TileMarks(stripe = if (root == shownFolder) courseColourOf(entry.file) else null)
@@ -163,6 +172,26 @@ class LibraryActivity : Activity() {
     private lateinit var changes: LibraryChanges
     /** The name index of [root]; kept in step from here (checks, listings, changes). */
     private var index: NameIndex? = null
+
+    /** A search under way or on screen: its query, and its ask number ([searched]) so older answers are dropped. */
+    private data class SearchState(val query: String, val asked: Int)
+
+    /** Non-null while the library is in a search: then results, not the folder, are what the grid is for. */
+    private var search: SearchState? = null
+    /** The last query searched for, filled in the next time; memory only. */
+    private var lastQuery = ""
+    /** Only the newest search's answers are shown, as with [listed]. */
+    private var searched = 0
+
+    /** What the results on screen were made from, or null while the grid shows a folder. */
+    private data class ShownResults(val hits: List<Hit>, val rootMissing: Boolean)
+    private var resultsOnScreen: ShownResults? = null
+    /** Each result's folder path from the library folder, its row's right-hand words. */
+    private var resultFolders: Map<File, String> = emptyMap()
+    /** Where the folder was scrolled to when results took its place, to go back to. */
+    private var folderScroll = 0
+    /** The line between the strip and the grid while results show: a check still running, or how many were left out. */
+    private lateinit var noteLine: TextView
 
     /** A memory card going in may have been changed in a laptop: when the library is on it, everything is read again. */
     private val cardIn = object : BroadcastReceiver() {
@@ -219,7 +248,7 @@ class LibraryActivity : Activity() {
         shownFolder?.let(watch::watch)
         // The subfolders on screen too, before the listing onResume asks for: a PDF landing in
         // one meanwhile still updates its count. The grid still holds the last entries.
-        if (shownFolder != null) watch.watchChildren(watchedChildren())
+        if (shownFolder != null && resultsOnScreen == null) watch.watchChildren(watchedChildren())
         thumbnails?.resume()
     }
 
@@ -258,12 +287,24 @@ class LibraryActivity : Activity() {
         }
         val root = prefs.root ?: return chooseFirstRoot()
         startWhereTheSettingSays()
-        index = NameIndex.forRoot(this, root)
-        if (NameIndex.firstCheckDue()) index?.check(full = true)
+        val newIndex = NameIndex.forRoot(this, root)
+        // The old index was closed, so a search waiting on it never answers: leave it, as Back does.
+        if (newIndex !== index) endSearch()
+        index = newIndex
+        if (NameIndex.firstCheckDue()) newIndex.check(full = true)
         if (root != this.root) {
+            endSearch()
             this.root = root
             folder = prefs.folderOnShow?.takeIf { it.startsWith(root) } ?: root
             shownFolder = null
+        }
+        // Back to results (from a document opened from them, say): searched again, not listed.
+        search?.let {
+            return runSearch(
+                it.query, fresh = false,
+                afterSaveOf = if (backFromDocument) prefs.lastOpened else null,
+                cameBackFrom = if (backFromDocument) prefs.lastOpened else null,
+            )
         }
         // Back from a document, its last save is still landing (spec §7.2): list once it has,
         // so the file's new size and date redraw its tile now, not when the folder watch
@@ -315,8 +356,9 @@ class LibraryActivity : Activity() {
         grid.numColumns = columnsFor(newConfig)
     }
 
-    @Deprecated("Back inside a folder goes up one level; at the library folder it leaves the app.")
+    @Deprecated("Back from search results goes to the folder; inside a folder it goes up one level; at the library folder it leaves the app.")
     override fun onBackPressed() {
+        if (search != null) return leaveSearch()
         val root = root
         val here = folder
         if (root != null && here != null && here != root && here.startsWith(root)) goTo(here.parentFile!!)
@@ -327,15 +369,24 @@ class LibraryActivity : Activity() {
         val stripHeight = (maxOf(resources.displayMetrics.heightPixels, resources.displayMetrics.widthPixels) * 0.05f).toInt()
         val gap = stripHeight / 8
         val strip = StripRow(this, side = stripHeight - 2 * gap, gap = gap).apply { setBackgroundColor(Color.WHITE) }
-        breadcrumb = BreadcrumbBar(this) { if (tapAllowed()) goTo(it) }
+        breadcrumb = BreadcrumbBar(this) {
+            if (!tapAllowed()) return@BreadcrumbBar
+            if (search != null) leaveSearch() else goTo(it)
+        }
         strip.addView(breadcrumb, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f).apply { rightMargin = gap })
         fun button(glyph: Glyph, description: String, gaps: Int = 1, onClick: () -> Unit) =
             strip.addSquare(StripButton(this, glyph, description).apply { setOnClickListener { onClick() } }, gaps)
         // Shows the view it switches to.
         viewButton = StripButton(this, if (prefs.listView) Glyph.TILES else Glyph.LIST, "List or tiles").apply { setOnClickListener { switchView() } }
         strip.addSquare(viewButton)
+        button(Glyph.SEARCH, "Search") { askToSearch() }
         button(Glyph.REFRESH, "Refresh") { refresh() }
-        button(Glyph.NEW_FOLDER, "New folder") { root?.let { changes.askForNewFolder(it, shownFolder ?: it) } }
+        button(Glyph.NEW_FOLDER, "New folder") {
+            root?.let {
+                if (search != null) leaveSearch()
+                changes.askForNewFolder(it, shownFolder ?: it)
+            }
+        }
         button(Glyph.MENU, "Settings", gaps = 0) { showSettings() }
 
         // Continue: a picture of the page that was left, with its ink, then the file's name and where in it.
@@ -383,6 +434,8 @@ class LibraryActivity : Activity() {
             adapter = this@LibraryActivity.adapter
             setOnItemClickListener { _, _, position, _ -> tapped(this@LibraryActivity.adapter.entries[position]) }
             setOnItemLongClickListener { _, view, position, _ ->
+                // Nothing in results (design §6): taken, so no tap follows either.
+                if (search != null) return@setOnItemLongClickListener true
                 root?.let { changes.showMenu(it, shownFolder ?: it, view, this@LibraryActivity.adapter.entries[position], mark = ::markMenuFor, openFolder = ::goTo) }
                 true
             }
@@ -405,9 +458,23 @@ class LibraryActivity : Activity() {
             setOnClickListener {
                 if (!tapAllowed()) return@setOnClickListener
                 // The card may be back since the last listing: look again before sending anyone to Settings.
-                if (root?.isDirectory == true) list() else showSettings()
+                val search = search
+                when {
+                    root?.isDirectory != true -> showSettings()
+                    search != null -> runSearch(search.query, fresh = false)
+                    else -> list()
+                }
             }
             isClickable = false
+        }
+        noteLine = TextView(this).apply {
+            textSize = 16f
+            setTextColor(LibraryLook.GRAPHITE)
+            // One line, always: a new text never changes its height, so the grid never moves.
+            setSingleLine()
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            setPadding(dp(20), dp(8), dp(20), dp(4))
+            visibility = View.GONE
         }
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -416,6 +483,7 @@ class LibraryActivity : Activity() {
             courseRule = View(this@LibraryActivity).apply { setBackgroundColor(LibraryLook.RULE) }
             addView(courseRule, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, RULE_PX))
             addView(continueRow)
+            addView(noteLine)
             addView(FrameLayout(this@LibraryActivity).apply {
                 addView(grid)
                 addView(emptyNote)
@@ -426,8 +494,8 @@ class LibraryActivity : Activity() {
     /** About 5 tiles across in portrait, 7 in landscape (decision 2). */
     private fun columnsFor(config: Configuration): Int {
         val sideways = config.orientation == Configuration.ORIENTATION_LANDSCAPE
-        // The list view: one column upright, two sideways.
-        return if (prefs.listView) (if (sideways) 2 else 1) else (if (sideways) 7 else 5)
+        // The list view: one column upright, two sideways. Results are always rows.
+        return if (prefs.listView || resultsOnScreen != null) (if (sideways) 2 else 1) else (if (sideways) 7 else 5)
     }
 
     /**
@@ -437,11 +505,14 @@ class LibraryActivity : Activity() {
      */
     private fun list(redrawTiles: Boolean = false, afterSaveOf: File? = null, cameBackFrom: File? = null, then: () -> Unit = {}) {
         val root = root ?: return then()
+        // Results on screen are never replaced by the folder (the folder watch, a change's
+        // re-list): leaving the search clears [search] first, then lists.
+        if (search != null) return then()
         val wanted = folder ?: root
         // A visit (another folder, or back from a document), not a re-read after a change on disk: timed for the log.
         if (wanted != shownFolder || cameBackFrom != null) startVisit()
         // Where the screen will be in the folder, so the thumbnails read ahead are the ones it shows.
-        val firstShown = if (wanted == shownFolder) grid.firstVisiblePosition else 0
+        val firstShown = if (wanted != shownFolder) 0 else if (resultsOnScreen != null) folderScroll else grid.firstVisiblePosition
         val loader = thumbnails
         val ask = ++listed
         // Read here, on the main thread: the disk thread must not read the var.
@@ -500,7 +571,8 @@ class LibraryActivity : Activity() {
                 if (read > 0) Log.i(TAG, "thumbnails read ahead n=$read")
             }
             main.post {
-                if (ask == listed && !isDestroyed) showListing(shown, entries, progress, pageTexts, courseColours, resume, resumePicture, rootMissing, redrawTiles, cameBackFrom)
+                // A search begun meanwhile keeps the grid.
+                if (ask == listed && !isDestroyed && search == null) showListing(shown, entries, progress, pageTexts, courseColours, resume, resumePicture, rootMissing, redrawTiles, cameBackFrom)
                 then()
             }
         }
@@ -522,11 +594,21 @@ class LibraryActivity : Activity() {
             // between would go unseen: read once more. If nothing changed, nothing is redrawn.
             if (rewatch) main.post { list() }
         }
+        // Back from results: the path, the folder's rows or tiles, and where it was scrolled to,
+        // all in this one redraw.
+        val fromResults = resultsOnScreen != null
+        val sameFolder = shown == shownFolder
+        resultsOnScreen = null
+        resultFolders = emptyMap()
+        if (noteLine.visibility != View.GONE) noteLine.visibility = View.GONE
+        if (fromResults) grid.numColumns = columnsFor(resources.configuration)
         if (shown != shownFolder) {
             shownFolder = shown
             prefs.folderOnShow = shown
             breadcrumb.show(root ?: shown, shown)
             grid.setSelection(0)
+        } else if (breadcrumb.showingText) {
+            breadcrumb.show(root ?: shown, shown)
         }
         val ruleColour = courseColourOf(shown) ?: LibraryLook.RULE
         if (ruleColour != courseRuleColour) {
@@ -550,11 +632,12 @@ class LibraryActivity : Activity() {
         continueRow.visibility = if (resume != null) View.VISIBLE else View.GONE
         // A document just left may only have moved to another page: the file is the same, its bar isn't.
         if (visitStartedAt != 0L) visitGoes++ // this listing draws the grid
-        val changed = redrawTiles || entries != adapter.entries || adapter.thumbnails != (thumbnails != null) || progress != this.progress || coloursChanged
+        val changed = redrawTiles || fromResults || entries != adapter.entries || adapter.thumbnails != (thumbnails != null) || progress != this.progress || coloursChanged
         this.progress = progress
         this.pageTexts = pageTexts
         if (changed || adapter.listView != prefs.listView) {
             adapter.show(entries, thumbnails = thumbnails != null, dropPictures = redrawTiles, listView = prefs.listView)
+            if (fromResults && sameFolder) grid.setSelection(folderScroll)
             PanelRefresh.gentle(grid)
         }
         // Back from a document (decision 7): its tile is brought into view if it isn't, and
@@ -566,24 +649,130 @@ class LibraryActivity : Activity() {
                 markCameBackFrom(cameBackFrom)
             }
         }
-        val emptyText = when {
-            // An empty folder says how to fill it (decision 8).
-            !rootMissing -> "Nothing here yet.\n\nCopy PDFs into\n${Volumes.whereIs(StorageVolumes.mounted(this), shown)}\nfrom a computer or a sync app, and they show up here by themselves."
-            Volumes.isOnCardThatsOut(StorageVolumes.mounted(this), root ?: shown) ->
-                "The library folder is on the memory card or USB drive, which isn't in. Put it back, or tap here to choose another folder in Settings (⋯)."
-            else -> "The library folder isn't there. Tap here to choose another in Settings (⋯)."
-        }
-        if (emptyNote.text.toString() != emptyText) emptyNote.text = emptyText
-        if (emptyNote.isClickable != rootMissing) {
-            emptyNote.isClickable = rootMissing
-            emptyNote.background = if (rootMissing) LibraryLook.pressedFeedback() else null
-        }
-        emptyNote.visibility = if (entries.isEmpty()) View.VISIBLE else View.GONE
+        // An empty folder says how to fill it (decision 8).
+        val emptyText = if (!rootMissing) "Nothing here yet.\n\nCopy PDFs into\n${Volumes.whereIs(StorageVolumes.mounted(this), shown)}\nfrom a computer or a sync app, and they show up here by themselves."
+        else rootMissingText(shown)
+        showEmptyNote(emptyText, rootMissing, entries.isEmpty())
         tilesOnScreenChanged()
         startDrawingAhead()
         logShown(waitForDraw = changed)
         // The grid lays its tiles out on the next frame: look then.
         grid.post { logFolderReadyIfSo() }
+    }
+
+    /** Where the grid is empty because the library folder isn't there: what it says, tapped for Settings. */
+    private fun rootMissingText(shown: File): String =
+        if (Volumes.isOnCardThatsOut(StorageVolumes.mounted(this), root ?: shown)) {
+            "The library folder is on the memory card or USB drive, which isn't in. Put it back, or tap here to choose another folder in Settings (⋯)."
+        } else {
+            "The library folder isn't there. Tap here to choose another in Settings (⋯)."
+        }
+
+    /** The note over an empty grid. Only what changed is set: setting a text, even the same one, redraws it. */
+    private fun showEmptyNote(text: String, rootMissing: Boolean, visible: Boolean) {
+        if (emptyNote.text.toString() != text) emptyNote.text = text
+        if (emptyNote.isClickable != rootMissing) {
+            emptyNote.isClickable = rootMissing
+            emptyNote.background = if (rootMissing) LibraryLook.pressedFeedback() else null
+        }
+        emptyNote.visibility = if (visible) View.VISIBLE else View.GONE
+    }
+
+    /** The search button: asks for the words, the last ones filled in and selected. */
+    private fun askToSearch() {
+        if (root == null) return
+        changes.askForText("Search", lastQuery, "Search") { typed ->
+            // Nothing but spaces matches nothing: nothing happens.
+            if (NameMatch.words(typed).isEmpty()) return@askForText
+            lastQuery = typed
+            runSearch(typed, fresh = true)
+        }
+    }
+
+    /**
+     * Asks the index for [query]'s matches; the answers come to [showAnswer]. [fresh]: a new
+     * query, whose results start at the top. [afterSaveOf]: back from that document, whose last
+     * save is still landing; the index's check waits while a document is open, so the search
+     * waits for the save first, or it would come back "Checking for changes…" and redraw twice.
+     */
+    private fun runSearch(query: String, fresh: Boolean, afterSaveOf: File? = null, cameBackFrom: File? = null) {
+        val index = index ?: return
+        val ask = ++searched
+        search = SearchState(query, ask)
+        val startedAt = SystemClock.uptimeMillis()
+        val go = {
+            var first = true
+            index.search(query) { answer ->
+                showAnswer(ask, answer, startedAt, scrollToTop = fresh && first, cameBackFrom)
+                first = false
+            }
+        }
+        if (afterSaveOf == null) return go()
+        disk.execute {
+            DocumentSession.awaitClosed(afterSaveOf, LEFT_SAVE_WAIT_MS)
+            main.post { if (search?.asked == ask && !isDestroyed) go() }
+        }
+    }
+
+    /**
+     * Puts one answer of the newest search on screen: the rows, the note line and the breadcrumb,
+     * together. A later answer with the same results changes only the note line (a small update
+     * of that line alone); with other results the grid is redrawn once.
+     */
+    private fun showAnswer(ask: Int, answer: NameIndex.SearchAnswer, startedAt: Long, scrollToTop: Boolean, cameBackFrom: File?) {
+        if (search?.asked != ask || isDestroyed) return
+        val root = root ?: return
+        Log.i(TAG, "search ms=${SystemClock.uptimeMillis() - startedAt} found=${answer.matches.total} note=${answer.note}")
+        breadcrumb.showText("Search: \"${answer.query}\"")
+        val hits = answer.matches.hits
+        val results = ShownResults(hits, answer.rootMissing)
+        val redraw = results != resultsOnScreen
+        if (redraw) {
+            // The folder's place, kept from the first results on: a second search replaces results, not the folder.
+            if (resultsOnScreen == null) folderScroll = grid.firstVisiblePosition
+            resultsOnScreen = results
+            resultFolders = hits.associate { File(root, it.folder + "/" + it.fileName) to NameMatch.folderShown(it.folder) }
+            val entries = hits.map { hit ->
+                // The index holds only names ending ".pdf" (any case): the name shown is without it.
+                PdfEntry(File(root, hit.folder + "/" + hit.fileName), hit.fileName.dropLast(PDF_SUFFIX_LENGTH), 0, 0)
+            }
+            grid.numColumns = columnsFor(resources.configuration)
+            // The mark on a tile just come back from goes with the folder (cameBackFrom marks a row below).
+            adapter.markedFile = null
+            adapter.show(entries, thumbnails = false, listView = true)
+            if (scrollToTop) grid.setSelection(0)
+            PanelRefresh.gentle(grid)
+            showEmptyNote(if (answer.rootMissing) rootMissingText(shownFolder ?: root) else "Nothing found.", answer.rootMissing, hits.isEmpty())
+        }
+        // Kept up, even empty, while results show: changing its words then never moves the grid.
+        if (noteLine.visibility != View.VISIBLE) noteLine.visibility = View.VISIBLE
+        val note = SearchNote.text(answer.note, hits.size, answer.matches.total)
+        if (noteLine.text.toString() != note) {
+            noteLine.text = note
+            PanelRefresh.line(noteLine)
+        }
+        // Back from a document opened from the results: its row is marked, as a folder's tile is.
+        if (cameBackFrom != null) {
+            val at = adapter.entries.indexOfFirst { it.file == cameBackFrom }
+            if (at >= 0) {
+                if (at < grid.firstVisiblePosition || at > grid.lastVisiblePosition) grid.setSelection(at)
+                markCameBackFrom(cameBackFrom)
+            }
+        }
+        logShown(waitForDraw = redraw)
+    }
+
+    /** Leaves the search: nothing more of it is shown. The screen goes back to the folder with the next listing. */
+    private fun endSearch() {
+        search = null
+    }
+
+    /** Back, or the breadcrumb, from results: the folder that was on show, re-listed. */
+    private fun leaveSearch() {
+        endSearch()
+        // Unmarked without a redraw of its own: the folder's listing redraws every row.
+        if (resultsOnScreen != null) adapter.markedFile = null
+        list()
     }
 
     /** "library shown": from onResume to the grid on screen (Task 6 times leaving a document by it). */
@@ -627,6 +816,8 @@ class LibraryActivity : Activity() {
         // call, there's nothing new to tell anyone. Every other caller is always acted on.
         // The grid calls its scroll listener once while it's being set up, before `grid` holds it.
         if (!::grid.isInitialized) return
+        // The folder watch and the thumbnails are left as they are while results show (design §6).
+        if (resultsOnScreen != null) return
         val now = listOf(grid.firstVisiblePosition, grid.childCount, System.identityHashCode(adapter.entries), System.identityHashCode(thumbnails), started)
         if (fromScroll && now == tilesLastReported) return
         tilesLastReported = now
@@ -771,6 +962,8 @@ class LibraryActivity : Activity() {
         folder = chosen
         shownFolder = null // the breadcrumb starts somewhere new
         index = NameIndex.forRoot(this, chosen)
+        // A search waiting on the old index never answers (it was closed): leave it, as Back does.
+        endSearch()
         list()
     }
 
@@ -780,6 +973,11 @@ class LibraryActivity : Activity() {
      * folder at once, which in a folder of several hundred PDFs took minutes.
      */
     private fun refresh() {
+        // In results: the whole library checked, then searched again. The thumbnails are left alone.
+        search?.let {
+            index?.check(full = true)
+            return runSearch(it.query, fresh = false)
+        }
         thumbnails?.let { loader ->
             val showing = onScreen().filterIsInstance<PdfEntry>().toSet()
             val (onScreen, rest) = adapter.entries.filterIsInstance<PdfEntry>().partition { it in showing }
@@ -800,8 +998,15 @@ class LibraryActivity : Activity() {
         if (!tapAllowed()) return
         when (entry) {
             is FolderEntry -> goTo(entry.file)
-            is PdfEntry -> open(entry.file)
+            is PdfEntry -> if (search != null && !entry.file.isFile) resultGone(entry.file) else open(entry.file)
         }
+    }
+
+    /** A result whose file has gone since the index last saw its folder: that folder is read again, then the search runs again. */
+    private fun resultGone(pdf: File) {
+        toast("That file isn't there any more.")
+        index?.reread(listOfNotNull(pdf.parentFile))
+        search?.let { runSearch(it.query, fresh = false) }
     }
 
     private fun open(pdf: File) {
@@ -853,5 +1058,7 @@ class LibraryActivity : Activity() {
         const val CONTINUE_PICTURE_DP = 96
         const val RULE_PX = 2
         const val COURSE_RULE_PX = 4
+        /** ".pdf", taken off a result's file name. */
+        const val PDF_SUFFIX_LENGTH = 4
     }
 }

@@ -17,4 +17,12 @@ object PanelRefresh {
     fun gentle(view: View) {
         EpdController.invalidate(view, UpdateMode.REGAL)
     }
+
+    /**
+     * A small update of [view] alone, for a line of text that changed (the search's note line):
+     * no flash, and nothing else on the panel is touched.
+     */
+    fun line(view: View) {
+        EpdController.invalidate(view, UpdateMode.GU)
+    }
 }
