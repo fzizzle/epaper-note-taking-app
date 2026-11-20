@@ -62,8 +62,8 @@ Plan, done on the branch `test-fixes`: [tests that check what they claim](docs/s
 - [ ] Close sessions in tests: abandoned ones make later tests wait 15 s each. `LastPageStoreTest` writes the app's real preferences. (Ne)
 - [ ] Missing tests: the activities, `PageView` gestures, `PenInput`, and symlinks in `FolderListing` and `LibraryWalk`. (Ne)
 - [ ] An activity test that the library starts its folder watch before it reads the folder (`LibraryActivity`, 'Watched before it's read').
-- [ ] `IndexCheckTest` (`MemoryIndexStore.inBatch` never rolls back): not a broken test: a folder read before the card went missing holds true facts; the harm would be in a drop, which is tested. (Ne)
-- [ ] `FileOpsTest.aMoveOntoANameTheDiskHoldsIsRefused` fails on macOS (APFS gives back the name in decomposed form: `Résumé.pdf` NFD vs NFC); it fails on `main` too. Passes on the tablet?
+- [x] `IndexCheckTest` (`MemoryIndexStore.inBatch` never rolls back), nothing to do: not a broken test: a folder read before the card went missing holds true facts; the harm would be in a drop, which is tested. (Ne)
+- [ ] `FileOpsTest.aMoveOntoANameTheDiskHoldsIsRefused` fails on macOS (APFS gives back the name in decomposed form: `Résumé.pdf` NFD vs NFC); it fails on `main` too. It's a laptop test only (`src/test`), so the tablet never runs it.
 
 ### 7. Build and structure
 
