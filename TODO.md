@@ -8,15 +8,13 @@ Order: tier 1 first, because tiers 2 and 3 lean on those tests to prove a fix wo
 
 ### 1. Tests that pass without checking what they claim
 
-Plan, written and not started: [tests that check what they claim](docs/superpowers/plans/2026-11-20-tests-that-check.md). It opens with three decisions for the owner. Of the seven items below, it fixes five and moves two out (the `IndexCheckTest` and `InkOverlayTest` items), with its reasons.
+Plan, done on the branch `test-fixes`: [tests that check what they claim](docs/superpowers/plans/2026-11-20-tests-that-check.md). It opens with three decisions for the owner. Of the seven items below, it fixes five and moves two out (the `IndexCheckTest` and `InkOverlayTest` items), with its reasons.
 
-- [ ] `ChangeJournalTest`: `tornLastLineIsIgnored` and `lineCutBetweenPointsIsIgnored` append an old-format `pn1` line, which a `pnj2` journal never decodes, newline or not. Both would pass with the torn-line guard deleted. **Checked: true.** Use a valid `pnj2` line, and also check that the same line with a newline is read. (Ne)
-- [ ] `PdfFileStrokesTest.erasedStrokeIsGoneFromFile` searches the saved bytes for the stroke key, but `saveTo` packs objects into compressed streams ("objstms"), so the key may be missing before the erase too. **Checked: very likely true.** Assert that the key is there before the erase, or inspect the annotations through MuPDF. (Ne)
-- [ ] `ContinuePictureTest.aHalfWrittenPictureIsNeverLoaded` creates a stray temp file and never calls `store()`, so it passes whether or not `store()` is atomic. (Ne)
-- [ ] `FolderWatchTest`: "arriving during the listing" creates the file after the listing returns, and "watching twice keeps one observer each" can't tell one observer from two, because events are debounced into a single callback. (Ne)
-- [ ] `DocumentSessionTest.autosaveWaitsTenSeconds` only checks the constant; `FakeScheduler` ignores the delay. (Ne)
-- [ ] `IndexCheckTest`: `MemoryIndexStore.inBatch` never rolls back, which hides partial writes on `ROOT_MISSING` (see tier 3). (Ne)
-- [ ] `InkOverlayTest.strokesSurviveAChange` asserts the stroke memory leak in tier 4 as correct behaviour. (Ne)
+- [x] `ChangeJournalTest`: `tornLastLineIsIgnored` and `lineCutBetweenPointsIsIgnored` append an old-format `pn1` line, which a `pnj2` journal never decodes, newline or not. Both would pass with the torn-line guard deleted. **Checked: true.** Use a valid `pnj2` line, and also check that the same line with a newline is read. (Ne)
+- [x] `PdfFileStrokesTest.erasedStrokeIsGoneFromFile` searches the saved bytes for the stroke key, but `saveTo` packs objects into compressed streams ("objstms"), so the key may be missing before the erase too. **Checked: very likely true.** Assert that the key is there before the erase, or inspect the annotations through MuPDF. (Ne)
+- [x] `ContinuePictureTest.aHalfWrittenPictureIsNeverLoaded` creates a stray temp file and never calls `store()`, so it passes whether or not `store()` is atomic. (Ne)
+- [x] `FolderWatchTest`: "arriving during the listing" creates the file after the listing returns, and "watching twice keeps one observer each" can't tell one observer from two, because events are debounced into a single callback. The "arriving during the listing" test was deleted with the owner's approval (decision 1). (Ne)
+- [x] `DocumentSessionTest.autosaveWaitsTenSeconds` only checks the constant; `FakeScheduler` ignores the delay. (Ne)
 
 ### 2. Could lose or damage writing
 
@@ -46,6 +44,7 @@ Plan, written and not started: [tests that check what they claim](docs/superpowe
 - [ ] Each stroke's journal write waits for the disk sync, on the pen or UI thread and under the session lock. Measure from pen-up to the next stroke first; if it matters, move the writes to an ordered queue. (all three code-only reviews)
 - [ ] Opening a file reads it twice; every autosave hashes the whole file before and after saving. (Ar, Ar full)
 - [ ] `InkOverlay.left()` keeps every stroke for pages with no erase or move. (Ne)
+- [ ] `InkOverlayTest.strokesSurviveAChange`: decide whether keeping strokes on pages with no change is on purpose before changing the test. (Ne)
 - [ ] Search sorts its hits twice, and its comparators allocate on every call; erasing walks every annotation on the page. (Ar full, Ne)
 - [ ] The 200 MB page cache never shrinks when Android asks for memory back. (Ne)
 
@@ -62,6 +61,9 @@ Plan, written and not started: [tests that check what they claim](docs/superpowe
 - [ ] Keep the manual checks in `androidTest/check/` (hardcoded tablet paths, one with no assertions) out of the default test run. (Ne)
 - [ ] Close sessions in tests: abandoned ones make later tests wait 15 s each. `LastPageStoreTest` writes the app's real preferences. (Ne)
 - [ ] Missing tests: the activities, `PageView` gestures, `PenInput`, and symlinks in `FolderListing` and `LibraryWalk`. (Ne)
+- [ ] An activity test that the library starts its folder watch before it reads the folder (`LibraryActivity`, 'Watched before it's read').
+- [ ] `IndexCheckTest` (`MemoryIndexStore.inBatch` never rolls back): not a broken test: a folder read before the card went missing holds true facts; the harm would be in a drop, which is tested. (Ne)
+- [ ] `FileOpsTest.aMoveOntoANameTheDiskHoldsIsRefused` fails on macOS (APFS gives back the name in decomposed form: `Résumé.pdf` NFD vs NFC); it fails on `main` too. Passes on the tablet?
 
 ### 7. Build and structure
 
