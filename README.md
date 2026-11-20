@@ -37,13 +37,7 @@ Jot shows the folders on disk as they are, as deep as you like. Here, courses ho
 
 ## Why
 
-The stock Boox Notes app writes well but gets in the way:
-
-- PDFs have to be imported one at a time, and sync only works through Boox's own service.
-- You can't rotate a page once a PDF is imported.
-- The extra buttons on third-party EMR pens can't be mapped.
-- There's no highlighter.
-- The interface is crowded, and moving around a page takes two fingers.
+I wanted a note-taking app that was fast and focused. I also needed it to work with third-party EMR pens, including their side buttons. I couldn't find one that did all of this that wasn't hidden behind a subscription, so I built one.
 
 ## What it does
 
@@ -67,7 +61,7 @@ Handwriting is saved as standard PDF annotations, so any PDF viewer shows it. Th
 
 ## Not in the first version
 
-Blank notebooks, the partial eraser, copy and paste between documents, extra pen colours, and sync.
+Blank notebooks, the partial eraser, copy and paste between documents, extra pen colours, and built-in sync.
 
 ## Tech
 
@@ -83,7 +77,7 @@ AGPL-3.0 (see [LICENSE](LICENSE)), because the app uses MuPDF.
 
 The app lives in `notes/`. Its home-screen name is Jot, but the app id stays `com.fzizzle.epapernotes`, so files, settings and the All files access grant from earlier builds carry over. The launcher icon is an adaptive vector in `notes/app/src/main/res/`, and [assets/icon.svg](assets/icon.svg) is the same drawing for this page.
 
-To set up a computer for building and installing, see [notes/SETUP.md](notes/SETUP.md). It also explains how to install on the tablet without wiping the app's data. The Android tools are installed in the home folder, so load them first:
+To set up a computer for building and installing, see [notes/SETUP.md](notes/SETUP.md). It also explains how to install on the tablet without wiping the app's data. Setup puts the Android tools in your home folder, with a script that loads them, so run that script first:
 
 ```sh
 source ~/.local/opt/android-env.sh
