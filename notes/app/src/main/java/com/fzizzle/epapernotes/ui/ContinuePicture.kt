@@ -15,6 +15,8 @@ class ContinuePicture(
     private val dir: File,
     private val whose: () -> File?,
     private val setWhose: (File?) -> Unit,
+    /** How the bytes reach the disk; a test swaps it to play a kill halfway through. */
+    private val write: (File, ByteArray) -> Unit = { f, bytes -> f.writeBytes(bytes) },
 ) {
     constructor(cacheDir: File, prefs: LibraryPrefs) : this(cacheDir, { prefs.continuePictureOf }, { prefs.continuePictureOf = it })
 
@@ -28,7 +30,7 @@ class ContinuePicture(
         dir.mkdirs()
         val tmp = File.createTempFile(".continue-", ".tmp", dir)
         try {
-            tmp.writeBytes(png)
+            write(tmp, png)
             if (tmp.renameTo(file)) setWhose(pdf)
         } finally {
             tmp.delete() // gone already after a good rename
