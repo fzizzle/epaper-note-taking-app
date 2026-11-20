@@ -1015,7 +1015,17 @@ class DocumentSessionTest {
         assertEquals(3, fake.items(0).size)
     }
 
-    @Test fun autosaveWaitsTenSeconds() = assertEquals(10_000L, DocumentSession.AUTOSAVE_DELAY_MS)
+    /** A stroke starts the autosave's ten seconds, and the next stroke starts them again, under the same key. */
+    @Test fun autosaveWaitsTenSecondsAfterTheLastStroke() {
+        assertEquals(10_000L, DocumentSession.AUTOSAVE_DELAY_MS)
+        val s = session()
+        val before = scheduler.postedDelays.size
+        s.addStroke(0, dot)
+        s.addStroke(0, line)
+        val autosaves = scheduler.postedDelays.drop(before).filter { it.first == "autosave" } // DocumentSession.AUTOSAVE
+        assertEquals(listOf("autosave" to 10_000L, "autosave" to 10_000L), autosaves)
+        assertTrue("one timer waiting, not two", scheduler.delayed.containsKey("autosave"))
+    }
 
     /** A tap with the lasso (a loop a couple of points across) selects the stroke under it, not what's "inside" it. */
     @Test fun aTapWithTheLassoSelectsTheStrokeUnderIt() {
