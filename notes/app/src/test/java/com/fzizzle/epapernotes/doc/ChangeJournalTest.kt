@@ -42,8 +42,11 @@ class ChangeJournalTest {
         j.start(base)
         j.append(add(0, dot))
         j.append(add(1, dot))
-        j.file.appendText("add 2 pn1 pen 1.00,2.0")
-        assertEquals(2, j.read()!!.changes.size)
+        // Cut inside the last number: "…,1.0" still reads as a stroke, so only the missing newline gives it away.
+        val torn = ChangeCodec.encode(add(2, line)).dropLast(2)
+        assertTrue("the torn line must be one that would parse", ChangeCodec.decode(torn) != null)
+        j.file.appendText(torn)
+        assertEquals(listOf(add(0, dot), add(1, dot)), j.read()!!.changes)
     }
 
     @Test fun missingFileReadsNull() = assertNull(journal().read())
@@ -79,8 +82,20 @@ class ChangeJournalTest {
         val j = journal()
         j.start(base)
         j.append(add(0, dot))
-        j.file.appendText("add 1 pn1 hl 1.00,2.00,1.000")
+        val cut = ChangeCodec.encode(add(1, line)).substringBeforeLast(' ') // the first point only
+        val parsed = ChangeCodec.decode(cut) as AddItems
+        assertEquals("the cut line must parse, as one point", 1, (parsed.items.single() as InkItem).stroke.points.size)
+        j.file.appendText(cut)
         assertEquals(listOf(add(0, dot)), j.read()!!.changes)
+    }
+
+    /** The same line written whole is read: what the two tests above drop, they drop for the missing newline alone. */
+    @Test fun aWholeLineAddedByHandIsRead() {
+        val j = journal()
+        j.start(base)
+        j.append(add(0, dot))
+        j.file.appendText(ChangeCodec.encode(add(1, line)) + "\n")
+        assertEquals(listOf(add(0, dot), add(1, line)), j.read()!!.changes)
     }
 
     @Test fun readsPlan2Journal() {

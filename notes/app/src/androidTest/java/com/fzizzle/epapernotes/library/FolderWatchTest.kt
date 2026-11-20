@@ -75,15 +75,6 @@ class FolderWatchTest {
 
     // Design-gaps Task 2 (spec §6.1, review 2.10).
 
-    /** The library starts the watch before it reads the folder: a file landing meanwhile still re-lists. */
-    @Test fun aFileArrivingDuringTheListingIsSeen() {
-        // setUp started the watch; the "listing" is this read, with a file arriving during it.
-        FolderListing.list(scratch)
-        addPdf("late.pdf")
-        Thread.sleep(1000)
-        assertEquals(1, calls.get())
-    }
-
     /** A sync app deletes and recreates the folder: the watch says so, and watching again sees new files. */
     @Test fun aRecreatedFolderIsWatchedAgain() {
         scratch.deleteRecursively()
@@ -109,16 +100,25 @@ class FolderWatchTest {
         assertEquals(1, calls.get())
     }
 
+    /** Passing the same subfolders again starts no second watch: only a folder new to the list, or one dropped and passed again, gets one. */
     @Test fun watchingChildrenTwiceKeepsOneObserverEach() {
         val week = File(scratch, "Week 2").apply { mkdirs() }
+        val other = File(scratch, "Week 3").apply { mkdirs() }
+        watch.watchChildren(listOf(week))
+        watch.watchChildren(listOf(week))
+        assertEquals(1, watch.childWatchesStarted)
+        watch.watchChildren(listOf(week, other))
+        assertEquals(2, watch.childWatchesStarted) // only Week 3 was new
+        watch.watchChildren(emptyList())
+        watch.watchChildren(listOf(week))
+        assertEquals(3, watch.childWatchesStarted) // dropped, so watched afresh
+    }
+
+    /** A folder no longer passed isn't watched any more. */
+    @Test fun aSubfolderNoLongerPassedIsNotWatched() {
+        val week = File(scratch, "Week 2").apply { mkdirs() }
         Thread.sleep(1000)
-        calls.set(0)
         watch.watchChildren(listOf(week))
-        watch.watchChildren(listOf(week))
-        File(week, "c.pdf").writeText("x")
-        Thread.sleep(1200)
-        assertEquals(1, calls.get())
-        // And a folder no longer passed isn't watched any more.
         watch.watchChildren(emptyList())
         calls.set(0)
         File(week, "d.pdf").writeText("x")

@@ -6,10 +6,12 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.IOException
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -58,11 +60,18 @@ class ContinuePictureTest {
         assertNotNull(picture.load(File("/sdcard/Documents/Renamed/b.pdf")))
     }
 
-    /** The app killed while the picture was being written: the half-written file is never shown. */
+    /** The app killed while a new picture was being written: the last whole picture is still the one shown. */
     @Test fun aHalfWrittenPictureIsNeverLoaded() {
         val pdf = File("/sdcard/Documents/a.pdf")
-        whose = pdf
-        File(dir, ".continue-123.tmp").writeBytes(png(Color.RED).copyOf(20))
-        assertNull(picture.load(pdf))
+        picture.store(pdf, png(Color.RED))
+        val killedMidWrite = ContinuePicture(dir, { whose }, { whose = it }) { f, bytes ->
+            f.writeBytes(bytes.copyOf(20)) // part of the picture is on disk…
+            throw IOException("killed") // …when the app dies
+        }
+        assertThrows(IOException::class.java) { killedMidWrite.store(pdf, png(Color.BLUE)) }
+        val shown = picture.load(pdf)
+        assertNotNull("the last whole picture is still there", shown)
+        assertEquals(Color.RED, shown!!.getPixel(0, 0))
+        assertEquals(emptyList<String>(), dir.list()!!.filter { it.endsWith(".tmp") })
     }
 }

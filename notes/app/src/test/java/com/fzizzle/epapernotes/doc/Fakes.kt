@@ -176,6 +176,9 @@ class FakePdfPages(override var wasRepaired: Boolean = false, private val saveDe
  */
 class FakeScheduler : Scheduler {
     val delayed = linkedMapOf<String, () -> Unit>()
+
+    /** Every postDelayed, with its delay, in order: the fake runs delayed work only when told, so this is how a test sees the timing asked for. */
+    val postedDelays = mutableListOf<Pair<String, Long>>()
     private val queue = ArrayDeque<() -> Unit>()
     private var running = false
 
@@ -191,6 +194,7 @@ class FakeScheduler : Scheduler {
     }
 
     override fun postDelayed(key: String, delayMs: Long, task: () -> Unit) {
+        postedDelays += key to delayMs
         delayed[key] = task
     }
 

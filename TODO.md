@@ -1,5 +1,77 @@
 # To do
 
+## Reviews (2026-11-20)
+
+Five reviews by other models, in [docs/reviews/](docs/reviews/): Argon and Astra read the whole repo, and Argon, Astra and Neon read the code and tests only. Nobody built the app, ran the tests or tried anything on the tablet. Every item below is a reviewer's claim until it has been checked in the code; only the first two items have been checked so far. Each item names who raised it: **Ar** Argon, **As** Astra, **Ne** Neon, with "full" for a full-repo review.
+
+Order: tier 1 first, because tiers 2 and 3 lean on those tests to prove a fix works. For every bug in tiers 2 to 4, write a test that fails before fixing it.
+
+### 1. Tests that pass without checking what they claim
+
+Plan, done on the branch `test-fixes`: [tests that check what they claim](docs/superpowers/plans/2026-11-20-tests-that-check.md). It opens with three decisions for the owner. Of the seven items below, it fixes five and moves two out (the `IndexCheckTest` and `InkOverlayTest` items), with its reasons.
+
+- [x] `ChangeJournalTest`: `tornLastLineIsIgnored` and `lineCutBetweenPointsIsIgnored` append an old-format `pn1` line, which a `pnj2` journal never decodes, newline or not. Both would pass with the torn-line guard deleted. **Checked: true.** Use a valid `pnj2` line, and also check that the same line with a newline is read. (Ne)
+- [x] `PdfFileStrokesTest.erasedStrokeIsGoneFromFile` searches the saved bytes for the stroke key, but `saveTo` packs objects into compressed streams ("objstms"), so the key may be missing before the erase too. **Checked: very likely true.** Assert that the key is there before the erase, or inspect the annotations through MuPDF. (Ne)
+- [x] `ContinuePictureTest.aHalfWrittenPictureIsNeverLoaded` creates a stray temp file and never calls `store()`, so it passes whether or not `store()` is atomic. (Ne)
+- [x] `FolderWatchTest`: "arriving during the listing" creates the file after the listing returns, and "watching twice keeps one observer each" can't tell one observer from two, because events are debounced into a single callback. The "arriving during the listing" test was deleted with the owner's approval (decision 1). (Ne)
+- [x] `DocumentSessionTest.autosaveWaitsTenSeconds` only checks the constant; `FakeScheduler` ignores the delay. (Ne)
+
+### 2. Could lose or damage writing
+
+- [ ] When sync replaces the PDF during an autosave, both versions should be kept; the conflict check runs before the temp PDF is written. (As full)
+- [ ] Moving a PDF moves the file first and its journals after; a failed journal rename or a process death in between strands the unsaved handwriting on the old path, while the move reports success. (As)
+- [ ] One damaged journal record can cause a later intact stroke to be dropped at recovery. (As, As full)
+- [ ] Rename, a fresh copy and restoring a stranded rename check that the target name is free, then rename in a separate step; a file that appears in between can be overwritten. (As, As full)
+- [ ] A symlinked parent folder gets past the library boundary check, so a delete can reach files outside the library. (As)
+- [ ] `onPause()` queues the Continue picture ahead of `saveNow()`. If that save switches to a conflict copy, Continue and the library still point at the original file. (Ar full, Ne)
+- [ ] Pen on the notification shade or power menu can draw or erase on the page underneath, because fast ink stays on when the window loses focus. (Ar full)
+- [ ] Page turn, go-to-page, undo/redo, the page menu and paste don't check for a stroke in progress, so a palm tap can turn the page or cut a stroke short. (Ar full)
+- [ ] Two almost identical points in a stroke can write `NaN` into the saved PDF; `StrokeCodec` and `ItemCodec` also accept `NaN`, `Infinity` and a width of zero or less. (Ar, Ne)
+- [ ] Delete counts files when the dialog opens but deletes whatever is there on confirm, including files added in between. (As, idea)
+
+### 3. Stuck, crashing or showing the wrong thing
+
+- [ ] An `Error` such as running out of memory in `LibraryChanges.runOp()` leaves the library marked busy for good. (Ne)
+- [ ] A symlink loop makes `LibraryWalk` recurse until it crashes; the library walk, folder listing and folder chooser treat symlinks differently. (Ne)
+- [ ] `NameIndexDb.inBatch` keeps partial writes on `ROOT_MISSING`, and its exclusive transaction blocks readers. (Ne)
+- [ ] `ThumbnailLoader.SMALL` (`BitmapFactory.Options`) is shared by two threads. (Ne)
+- [ ] `StripButton.onSizeChanged` crashes on a zero size. (Ne)
+- [ ] An unreadable folder shows as empty; it needs its own error message and a retry. (As full)
+- [ ] List view's `.facts` files are deleted every 24 hours, and new files in opened-out subfolders never reach search. (Ar full)
+
+### 4. Pen latency and speed (measure on the tablet before changing)
+
+- [ ] Each stroke's journal write waits for the disk sync, on the pen or UI thread and under the session lock. Measure from pen-up to the next stroke first; if it matters, move the writes to an ordered queue. (all three code-only reviews)
+- [ ] Opening a file reads it twice; every autosave hashes the whole file before and after saving. (Ar, Ar full)
+- [ ] `InkOverlay.left()` keeps every stroke for pages with no erase or move. (Ne)
+- [ ] `InkOverlayTest.strokesSurviveAChange`: decide whether keeping strokes on pages with no change is on purpose before changing the test. (Ne)
+- [ ] Search sorts its hits twice, and its comparators allocate on every call; erasing walks every annotation on the page. (Ar full, Ne)
+- [ ] The 200 MB page cache never shrinks when Android asks for memory back. (Ne)
+
+### 5. Annoyances
+
+- [ ] A selection can only shrink by dragging a corner inward on both sides at once. (Ar)
+- [ ] Snips are harder to hit with the eraser and with tap-select than strokes are. (Ar)
+- [ ] Adding or removing a page wipes the undo history. (Ar)
+- [ ] The first failed save shows only a toast; the lasting "Not saved" banner waits for a second failure. (Ne)
+
+### 6. Test suite health
+
+- [ ] Replace `Thread.sleep` and wall-clock limits (`ms < 80`, `ms < 300`) with latches; fix the three races in `ThumbnailLoaderTest`. (Ne)
+- [ ] Keep the manual checks in `androidTest/check/` (hardcoded tablet paths, one with no assertions) out of the default test run. (Ne)
+- [ ] Close sessions in tests: abandoned ones make later tests wait 15 s each. `LastPageStoreTest` writes the app's real preferences. (Ne)
+- [ ] Missing tests: the activities, `PageView` gestures, `PenInput`, and symlinks in `FolderListing` and `LibraryWalk`. (Ne)
+- [ ] An activity test that the library starts its folder watch before it reads the folder (`LibraryActivity`, 'Watched before it's read').
+- [x] `IndexCheckTest` (`MemoryIndexStore.inBatch` never rolls back), nothing to do: not a broken test: a folder read before the card went missing holds true facts; the harm would be in a drop, which is tested. (Ne)
+- [ ] `FileOpsTest.aMoveOntoANameTheDiskHoldsIsRefused` fails on macOS (APFS gives back the name in decomposed form: `Résumé.pdf` NFD vs NFC); it fails on `main` too. It's a laptop test only (`src/test`), so the tablet never runs it.
+
+### 7. Build and structure
+
+- [ ] Limit the plain-HTTP Boox Maven repo to its own group (`content { includeGroup(...) }`), so no other library can come over unencrypted HTTP. A quick fix, which could be done at any time. (Ne)
+- [ ] Move the fast-ink state out of `WritingActivity` (about 2,260 lines) into a class with JVM tests. (Ar, Ne)
+- [ ] The probe writes its log to disk on the input thread it is measuring. (As)
+- [ ] Release builds are signed with the debug key; owner decision. (As, Ne)
+
 The four sections below come from the [project review of 2026-11-10](docs/superpowers/review-2026-11-10.md). Each has a plan, written but not started, and each plan opens with decisions for the owner to approve. Suggested order: bugs, then speed, design gaps and readability in any order.
 
 ## Review (2026-11-16)

@@ -354,6 +354,22 @@ class PdfFileStrokesTest {
         Document.openDocument(file.path).let { d -> try { d.asPDF()!! } finally { d.destroy() } }
 
     /**
+     * How many objects in [file] carry stroke text, found by asking MuPDF. A plain text search of the
+     * bytes finds nothing either way: saveTo packs objects into compressed object streams ("objstms").
+     */
+    private fun objectsHoldingStrokeText(file: File): Int {
+        val doc = openRaw(file)
+        try {
+            return (1 until doc.countObjects()).count { n ->
+                val o = doc.newIndirect(n, 0).resolve()
+                o != null && o.isDictionary && !o.get(StrokeCodec.KEY).isNull
+            }
+        } finally {
+            doc.destroy()
+        }
+    }
+
+    /**
      * Writes [stroke] the way the app did before 2bfb717, copied from the old addInk: MuPDF's
      * setAppearance with the page transform, which it stores as the drawing's /Matrix.
      * [plan2]: as plan 2 wrote it, with no /NM and pn1 stroke data.
@@ -513,8 +529,9 @@ class PdfFileStrokesTest {
         val first = File(dir, "erase1.pdf")
         val second = File(dir, "erase2.pdf")
         PdfFile.open(TestPdfs.blank(dir)).use { it.add(0, line); it.saveTo(first) }
+        assertEquals("the stroke is found in the file before the erase", 1, objectsHoldingStrokeText(first))
         PdfFile.open(first).use { it.delete(0, it.strokes(0).single().id); it.saveTo(second) }
-        assertTrue(!String(second.readBytes(), Charsets.ISO_8859_1).contains(com.fzizzle.epapernotes.ink.StrokeCodec.KEY))
+        assertEquals(0, objectsHoldingStrokeText(second))
     }
 
     /** Stroke ids are what undo will hold on to, so a save must not renumber them. */

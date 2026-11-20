@@ -31,6 +31,14 @@ class FolderWatch(private val onChange: () -> Unit) {
     /** Subfolders watched for [watchChildren], by folder. Main thread. */
     private val children = mutableMapOf<File, FileObserver>()
 
+    /**
+     * How many subfolder watches [watchChildren] has started. The events from a second watch on
+     * the same folder are merged with the first one's in the debounce, so no test could tell
+     * them apart without this.
+     */
+    internal var childWatchesStarted = 0
+        private set
+
     // Set on the observer's thread when the folder itself went (deleted or moved).
     @Volatile private var sawSelfEvent = false
 
@@ -79,6 +87,7 @@ class FolderWatch(private val onChange: () -> Unit) {
                     changed()
                 }
             }.also { it.startWatching() }
+            childWatchesStarted++
         }
     }
 
